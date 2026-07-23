@@ -1,0 +1,9 @@
+﻿pft_index,pft_name,param_min,param_max
+1,white_spruce,0.0074,0.0138
+2,black_spruce,0.0074,0.03
+3,larch,0.01,0.03
+4,broadleaf_colddecid_extratrop_tree,0.0158,0.04
+5,broadleaf_colddecid_extratrop_shrub,0.02,0.03
+6,broadleaf_evergreen_extratrop_shrub,0.012,0.0234
+7,jack_pine,0.0074,0.012
+8,needleleaf_evergreen_extratrop_shrub,0.0074,0.012

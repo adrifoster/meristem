@@ -1,0 +1,70 @@
+parameter_name,category,subcategory,coord,strategy,param_type,group_name,slice_index,slice_dim,base_params,root_param,precision,param_min,param_max,units,long_name
+jmaxse_sf,stomatal,acclimation,[],uniform,default,ACCLIM_SF,,,,,.4f,0.8,1.025,unitless,Scale factor for jmaxse equation
+tpuse_sf,stomatal,acclimation,[],uniform,default,ACCLIM_SF,,,,,.4f,0.8,1.2,unitless,Scale factor for tpuse equation
+vcmaxse_sf,stomatal,acclimation,[],uniform,default,ACCLIM_SF,,,,,.4f,0.8,1.0125,unitless,Scale factor for vcmaxse equation
+akc_active,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m3,Constant relating root C to arbuscular mycorrhizal root active uptake cost.
+akn_active,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m2,Constant relating soil layer Nitrogen content to arbuscular mycorrhizal root active uptake cost.
+ekc_active,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m3,Constant relating root C to ectomycorrhizal root active uptake cost.
+ekn_active,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m2,Constant relating soil layer Nitrogen content to ectomycorrhizal root active uptake cost.
+kc_nonmyc,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m3,Constant relating root C to non-mycorrhizal root active uptake cost.
+kn_nonmyc,biogeochemistry,FUN,['pft'],uniform,default,KCN,,,,,.4f,pft,pft,gC/m2,Constant relating soil layer Nitrogen content to non-mycorrhizal root active uptake cost.
+bgc_rf_cwdl3,biogeochemistry,decomposition,[],uniform,default,RF_CWD,,,,,.2f,0.2,0.8,unitless,respiration fraction from CWD to litter 3
+rf_cwdl2,biogeochemistry,decomposition,[],uniform,default,RF_CWD,,,,,.2f,0.2,0.8,unitless,respiration fraction from CWD to litter 2
+bgc_rf_l1s1,biogeochemistry,decomposition,[],uniform,default,RF_LS,,,,,.2f,0.2,0.8,unitless,Respiration fraction for litter 1 -> SOM 1
+bgc_rf_l2s1,biogeochemistry,decomposition,[],uniform,default,RF_LS,,,,,.2f,0.2,0.8,unitless,respiration fraction litter 2 to SOM 1
+bgc_rf_l3s2,biogeochemistry,decomposition,[],uniform,default,RF_LS,,,,,.2f,0.2,0.8,unitless,respiration fraction from litter 3 to SOM 2
+bgc_rf_s2s1,biogeochemistry,decomposition,[],uniform,default,RF_SS,,,,,.2f,0.2,0.8,unitless,respiration fraction SOM 2 to SOM 1
+bgc_rf_s2s3,biogeochemistry,decomposition,[],uniform,default,RF_SS,,,,,.2f,0.2,0.8,unitless,Respiration fraction for SOM 2 -> SOM 3
+bgc_rf_s3s1,biogeochemistry,decomposition,[],uniform,default,RF_SS,,,,,.2f,0.2,0.8,unitless,respiration fraction SOM 3 to SOM 1
+bgc_tau_s1,biogeochemistry,decomposition,[],uniform,default,TAU,,,,,.4f,50percent,100percent,1/year,1/Turnover time of soil organic matter (SOM) 1
+bgc_tau_s2,biogeochemistry,decomposition,[],uniform,default,TAU,,,,,.4f,50percent,100percent,1/year,1/Turnover time of soil organic matter (SOM) 2
+bgc_tau_s3,biogeochemistry,decomposition,[],uniform,default,TAU,,,,,.4f,50percent,100percent,1/year,1/Turnover time of soil organic matter (SOM) 3
+accum_factor,hydrology,snow,[],uniform,default,,,,,,.2f,0.1,0.4,unitless,Accumulation constant for fractional snow covered area
+baseflow_scalar,hydrology,soil water,[],uniform,default,,,,,,.4f,0.0005,0.1,unitless,Scalar multiplier for base flow rate
+bsw_sf,hydrology,soil water,[],uniform,default,,,,,,.2f,20percent,5percent,unitless,Scalar adjustment factor for bsw
+crit_onset_gdd_sf,biogeochemistry,phenology,['pft'],uniform,default,,,,,,.2f,20percent,20percent,unitless,Scale factor for crit_onset_gdd
+cv,biophysics,canopy aerodynamics,[],uniform,default,,,,,,.4f,0.005,0.02,m/s^(1/2),Turbulent transfer coefficient between canopy surface and canopy air
+d_max,hydrology,soil water,[],uniform,default,,,,,,.2f,10,60,mm,Dry surface layer (DSL) parameter
+decomp_depth_efolding,biogeochemistry,decomposition,[],uniform,default,,,,,,.2f,0.3,10,m,depth control on decomposition rates
+dleaf,biophysics,canopy aerodynamics,['pft'],uniform,default,,,,,,.6f,pft,pft,m,Characteristic dimension of leaves in the direction of wind flow
+e_ice,hydrology,soil water,[],uniform,default,,,,,,.2f,0,8,unitless,ice impedance factor
+fff,hydrology,soil water,[],uniform,default,,,,,,.2f,0.02,5,1/m,Decay factor for fractional saturated area
+froot_leaf,biogeochemistry,allocation,['pft'],uniform,default,,,,,,.2f,pft,pft,gC/gC,Allocation parameter: new fine root C per new leaf C
+fsr_pft,fire,fire,['pft'],uniform,default,,,,,,.4f,pft,pft,m/s,Fire spread rate (m/s)
+fstor2tran,biogeochemistry,phenology,[],uniform,default,,,,,,.2f,0.4,0.6,unitless,Fraction of storage to move to transfer for each onset
+FUN_fracfixers,biogeochemistry,FUN,['pft'],uniform,default,,,,,,.2f,0.1,0.5,fraction,fraction of carbon available for N fixation
+grperc,biogeochemistry,respiration,['pft'],uniform,default,,,,,,.3f,0.05,0.3,unitless,growth respiration
+hksat_sf,hydrology,soil water,[],uniform,default,,,,,,.2f,0.9,4,unitless,Scalar adjustment factor for hksat
+interception_fraction,biophysics,canopy evaporation,[],uniform,default,,,,,,.2f,0.5,1,unitless,Fraction of intercepted precipitation
+jmaxb0,stomatal,LUNA,['pft'],uniform,default,,,,,,.4f,pft,pft,J,the baseline proportion of nitrogen allocated for electron transport (J)
+jmaxb1,stomatal,LUNA,['pft'],uniform,default,,,,,,.4f,pft,pft,unitless,determines response of electron transport rate to light availability
+jmaxha,stomatal,acclimation,[],uniform,default,,,,,,.2f,34000,78000,J/mol,activation energy for jmax
+kmax,stomatal,vegetation water,"['segment', 'pft']",uniform,default,,,,,,.12f,pft,pft,mm h2o (transpired)/mm h2o (water potential gradient)/sec,Plant segment max conductance
+leaf_long,biogeochemistry,phenology,['pft'],uniform,default,,,,,,.2f,pft,pft,years,Leaf longevity
+leafcn,biogeochemistry,allocation,['pft'],uniform,default,,,,,,.2f,pft,pft,gC/gN,Leaf C:N
+lmr_intercept_atkin,biogeochemistry,respiration,['pft'],uniform,default,,,,,,.2f,20percent,20percent,umol CO2/m**2/s,canopy leaf maintenance respiration base rate
+lmrha,stomatal,acclimation,[],uniform,default,,,,,,.2f,50percent,50percent,J/mol,activation energy for lmr
+lmrse,stomatal,photosynthesis,[],uniform,default,,,,,,.2f,392,502.25,J/mol/K,entropy term for lmr
+maximum_leaf_wetted_fraction,biophysics,canopy evaporation,[],uniform,default,,,,,,.2f,0.01,0.5,unitless,Maximum fraction of leaf that may be wet prior to drip occuring
+maxpsi_hr,biogeochemistry,decomposition,[],uniform,default,,,,,,.4f,-1,-0.002,MPa,Maximum soil water potential for heterotrophic resp
+medlynintercept,stomatal,vegetation water,['pft'],uniform,default,,,,,,.2f,1,12500,umol H2O,Medlyn intercept of conductance-photosynthesis relationship
+medlynslope,stomatal,vegetation water,['pft'],uniform,default,,,,,,.2f,pft,pft,umol H2O/umol CO2,Medlyn slope of conductance-photosynthesis relationship
+minpsi_hr,biogeochemistry,decomposition,[],uniform,default,,,,,,.2f,-10,-1,MPa,minimum soil water potential for heterotrophic resp
+n_melt_coef,hydrology,snow,[],uniform,default,,,,,,.2f,180,220,unitless,Parameter controlling shape of snow covered area
+om_frac_sf,hydrology,soil water,[],uniform,default,,,,,,.2f,20percent,20percent,unitless,Scalar adjustment factor for om_frac
+psi50,stomatal,vegetation water,"['segment', 'pft']",uniform,default,,,,,,.2f,30percent,30percent,mm,Water potential at 50% loss of conductance
+q10_mr,biogeochemistry,decomposition,[],uniform,default,,,,,,.2f,1.25,3,unitless,Q10 for maintenance respiration
+r_mort,biogeochemistry,nitrogen,['pft'],uniform,default,,,,,,.4f,50percent,50percent,1/year,background mortality
+slatop,stomatal,photosynthesis,['pft'],uniform,default,,,,,,.5f,pft,pft,m^2/gC,specific leaf area at the canopy top
+snw_rds_refrz,hydrology,snow,[],uniform,default,,,,,,.2f,500,1500,microns,effective radius of re-frozen snow [microns]
+sucsat_sf,hydrology,soil water,[],uniform,default,,,,,,.2f,0.1,3,unitless,Scalar adjustment factor for sucsat
+theta_cj,stomatal,photosynthesis,['pft'],uniform,default,,,,,,.4f,0.8,0.999,unitless,empirical curvature parameter for ac to  aj photosynthesis co-limitation
+tpu25ratio,stomatal,photosynthesis,[],uniform,default,,,,,,.4f,0.167,0.501,unitless,triose phosphate utilization at 25C
+tpuha,stomatal,acclimation,[],uniform,default,,,,,,.2f,45000,97250,J/mol,activation energy for tpu
+upplim_destruct_metamorph,hydrology,snow,[],uniform,default,,,,,,.2f,100,250,kg/m3,Upper lim. for snow densification through desctructive metamorphism
+vcmaxha,stomatal,acclimation,[],uniform,default,,,,,,.2f,45000,90000,J/mol,activation energy for vcmax
+watsat_sf,hydrology,soil water,[],uniform,default,,,,,,.2f,20percent,20percent,unitless,Scalar adjustment factor for watsat
+wc2wjb0,stomatal,LUNA,['pft'],uniform,default,,,,,,.4f,0.6527,1.5,unitless,the baseline ratio of rubisco limited rate vs light limited photosynthetic rate (Wc:Wj)
+xdrdt,hydrology,snow,[],uniform,default,,,,,,.2f,0.5,5,unitless,arbitrary factor applied to snow aging rate
+xl,biophysics,radiation,['pft'],uniform,default,,,,,,.2f,pft,pft,unitless,Leaf/stem orientation index
+z0v_Cr,biophysics,canopy aerodynamics,['pft'],uniform,default,,,,,,.2f,10percent,10percent,unitless,Roughness-element drag coefficient for Raupach92 parameterization

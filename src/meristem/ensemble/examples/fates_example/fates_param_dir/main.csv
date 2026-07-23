@@ -1,0 +1,55 @@
+﻿parameter_name,category,subcategory,coord,strategy,param_type,group_name,slice_index,slice_dim,base_params,root_param,precision,param_min,param_max,units,long_name
+fates_alloc_storage_cushion,biogeochemistry,allocation,['fates_pft'],uniform,default,,,,,,,1,6,fraction,"maximum size of storage C pool, relative to maximum size of leaf C pool"
+fates_alloc_store_priority_frac,biogeochemistry,allocation,['fates_pft'],uniform,default,,,,,,,0.4,1,unitless,"for high-priority organs, the fraction of their turnover demand that is gauranteed to be replaced, and if need-be by storage"
+fates_allom_agb_frac,biogeochemistry,allocation,['fates_pft'],uniform,default,,,,,,,0.7,0.9,unitless,Fraction of woody biomass that is above ground
+fates_allom_blca_expnt_diff,biogeochemistry,allocation,['fates_pft'],uniform,default,,,,,,,-0.3,0,unitless,difference between allometric DBH:bleaf and DBH:crown area exponents
+fates_allom_fnrt_prof_a,biogeochemistry,allometry,['fates_pft'],uniform,default,,,,,,,0.01,7,unitless,"Fine root profile function, parameter a"
+fates_allom_fnrt_prof_b,biogeochemistry,allometry,['fates_pft'],uniform,default,,,,,,,0.01,3,unitless,"Fine root profile function, parameter a"
+fates_allom_h2cd1,biogeochemistry,allometry,['fates_pft'],uniform,default,,,,,,,0.3,0.7,variable,Parameter 1 for h2cd allometry (exp(log-intercept) or scaling). If allom_dmode=1; this is the same as former crown_depth_frac parameter
+fates_allom_l2fr,biogeochemistry,allometry,['fates_pft'],uniform,default,,,,,,,0.7,1,gC/gC,Allocation parameter: fine root C per leaf C
+fates_allom_la_per_sa_int,biogeochemistry,allometry,['fates_pft'],uniform,default,,,,,,,0.15,0.35,m2/cm2,"Leaf area per sapwood area, intercept"
+fates_frag_seed_decay_rate,biogeochemistry,decomposition,['fates_pft'],uniform,default,,,,,,,0.2,0.55,yr-1,fraction of seeds that decay per year
+fates_grperc,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,0.15,0.4,unitless,growth respiration factor
+fates_leaf_fnps,stomatal,photosynthesis,['fates_pft'],uniform,default,,,,,,,0.1,0.4,unitless,fraction of light absorbed by non-photosynthetic pigments
+fates_leaf_slamax,stomatal,photosynthesis,['fates_pft'],uniform,default,,,,,,,0.03,0.05,m^2/gC,"Maximum Specific Leaf Area (SLA), even if under a dense canopy"
+fates_leaf_slatop,stomatal,photosynthesis,['fates_pft'],uniform,default,,,,,,,pft,pft,m^2/gC,"Specific Leaf Area (SLA) at top of canopy, projected area basis"
+fates_leaf_stomatal_intercept,stomatal,photosynthesis,['fates_pft'],uniform,default,,,,,,,10000,20000,umol H2O/m**2/s,Minimum unstressed stomatal conductance for Ball-Berry model and Medlyn model
+fates_leaf_stomatal_slope_medlyn,stomatal,vegetation water,['fates_pft'],uniform,default,,,,,,,pft,pft,KPa**0.5,"stomatal slope parameter, as per Medlyn"
+fates_leafn_vert_scaler,stomatal,photosynthesis,['fates_pft'],posterior,joint,,,,"['fates_leafn_vert_scaler_coeff1', 'fates_leafn_vert_scaler_coeff2']",,,,,unitless,"Coefficient one for decrease in leaf nitrogen through the canopy, from Lloyd et al. 2010"
+fates_leaf_vcmax25top,stomatal,photosynthesis,"['fates_leafage_class', 'fates_pft']",uniform,sliced,,0,fates_leafage_class,fates_leaf_vcmax25top,,,pft,pft,umol CO2/m^2/s,"maximum carboxylation rate of Rub. at 25C, canopy top"
+fates_maintresp_leaf_ryan1991_baserate,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,50percent,50percent,gC/gN/s,Leaf maintenance respiration base rate per Ryan et al 1991
+fates_maintresp_leaf_vert_scaler_coeff1,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,50percent,50percent,unitless,"Leaf maintenance respiration decrease through the canopy. Only applies to Atkin et al. 2017. For proportionality between photosynthesis and respiration through the canopy, match with fates_leafn_vert_scaler_coeff1."
+fates_maintresp_leaf_vert_scaler_coeff2,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,50percent,50percent,unitless,"Leaf maintenance respiration decrease through the canopy. Only applies to Atkin et al. 2017. For proportionality between photosynthesis and respiration through the canopy, match with fates_leafn_vert_scaler_coeff2."
+fates_maintresp_reduction_curvature,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,0.001,0.1,unitless,"curvature of MR reduction as f(carbon storage), 1=linear, 0=very curved"
+fates_maintresp_reduction_intercept,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,0.6,1,unitless,"intercept of MR reduction as f(carbon storage), 0=no throttling, 1=max throttling"
+fates_maintresp_reduction_upthresh,biogeochemistry,respiration,['fates_pft'],uniform,default,,,,,,,0.6,1,unitless,upper threshold for storage biomass (relative to leaf biomass) above which MR is not reduced
+fates_mort_bmort,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.001,0.02,1/yr,background mortality rate
+fates_mort_hf_sm_threshold,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.05,0.5,unitless,soil moisture (btran units) at which drought mortality begins for non-hydraulic model
+fates_mort_scalar_coldstress,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.01,0.5,1/yr,maximum mortality rate from cold stress
+fates_mort_scalar_cstarvation,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.01,0.5,1/yr,maximum mortality rate from carbon starvation
+fates_mort_scalar_hydrfailure,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.01,0.5,1/yr,maximum mortality rate from hydraulic failure
+fates_mort_upthresh_cstarvation,biogeochemistry,mortality,['fates_pft'],uniform,default,,,,,,,0.7,1,unitless,threshold for storage biomass (relative to target leaf biomass) above which carbon starvation is zero
+fates_nonhydro_smpso,stomatal,vegetation water,['fates_pft'],uniform,default,,,,,,,-173876,-20456,mm,Soil water potential at full stomatal opening
+smpsc_delta,stomatal,vegetation water,['fates_pft'],uniform,scale_from_root,,,,fates_nonhydro_smpsc,fates_nonhydro_smpso,,-600000,-20000,mm,Soil water potential at full stomatal closing (delta)
+fates_rad_leaf_clumping_index,biophysics,radiation,['fates_pft'],uniform,default,,,,,,,0.8,0.99,fraction (0-1),factor describing how much self-occlusion of leaf scattering elements decreases light interception
+fates_rad_leaf_xl,biophysics,radiation,['fates_pft'],uniform,default,,,,,,,pft,pft,unitless,Leaf/stem orientation index
+fates_recruit_height_min,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,pft,pft,m,the minimum height (ie starting height) of a newly recruited plant
+fates_recruit_init_density,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,0.08,0.5,stems/m2,initial seedling density for a cold-start near-bare-ground simulation. If negative sets initial tree dbh - only to be used in nocomp mode
+fates_recruit_seed_alloc,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,0.085,1,fraction,fraction of available carbon balance allocated to seeds
+fates_recruit_seed_alloc_mature,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,0,0.5,fraction,fraction of available carbon balance allocated to seeds in mature plants (adds to fates_seed_alloc)
+fates_recruit_seed_dbh_repro_threshold,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,20,90,cm,the diameter where the plant will increase allocation to the seed pool by fraction: fates_recruit_seed_alloc_mature
+fates_recruit_seed_germination_rate,biogeochemistry,recruitment,['fates_pft'],uniform,default,,,,,,,0.25,0.6,yr-1,fraction of seeds that germinate per year
+fates_turb_displar,biophysics,turbulence,['fates_pft'],uniform,default,,,,,,,0.4,0.95,unitless,Ratio of displacement height to canopy top height
+fates_turnover_branch,biogeochemistry,phenology,['fates_pft'],uniform,default,,,,,,,30,80,yr,turnover time of branches
+fates_turnover_fnrt,biogeochemistry,phenology,['fates_pft'],uniform,default,,,,,,,1,5,yr,"root longevity (alternatively, turnover time)"
+fates_stoich_nitr_1,biogeochemistry,allocation,"['fates_plant_organs', 'fates_pft']",uniform,sliced,,0,fates_plant_organs,fates_stoich_nitr,,,0.008,0.047,gN/gC,target nitrogen concentration (ratio with carbon) of organs
+fates_stoich_nitr_2,biogeochemistry,allocation,"['fates_plant_organs', 'fates_pft']",uniform,sliced,,1,fates_plant_organs,fates_stoich_nitr,,,0.008,0.047,gN/gC,target nitrogen concentration (ratio with carbon) of organs
+fates_turnover_leaf_canopy,biogeochemistry,phenology,"['fates_leafage_class', 'fates_pft']",uniform,default,,,,,,,pft,pft,yr,"Leaf longevity (ie turnover timescale) of canopy plants. For drought-deciduous PFTs, this also indicates the maximum length of the growing (i.e., leaves on) season."
+fates_turnover_leaf_ustory,biogeochemistry,phenology,"['fates_leafage_class', 'fates_pft']",uniform,default,,,,,,,pft,pft,yr,Leaf longevity (ie turnover timescale) of understory plants.
+fates_canopy_closure_thresh,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.7,0.9,unitless,tree canopy coverage at which crown area allometry changes from savanna to forest value
+fates_cohort_age_fusion_tol,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.05,0.3,unitless,fates_cohort_age_fusion_tol
+fates_cohort_size_fusion_tol,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.05,0.3,unitless,fates_cohort_size_fusion_tol
+fates_comp_excln,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,1,4,unitless,"IF POSITIVE: weighting factor (exponent on dbh) for canopy layer exclusion and promotion, IF NEGATIVE: switch to use deterministic height sorting"
+fates_maxcohort,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,50,500,unitless,maximum number of cohorts per patch. Actual number of cohorts also depend on cohort fusion tolerances
+fates_mort_understorey_death,biogeochemistry,mortality,[],uniform,default,,,,,,,0.2,0.8,unitless,fraction of plants in understorey cohort impacted by overstorey tree-fal
+fates_patch_fusion_tol,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.05,0.3,unitless,minimum fraction in difference in profiles between patches

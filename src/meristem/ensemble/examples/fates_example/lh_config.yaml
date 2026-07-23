@@ -1,0 +1,7 @@
+ensemble_type: LatinHypercube
+param_dir: fates_param_dir
+default_param_file: default_fates_param.json
+ensemble_dir: output_LH
+file_prefix: fates_lh
+ensemble_members: 20
+posterior_sources: posterior_sources.yaml

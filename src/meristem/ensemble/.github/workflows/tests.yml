@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: environment.yaml
+          activate-environment: param_ens_gen
+          auto-activate-base: false
+
+      - name: Install package
+        shell: bash -el {0}
+        run: pip install -e .
+
+      - name: Run tests
+        shell: bash -el {0}
+        run: pytest tests/ -m "not slow" --cov=param_ens_gen --cov-report=term-missing --cov-fail-under=95
+      
+      - name: Run pylint
+        shell: bash -el {0}
+        run: pylint param_ens_gen --fail-under=9.9

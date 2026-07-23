@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb  # optional — remove this line if you want to track notebooks
+
+# Conda / envs
+*.conda
+*.tar.bz2
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+output_LH/
+output_OAT
+

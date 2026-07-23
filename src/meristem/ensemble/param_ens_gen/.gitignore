@@ -1,0 +1,26 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# conda/pip
+*.egg-link
+*.egg-info
+*.pth
+*.conda
+*.tar.bz2
+
+# editor
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+.DS_Store

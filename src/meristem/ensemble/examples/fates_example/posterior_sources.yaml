@@ -1,0 +1,5 @@
+fates_leafn_vert_scaler:
+  parameters: [fates_leafn_vert_scaler_coeff1, fates_leafn_vert_scaler_coeff2]
+  files:
+    - path: "leafn_vert_scaler.txt"
+      array_indices: "all"

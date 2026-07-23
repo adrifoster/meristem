@@ -1,0 +1,5 @@
+ensemble_type: OAT
+param_dir: clm_param_dir
+default_param_file: default_clm_param.nc
+ensemble_dir: output_OAT
+file_prefix: clm_oat
