@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Conda/pip
+*.egg-link
+*.pth
+
+# Editor
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# CESM/PBS specific
+*.log
+*.pbs
+run_state.json
+run_state.json.tmp
+tests/smoke/cases/
