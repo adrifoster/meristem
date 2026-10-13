@@ -146,4 +146,8 @@ pylint src/meristem
 black --check src tests
 ```
 
+## License
+
+meristem is licensed under the [Apache License 2.0](LICENSE).
+
 [^name]: A meristem is the growing tissue in plants that gives rise to new organs.
