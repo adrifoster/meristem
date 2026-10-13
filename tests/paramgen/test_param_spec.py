@@ -1,8 +1,8 @@
-"""Tests for param_ens_gen.param_spec: ParamSpec and its parsing helpers."""
+"""Tests for meristem.paramgen.param_spec: ParamSpec and its parsing helpers."""
 
 import pytest
 
-from param_ens_gen.param_spec import ParamSpec, _REQUIRED_COLUMNS, _parse_dims
+from meristem.paramgen.param_spec import ParamSpec, _REQUIRED_COLUMNS, _parse_dims
 
 # _parse_dims is tested directly because its defensive branches (non-string,
 # whitespace) are unreachable through from_row but protect against future callers.

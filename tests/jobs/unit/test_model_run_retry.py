@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tethering.stages import StageStatus
+from meristem.jobs.stages import StageStatus
 
 
 def test_retry_calls_submit_stage(created_run, mocker):

@@ -1,4 +1,4 @@
-"""Tests for param_ens_gen.diagnostics."""
+"""Tests for meristem.paramgen.diagnostics."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pandas as pd
 matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from param_ens_gen.diagnostics import normalize_defaults, plot_param_bounds
+from meristem.paramgen.diagnostics import normalize_defaults, plot_param_bounds
 
 
 def test_plot_param_bounds_returns_figure(ensemble_param_dir, default_param_file):

@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageStatus
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageStatus
 from jinja2 import TemplateNotFound
 
 
@@ -21,7 +21,7 @@ def test_submit_writes_jobscript(created_run, mock_qsub):
 def test_submit_raises_if_template_missing(created_run, mocker):
     """Test that submit() raises if the PBS template file is missing"""
     mocker.patch(
-        "tethering.model_run._ENV.get_template",
+        "meristem.jobs.model_run._ENV.get_template",
         side_effect=TemplateNotFound("setup_script_template.txt"),
     )
     with pytest.raises(TemplateNotFound):
@@ -171,7 +171,7 @@ def test_submit_skips_if_first_stage_not_pending(
 
 def test_qsub_calls_subprocess_with_correct_args(created_run, mocker):
     """Test that _qsub calls qsub with the correct arguments"""
-    mock_run = mocker.patch("tethering.model_run.subprocess.run")
+    mock_run = mocker.patch("meristem.jobs.model_run.subprocess.run")
     mock_run.return_value.stdout = "12345.pbs\n"
 
     created_run.submit()

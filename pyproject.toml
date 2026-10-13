@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meristem"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Calibration tooling for land surface models"
 requires-python = ">=3.10"
 dependencies = [
@@ -41,19 +41,11 @@ testpaths = ["tests"]
 addopts = "-m 'not pbs'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "pbs: requires a PBS scheduler (qsub); skipped by default",
 ]
 
 [tool.pylint.main]
-source-roots = ["."]
-
-[tool.pylint."tests/conftest.py"]
-disable = ["redefined-outer-name"]
-
-[tool.pylint."tests/test_diagnostics.py"]
-disable = ["wrong-import-order", "wrong-import-position"]
-
-[tool.pylint."tests/*.py"]
-disable = ["too-many-arguments", "too-many-positional-arguments", "duplicate-code"]
+source-roots = ["src"]
 
 [tool.black]
 target-version = ["py310", "py311", "py312"]

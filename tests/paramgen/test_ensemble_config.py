@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import numpy as np
-from param_ens_gen.ensemble_config import (
+from meristem.paramgen.ensemble_config import (
     EnsembleConfig,
     LatinHypercubeConfig,
     OneAtATimeConfig,

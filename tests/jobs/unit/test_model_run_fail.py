@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 import pytest
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageStatus
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageStatus
 
 
 def test_fail_sets_stage_status_to_failed(created_run):

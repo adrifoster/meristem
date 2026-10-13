@@ -15,7 +15,7 @@
 
 # activate conda environment
 source $(conda info --base)/etc/profile.d/conda.sh
-conda activate tethering
+conda activate meristem
 
 set -euo pipefail
  

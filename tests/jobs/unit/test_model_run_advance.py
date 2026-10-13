@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 import time
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageStatus
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageStatus
 
 
 def test_advance_marks_stage_done(two_stage_run, mock_qsub):

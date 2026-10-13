@@ -1,4 +1,4 @@
-"""Fixtures shared across param_ens_gen tests."""
+"""Fixtures shared across meristem.paramgen tests."""
 
 from pathlib import Path
 import json
@@ -10,19 +10,19 @@ import pytest
 import yaml
 
 
-from param_ens_gen.posterior_source import PosteriorSource
-from param_ens_gen.parameter import (
+from meristem.paramgen.posterior_source import PosteriorSource
+from meristem.paramgen.parameter import (
     DefaultParameter,
     JointParameter,
     ScaleFromRootParameter,
     SlicedParameter,
 )
-from param_ens_gen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
-from param_ens_gen.param_ensemble import (
+from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
+from meristem.paramgen.param_ensemble import (
     LatinHypercubeEnsemble,
     OneAtATimeEnsemble,
 )
-from param_ens_gen.parameter_dataset import (
+from meristem.paramgen.parameter_dataset import (
     NetCDFParameterDataset,
     FATESJSONParameterDataset,
 )

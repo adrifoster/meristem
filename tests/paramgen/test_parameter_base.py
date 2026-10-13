@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 
-from param_ens_gen.parameter import (
+from meristem.paramgen.parameter import (
     DimIndex,
     DefaultParameter,
     JointParameter,
@@ -14,12 +14,12 @@ from param_ens_gen.parameter import (
     ScaleFromRootParameter,
     SlicedParameter,
 )
-from param_ens_gen.sampler import (
+from meristem.paramgen.sampler import (
     UniformSampler,
     PosteriorSampler,
 )
 
-from param_ens_gen.distribution_stat import (
+from meristem.paramgen.distribution_stat import (
     FixedStat,
     PercentStat,
     PFTStat,

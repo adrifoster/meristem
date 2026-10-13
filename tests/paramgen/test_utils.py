@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import pandas as pd
-from param_ens_gen.utils import read_param_list
+from meristem.paramgen.utils import read_param_list
 
 
 def test_read_param_list_returns_main(param_dir):

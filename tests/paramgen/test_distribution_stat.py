@@ -1,4 +1,4 @@
-"""Tests for param_ens_gen.distribution_stat.
+"""Tests for meristem.paramgen.distribution_stat.
 
 Scope
 -----
@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from param_ens_gen.distribution_stat import (
+from meristem.paramgen.distribution_stat import (
     DistributionStat,
     FixedStat,
     PercentStat,

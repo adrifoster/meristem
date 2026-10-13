@@ -1,10 +1,10 @@
-"""Fixtures shared across tethering unit tests."""
+"""Fixtures shared across meristem.jobs unit tests."""
 
 from pathlib import Path
 import pytest
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageConfig, StageState, StageStatus, Stage
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageConfig, StageState, StageStatus, Stage
 
 
 @pytest.fixture

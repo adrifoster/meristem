@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tethering.model_run import ModelRun, _STATE_FILE
+from meristem.jobs.model_run import ModelRun, _STATE_FILE
 
 
 def test_model_run_create_valid_config_passes(run_config_dict):

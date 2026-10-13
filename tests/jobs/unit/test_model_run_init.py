@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import pytest
 
-from tethering.model_run import ModelRun
+from meristem.jobs.model_run import ModelRun
 
 
 def test_model_run_empty_run_id_raises(tmp_path, ad_stage):

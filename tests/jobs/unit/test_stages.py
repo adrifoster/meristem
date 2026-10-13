@@ -1,5 +1,5 @@
 """
-Tests for tethering.stages:
+Tests for meristem.jobs.stages:
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import inspect
 from pathlib import Path
 import pytest
 
-from tethering.stages import (
+from meristem.jobs.stages import (
     Stage,
     StageConfig,
     StageKind,

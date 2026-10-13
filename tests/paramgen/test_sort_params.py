@@ -2,8 +2,8 @@
 
 import pytest
 
-from param_ens_gen.sort_params import sort_params
-from param_ens_gen.parameter import DefaultParameter, ScaleFromRootParameter
+from meristem.paramgen.sort_params import sort_params
+from meristem.paramgen.parameter import DefaultParameter, ScaleFromRootParameter
 
 
 def test_sort_params_no_dependencies(default_param, scalar_param):

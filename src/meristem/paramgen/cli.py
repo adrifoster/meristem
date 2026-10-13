@@ -1,4 +1,4 @@
-"""Command-line interface for param_ens_gen"""
+"""Command-line interface for meristem.paramgen"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from param_ens_gen import ParamEnsemble
+from .param_ensemble import ParamEnsemble
 
 
 def _load_config(config_path: Path) -> dict:
@@ -56,9 +56,9 @@ def _run(args: argparse.Namespace):
 
 
 def main():
-    """Entry point for the param_ens_gen CLI."""
+    """Entry point for the meristem-paramgen CLI."""
     parser = argparse.ArgumentParser(
-        prog="param_ens_gen",
+        prog="meristem-paramgen",
         description="Generate CLM/FATES parameter ensembles.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from param_ens_gen.parameter import DimIndex, Parameter
+from meristem.paramgen.parameter import DimIndex, Parameter
 
 
 def test_validate_specs_passes_for_scale(scale_from_root_row, param_dataset):

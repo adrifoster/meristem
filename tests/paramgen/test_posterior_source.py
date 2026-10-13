@@ -1,10 +1,10 @@
-"""Tests for param_ens_gen.posterior: PosteriorSource."""
+"""Tests for meristem.paramgen.posterior: PosteriorSource."""
 
 import pytest
 import numpy as np
 import pandas as pd
 
-from param_ens_gen.posterior_source import PosteriorSource
+from meristem.paramgen.posterior_source import PosteriorSource
 
 # pylint: disable=protected-access
 

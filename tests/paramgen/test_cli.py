@@ -5,26 +5,26 @@ from __future__ import annotations
 import yaml
 import pytest
 
-from param_ens_gen.cli import main
+from meristem.paramgen.cli import main
 
 
 def test_main_no_subcommand_exits(mocker):
     """main() exits with an error when no subcommand is given."""
-    mocker.patch("sys.argv", ["param_ens_gen"])
+    mocker.patch("sys.argv", ["meristem-paramgen"])
     with pytest.raises(SystemExit):
         main()
 
 
 def test_main_run_missing_config_arg_exits(mocker):
     """main() exits when the config argument is missing."""
-    mocker.patch("sys.argv", ["param_ens_gen", "run"])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run"])
     with pytest.raises(SystemExit):
         main()
 
 
 def test_main_run_config_not_found_exits(mocker, tmp_path):
     """main() exits with code 1 when the config file does not exist."""
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(tmp_path / "missing.yaml")])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(tmp_path / "missing.yaml")])
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
@@ -35,7 +35,7 @@ def test_main_run_config_not_a_mapping_exits(mocker, tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text("- item1\n- item2\n")
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
@@ -53,7 +53,7 @@ def test_main_run_invalid_ensemble_type_exits(mocker, tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(yaml.dump(config))
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
@@ -79,9 +79,9 @@ def test_main_run_calls_create_ensemble(
     mock_ensemble.num_params = 6
     mock_ensemble.ensemble_dir = tmp_path / "out"
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     mocker.patch(
-        "param_ens_gen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
+        "meristem.paramgen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
     )
 
     main()
@@ -114,9 +114,9 @@ def test_main_run_prints_summary(
     mock_ensemble.num_params = 6
     mock_ensemble.ensemble_dir = tmp_path / "out"
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     mocker.patch(
-        "param_ens_gen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
+        "meristem.paramgen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
     )
 
     main()
@@ -140,9 +140,9 @@ def test_main_run_value_error_exits(mocker, tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(yaml.dump(config))
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     mocker.patch(
-        "param_ens_gen.cli.ParamEnsemble.from_dict",
+        "meristem.paramgen.cli.ParamEnsemble.from_dict",
         side_effect=ValueError("bad config"),
     )
 
@@ -164,9 +164,9 @@ def test_main_run_file_not_found_exits(mocker, tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(yaml.dump(config))
 
-    mocker.patch("sys.argv", ["param_ens_gen", "run", str(config_file)])
+    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(config_file)])
     mocker.patch(
-        "param_ens_gen.cli.ParamEnsemble.from_dict",
+        "meristem.paramgen.cli.ParamEnsemble.from_dict",
         side_effect=FileNotFoundError("missing file"),
     )
 

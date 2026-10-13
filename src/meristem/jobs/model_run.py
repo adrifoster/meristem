@@ -15,7 +15,7 @@ import yaml
 from .stages import Stage, StageStatus
 
 # templates dir
-_TEMPLATES = Path(__file__).parents[1] / "templates"
+_TEMPLATES = Path(__file__).parent / "templates"
 
 _ENV = Environment(
     loader=FileSystemLoader(_TEMPLATES),

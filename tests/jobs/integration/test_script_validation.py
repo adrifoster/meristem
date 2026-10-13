@@ -5,7 +5,7 @@ import pytest
 import time
 from pathlib import Path
 
-from tethering.stages import StageStatus
+from meristem.jobs.stages import StageStatus
 
 SCRIPTS = Path(__file__).parent.parent / "smoke" / "scripts"
 

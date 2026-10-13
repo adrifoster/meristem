@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pytest
 
-from param_ens_gen.parameter_dataset import (
+from meristem.paramgen.parameter_dataset import (
     ParameterDataset,
     NetCDFParameterDataset,
     FATESJSONParameterDataset,

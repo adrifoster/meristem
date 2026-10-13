@@ -1,16 +1,16 @@
-"""Tests for param_ens_gen.sampler."""
+"""Tests for meristem.paramgen.sampler."""
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from param_ens_gen.sampler import (
+from meristem.paramgen.sampler import (
     Sampler,
     SampleContext,
     UniformSampler,
     PosteriorSampler,
 )
-from param_ens_gen.distribution_stat import (
+from meristem.paramgen.distribution_stat import (
     FixedStat,
     PercentStat,
     PFTStat,

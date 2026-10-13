@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from param_ens_gen.param_ensemble import (
+from meristem.paramgen.param_ensemble import (
     ParamEnsemble,
     LatinHypercubeEnsemble,
     OneAtATimeEnsemble,
@@ -15,9 +15,9 @@ from param_ens_gen.param_ensemble import (
     ParamGroup,
 )
 
-from param_ens_gen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
-from param_ens_gen.parameter import DimIndex, Parameter
-from param_ens_gen.parameter_dataset import ParameterDataset
+from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
+from meristem.paramgen.parameter import DimIndex, Parameter
+from meristem.paramgen.parameter_dataset import ParameterDataset
 
 
 def test_from_dict_missing_ensemble_type(

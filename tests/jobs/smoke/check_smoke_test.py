@@ -15,8 +15,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageStatus
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageStatus
 
 
 def check(root: Path) -> int:

@@ -1,4 +1,4 @@
-"""End-to-end integration tests for param_ens_gen."""
+"""End-to-end integration tests for meristem.paramgen."""
 
 from __future__ import annotations
 import subprocess
@@ -8,11 +8,11 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from param_ens_gen.param_ensemble import LatinHypercubeEnsemble, OneAtATimeEnsemble
-from param_ens_gen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
-from param_ens_gen.parameter_dataset import ParameterDataset
+from meristem.paramgen.param_ensemble import LatinHypercubeEnsemble, OneAtATimeEnsemble
+from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
+from meristem.paramgen.parameter_dataset import ParameterDataset
 
-EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+EXAMPLES_DIR = Path(__file__).parents[2] / "examples" / "paramgen"
 
 # ===========================================================================
 # Helpers
@@ -264,7 +264,7 @@ def test_grouped_params_move_together(grouped_param_dir, default_param_file, tmp
 def test_cli_clm_lh_example():
     """Full CLI run against the CLM Latin Hypercube example."""
     result = subprocess.run(
-        ["param_ens_gen", "run", "lh_config.yaml"],
+        ["meristem-paramgen", "run", "lh_config.yaml"],
         cwd=EXAMPLES_DIR / "clm_example",
         capture_output=True,
         text=True,
@@ -281,7 +281,7 @@ def test_cli_clm_lh_example():
 def test_cli_clm_oat_example():
     """Full CLI run against the CLM OAT example."""
     result = subprocess.run(
-        ["param_ens_gen", "run", "oat_config.yaml"],
+        ["meristem-paramgen", "run", "oat_config.yaml"],
         cwd=EXAMPLES_DIR / "clm_example",
         capture_output=True,
         text=True,
@@ -296,7 +296,7 @@ def test_cli_clm_oat_example():
 def test_cli_fates_lh_example():
     """Full CLI run against the FATES Latin Hypercube example."""
     result = subprocess.run(
-        ["param_ens_gen", "run", "lh_config.yaml"],
+        ["meristem-paramgen", "run", "lh_config.yaml"],
         cwd=EXAMPLES_DIR / "fates_example",
         capture_output=True,
         text=True,
@@ -311,7 +311,7 @@ def test_cli_fates_lh_example():
 def test_cli_fates_oat_example():
     """Full CLI run against the FATES OAT example."""
     result = subprocess.run(
-        ["param_ens_gen", "run", "oat_config.yaml"],
+        ["meristem-paramgen", "run", "oat_config.yaml"],
         cwd=EXAMPLES_DIR / "fates_example",
         capture_output=True,
         text=True,

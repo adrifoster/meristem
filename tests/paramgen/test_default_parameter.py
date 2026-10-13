@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from param_ens_gen.parameter import DimIndex, Parameter
+from meristem.paramgen.parameter import DimIndex, Parameter
 
 
 def test_default_validate_specs_passes(default_row, param_dataset):

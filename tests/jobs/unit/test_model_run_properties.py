@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tethering.stages import StageStatus
+from meristem.jobs.stages import StageStatus
 
 
 def test_current_stage_returns_first_stage_when_all_pending(two_stage_run):

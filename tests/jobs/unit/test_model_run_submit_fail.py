@@ -6,8 +6,8 @@ import subprocess
 import time
 import pytest
 
-from tethering.model_run import ModelRun
-from tethering.stages import StageStatus
+from meristem.jobs.model_run import ModelRun
+from meristem.jobs.stages import StageStatus
 
 
 def test_submit_fail_unknown_stage_raises(created_run, mock_qsub):

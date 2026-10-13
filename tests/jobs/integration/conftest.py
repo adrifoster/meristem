@@ -2,7 +2,7 @@ import shutil
 import pytest
 from pathlib import Path
 
-from tethering.model_run import ModelRun
+from meristem.jobs.model_run import ModelRun
 
 
 def pytest_collection_modifyitems(items):

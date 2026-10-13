@@ -1,10 +1,10 @@
-"""Tests for tethering.cli"""
+"""Tests for meristem.jobs.cli"""
 
 from __future__ import annotations
 
 import pytest
 
-from tethering.cli import build_parser, validate_args, dispatch, main
+from meristem.jobs.cli import build_parser, validate_args, dispatch, main
 
 
 @pytest.fixture
@@ -24,13 +24,13 @@ def mock_run(mocker):
 @pytest.fixture
 def mock_load(mocker, mock_run):
     """Patch ModelRun.load to return mock_run."""
-    return mocker.patch("tethering.cli.ModelRun.load", return_value=mock_run)
+    return mocker.patch("meristem.jobs.cli.ModelRun.load", return_value=mock_run)
 
 
 @pytest.fixture
 def mock_create(mocker, mock_run):
     """Patch ModelRun.create to return mock_run."""
-    return mocker.patch("tethering.cli.ModelRun.create", return_value=mock_run)
+    return mocker.patch("meristem.jobs.cli.ModelRun.create", return_value=mock_run)
 
 
 def test_create_with_config_passes():
@@ -560,27 +560,27 @@ def test_main_runtime_error_prints_to_stderr(tmp_path, capsys):
 
 def test_main_keyboard_interrupt_exits_130(mocker):
     """Test that main with a keyboard interrupt exist with status 130"""
-    mocker.patch("tethering.cli.dispatch", side_effect=KeyboardInterrupt)
+    mocker.patch("meristem.jobs.cli.dispatch", side_effect=KeyboardInterrupt)
     result = main(["--print-status", "--root", "/tmp/run"])
     assert result == 130
 
 
 def test_main_unexpected_exception_exits_one(mocker):
     """Test that main with some unexpected exception exist with status 1"""
-    mocker.patch("tethering.cli.dispatch", side_effect=RuntimeError("boom"))
+    mocker.patch("meristem.jobs.cli.dispatch", side_effect=RuntimeError("boom"))
     result = main(["--print-status", "--root", "/tmp/run"])
     assert result == 1
 
 
 def test_main_unexpected_exception_prints_to_stderr(mocker, capsys):
     """Test that main with some unexpected exception prints to stderr"""
-    mocker.patch("tethering.cli.dispatch", side_effect=RuntimeError("boom"))
+    mocker.patch("meristem.jobs.cli.dispatch", side_effect=RuntimeError("boom"))
     main(["--print-status", "--root", "/tmp/run"])
     assert "ERROR: boom" in capsys.readouterr().err
 
 
 def test_main_debug_flag_reraises_exception(mocker):
     """Test that --debug causes exceptions to propagate rather than being caught"""
-    mocker.patch("tethering.cli.dispatch", side_effect=RuntimeError("boom"))
+    mocker.patch("meristem.jobs.cli.dispatch", side_effect=RuntimeError("boom"))
     with pytest.raises(RuntimeError, match="boom"):
         main(["--print-status", "--root", "/tmp/run", "--debug"])
