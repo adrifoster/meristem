@@ -10,9 +10,11 @@ requires-python = ">=3.10"
 dependencies = [
 "xarray",
 "numpy",
+"SALib",
 "scipy",
 "pandas",
 "pyyaml",
+"jinja2",
 "tqdm",
 "netcdf4",
 "matplotlib",
@@ -22,13 +24,21 @@ dependencies = [
 dev = ["pytest>=8", "pytest-cov", "pytest-mock", "black", "pylint"]
 
 [project.scripts]
-param_ens_gen = "param_ens_gen.cli:main"
+meristem-paramgen = "meristem.paramgen.cli:main"   # temporary
+clm-run = "meristem.jobs.cli:main"                 # temporary
+
+[tool.setuptools.dynamic]
+version = {attr = "meristem.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"meristem.jobs" = ["templates/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not pbs'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
