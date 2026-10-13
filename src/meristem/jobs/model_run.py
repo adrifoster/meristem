@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import re
 
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
+from jinja2 import Environment, FileSystemLoader
 import yaml
 
 from .stages import Stage, StageStatus
@@ -341,7 +341,8 @@ class ModelRun:
             else self._qsub(job_file)
         )
         print(
-            f"  {self.run_id} / {stage_name}: advance job submitted {job_id} (afterok:{cime_job_id})"
+            f"  {self.run_id} / {stage_name}: advance job submitted {job_id} "
+            f"(afterok:{cime_job_id})"
         )
         return job_id
 
@@ -367,7 +368,8 @@ class ModelRun:
             f"DRY_fail_{self.run_id}_{stage_name}" if dry_run else self._qsub(job_file)
         )
         print(
-            f"  {self.run_id} / {stage_name}: fail job submitted {job_id} (afternotok:{cime_job_id})"
+            f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
+            f"(afternotok:{cime_job_id})"
         )
         return job_id
 
@@ -408,7 +410,8 @@ class ModelRun:
             stage_name (str | None): stage name
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
-            skip_script (bool, optional): If True, just submit and don't run the script. Defaults to False
+            skip_script (bool, optional): If True, just submit and don't run the script.
+            Defaults to False
 
         Returns:
             str | None: PBS job ID of the advance script, or None if all stages complete
@@ -440,10 +443,12 @@ class ModelRun:
 
         Args:
             stage (Stage): stage
-            depend_job_id (str | None, optional): CIME job id to add to afterok dependency. Defaults to None.
+            depend_job_id (str | None, optional): CIME job id to add to afterok
+                dependency. Defaults to None.
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
-            skip_script (bool, optional): If True, just submit and don't run the script. Defaults to False
+            skip_script (bool, optional): If True, just submit and don't run the script.
+                Defaults to False
 
         Raises:
             ValueError: Can only submit PENDING or FAILED stages

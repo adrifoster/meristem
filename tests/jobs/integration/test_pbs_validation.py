@@ -9,7 +9,9 @@ def test_qsub_accepts_submit_script(integration_run):
     """Test that generated PBS submit script is accepted by PBS"""
     job_id = integration_run.submit()
     assert job_id, "expected a job ID from qsub"
-    result = subprocess.run(["qdel", job_id], capture_output=True, text=True)
+    result = subprocess.run(
+        ["qdel", job_id], capture_output=True, text=True, check=False
+    )
     assert result.returncode == 0, f"qdel failed:\n{result.stderr}"
 
 

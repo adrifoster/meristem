@@ -34,7 +34,8 @@ def test_fail_sets_end_time(created_run):
     assert created_run.stages[0].state.end_time is not None
 
 
-def test_fail_persists_to_disk(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_fail_persists_to_disk(created_run):
     """Test that fail() saves the updated state to disk"""
     created_run.submit()
     created_run.fail("spinup_ad")
@@ -42,14 +43,16 @@ def test_fail_persists_to_disk(created_run, mock_qsub):
     assert loaded.stages[0].state.status is StageStatus.FAILED
 
 
-def test_fail_preserves_job_id(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_fail_preserves_job_id(created_run):
     """Test that fail() does not clobber the existing job ID"""
     created_run.submit()
     created_run.fail("spinup_ad")
     assert created_run.stages[0].state.job_id == "12345.pbs"
 
 
-def test_fail_preserves_attempts(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_fail_preserves_attempts(created_run):
     """Test that fail() does not reset the attempts counter"""
     created_run.submit()
     created_run.fail("spinup_ad")

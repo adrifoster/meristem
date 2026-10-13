@@ -5,10 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import pandas as pd
-
-matplotlib = pytest.importorskip("matplotlib")
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from meristem.paramgen.diagnostics import normalize_defaults, plot_param_bounds
 
 
@@ -119,7 +117,8 @@ def test_normalize_defaults_scalar_param_has_one_row(
     )
     assert len(df) == 1
     assert df["parameter"].iloc[0] == "fates_canopy_closure_thresh"
-    
+
+
 def test_normalize_defaults_pft_index_returns_single_row(
     ensemble_param_dir, default_param_file
 ):
@@ -178,27 +177,30 @@ def test_normalize_defaults_joint_param_has_row_per_base_param_per_index(
     assert any(df["parameter"].str.startswith("fates_leafn_vert_scaler_coeff1"))
     assert any(df["parameter"].str.startswith("fates_leafn_vert_scaler_coeff2"))
 
-def test_normalize_defaults_clips_out_of_bounds_defaults(
-    tmp_path, default_param_file
-):
+
+def test_normalize_defaults_clips_out_of_bounds_defaults(tmp_path, default_param_file):
     """normalize_defaults clips defaults outside bounds to 0.0 or 1.0."""
     # create a param where default is below min
-    pd.DataFrame([{
-        "parameter_name": "fates_leaf_slatop",
-        "long_name": "SLA",
-        "category": "stomatal",
-        "subcategory": "photosynthesis",
-        "units": "m^2/gC",
-        "coord": "['fates_pft']",
-        "param_type": "default",
-        "strategy": "uniform",
-        "param_min": "0.025",  # min higher than default value of 0.010
-        "param_max": "0.05",
-        "slice_dim": None,
-        "slice_index": None,
-        "root_param": None,
-        "base_params": "",
-    }]).to_csv(tmp_path / "main.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "long_name": "SLA",
+                "category": "stomatal",
+                "subcategory": "photosynthesis",
+                "units": "m^2/gC",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": "0.025",  # min higher than default value of 0.010
+                "param_max": "0.05",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": None,
+                "base_params": "",
+            }
+        ]
+    ).to_csv(tmp_path / "main.csv", index=False)
 
     df = normalize_defaults(tmp_path, default_param_file)
     # default 0.010 is below min 0.025 so should be clipped to 0.0
@@ -207,26 +209,28 @@ def test_normalize_defaults_clips_out_of_bounds_defaults(
     assert df["normalized_value"].iloc[2] == pytest.approx(0.2)
 
 
-def test_normalize_defaults_filters_nan_values(
-    tmp_path, default_param_file
-):
+def test_normalize_defaults_filters_nan_values(tmp_path, default_param_file):
     """normalize_defaults filters out nan default values."""
-    pd.DataFrame([{
-        "parameter_name": "fates_leaf_slatop",
-        "long_name": "SLA",
-        "category": "stomatal",
-        "subcategory": "photosynthesis",
-        "units": "m^2/gC",
-        "coord": "['fates_pft']",
-        "param_type": "default",
-        "strategy": "uniform",
-        "param_min": "0.005",
-        "param_max": "0.05",
-        "slice_dim": None,
-        "slice_index": None,
-        "root_param": None,
-        "base_params": "",
-    }]).to_csv(tmp_path / "main.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "long_name": "SLA",
+                "category": "stomatal",
+                "subcategory": "photosynthesis",
+                "units": "m^2/gC",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": "0.005",
+                "param_max": "0.05",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": None,
+                "base_params": "",
+            }
+        ]
+    ).to_csv(tmp_path / "main.csv", index=False)
 
     # default_ds has 3 PFTs, all non-nan, so all 3 rows should appear
     df = normalize_defaults(tmp_path, default_param_file)

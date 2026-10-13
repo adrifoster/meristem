@@ -631,9 +631,9 @@ def test_joint_parameter_normalize(joint_param, param_dataset):
 def test_normalize_clips_to_bounds(default_row, param_dataset, mocker):
     """Parameter.normalize passes clip_to_bounds to the sampler."""
     param = Parameter.from_row(default_row, param_dataset)
-    mock_normalize = mocker.patch.object(
-        param.sampler, "normalize", return_value=0.0
-    )
+    mock_normalize = mocker.patch.object(param.sampler, "normalize", return_value=0.0)
     param.normalize(0.0, param_dataset, clip_to_bounds=True)
-    assert mock_normalize.call_args[1].get("clip_to_bounds") or \
-           mock_normalize.call_args[0][2] == True
+    assert (
+        mock_normalize.call_args[1].get("clip_to_bounds")
+        or mock_normalize.call_args[0][2] is True
+    )

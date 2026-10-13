@@ -8,7 +8,6 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 
 from tqdm import tqdm
-import yaml
 import pandas as pd
 import numpy as np
 from scipy.stats import qmc
@@ -16,9 +15,14 @@ from SALib.sample import morris as sample_morris
 
 from .parameter_dataset import ParameterDataset
 from .parameter import Parameter
-from .ensemble_config import EnsembleConfig, LatinHypercubeConfig, OneAtATimeConfig, MorrisEnsembleConfig
+from .ensemble_config import (
+    EnsembleConfig,
+    LatinHypercubeConfig,
+    OneAtATimeConfig,
+    MorrisEnsembleConfig,
+)
 from .sort_params import sort_params
-from .utils import read_param_list
+from .utils import read_param_list, read_posterior_sources
 
 
 @dataclass
@@ -140,13 +144,7 @@ class ParamEnsemble(ABC):
             )
         self.default_ds = ParameterDataset.from_path(config.default_param_file)
 
-        if config.posterior_sources:
-            if not config.posterior_sources.exists():
-                raise FileNotFoundError(
-                    f"Posterior sources file '{config.posterior_sources}' does not exist."
-                )
-            with open(config.posterior_sources, "r", encoding="utf-8") as f:
-                posterior_config = yaml.safe_load(f)
+        posterior_config = read_posterior_sources(config.posterior_sources)
 
         self.fixed_indices: dict[str, list[int]] = config.fixed_indices or {}
         if self.fixed_indices:
@@ -162,11 +160,7 @@ class ParamEnsemble(ABC):
                     row,
                     pft_sheet=pft_sheets.get(row["parameter_name"]),
                     default_ds=self.default_ds,
-                    posterior_config=(
-                        posterior_config.get(row["parameter_name"])
-                        if config.posterior_sources
-                        else None
-                    ),
+                    posterior_config=posterior_config.get(row["parameter_name"]),
                 )
                 for _, row in main.iterrows()
             ]
@@ -182,8 +176,15 @@ class ParamEnsemble(ABC):
         self.sampling_units: list[ParamGroup] = []
         self._build_sampling_units()
 
-        self.num_sampling_units = len(self.sampling_units)
-        self.num_params = len(self.params)
+    @property
+    def num_params(self) -> int:
+        """Number of parameters"""
+        return len(self.params)
+
+    @property
+    def num_sampling_units(self) -> int:
+        """Number of sampling units (independent dimensions of the sample design)"""
+        return len(self.sampling_units)
 
     @classmethod
     def from_dict(
@@ -682,6 +683,7 @@ class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
             )
         return param_df.drop(columns=["normalized_value"])
 
+
 class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
     """Concrete class for the Latin Hypercube ensemble class
 
@@ -696,10 +698,10 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         config: MorrisEnsembleConfig,
     ):
         super().__init__(config)
-        self.morris_N = config.morris_N
+        self.morris_n = config.morris_n
         self.levels = config.levels
         self.optimal_trajectories = config.optimal_trajectories
-        
+
     @classmethod
     def from_config(cls, config: dict) -> MorrisEnsemble:
         """Construct from a plain dict (ensemble_type already removed)
@@ -814,10 +816,11 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             "bounds": [[0.0, 1.0]] * len(self.sampling_units),
         }
         return sample_morris.sample(
-            problem, N=self.morris_N, num_levels=self.levels,
-            optimal_trajectories=self.optimal_trajectories
+            problem,
+            N=self.morris_n,
+            num_levels=self.levels,
+            optimal_trajectories=self.optimal_trajectories,
         )
-        
 
 
 def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:

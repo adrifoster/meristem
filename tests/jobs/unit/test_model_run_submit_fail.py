@@ -6,17 +6,18 @@ import subprocess
 import time
 import pytest
 
-from meristem.jobs.model_run import ModelRun
 from meristem.jobs.stages import StageStatus
 
 
-def test_submit_fail_unknown_stage_raises(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_unknown_stage_raises(created_run):
     """Test that submit_fail() raises for an unknown stage name"""
     with pytest.raises(ValueError, match="nonexistent_stage"):
         created_run.submit_fail("nonexistent_stage", "5555.deched")
 
 
-def test_submit_fail_writes_jobscript(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_writes_jobscript(created_run):
     """Test that ModelRun.submit_fail() actually writes a jobscript"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     created_run.stages[0].state.submit_time = time.time() - 100
@@ -35,9 +36,8 @@ def test_submit_fail_writes_jobscript(created_run, mock_qsub):
         ("#PBS -W depend=afternotok:", "cime_job_id"),
     ],
 )
-def test_submit_fail_script_contains_pbs_directives(
-    created_run, mock_qsub, field, expected
-):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_script_contains_pbs_directives(created_run, field, expected):
     """Test that ModelRun.submit_fail() creates a PBS file with the correct PBS directives"""
 
     stage = created_run.stages[0]
@@ -60,7 +60,8 @@ def test_submit_fail_script_contains_pbs_directives(
     assert field + values[expected] in job_file
 
 
-def test_submit_fail_script_references_run_root(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_script_references_run_root(created_run):
     """Test that the job script references the correct run root"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -73,7 +74,8 @@ def test_submit_fail_script_references_run_root(created_run, mock_qsub):
     assert f"clm-run --root {created_run.root}" in content
 
 
-def test_submit_fail_script_references_stage_name(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_script_references_stage_name(created_run):
     """Test that the job script references the correct stage name"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -86,7 +88,8 @@ def test_submit_fail_script_references_stage_name(created_run, mock_qsub):
     assert f"--stage {created_run.stages[0].config.name}" in content
 
 
-def test_submit_fail_returns_job_id(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_returns_job_id(created_run):
     """Test that submit_fail() returns the PBS job ID"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -113,7 +116,8 @@ def test_submit_fail_dry_run_does_not_call_qsub(created_run, mock_qsub):
     mock_qsub.assert_not_called()
 
 
-def test_submit_fail_dry_run_job_id_format(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_dry_run_job_id_format(created_run):
     """Test that submit_fail(dry_run=True) produces a synthetic DRY_ job ID"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -122,7 +126,8 @@ def test_submit_fail_dry_run_job_id_format(created_run, mock_qsub):
     assert result == f"DRY_fail_{created_run.run_id}_spinup_ad"
 
 
-def test_submit_fail_dry_run_still_writes_script(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_dry_run_still_writes_script(created_run):
     """Test that submit_fail(dry_run=True) still writes the advance script"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -141,7 +146,8 @@ def test_submit_fail_qsub_failure_raises(created_run, mocker):
         created_run.submit_fail("spinup_ad", "55555.pbs")
 
 
-def test_submit_fail_does_not_update_stage_state(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_fail_does_not_update_stage_state(created_run):
     """submit_fail() does not update stage status or job_id
     The advance job ID belongs to the *next* stage, not the current one.
     """

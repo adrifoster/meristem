@@ -388,15 +388,15 @@ def test_normalize_clips_below_min(default_row):
     sampler = UniformSampler(default_row)
     result = sampler.normalize(0.0, SampleContext(), clip_to_bounds=True)
     assert result == pytest.approx(0.0)
-    
-    
+
+
 def test_normalize_clips_above_max(default_row):
     """normalize() with clip_to_bounds=True clips values above max to 1.0."""
     sampler = UniformSampler(default_row)
     result = sampler.normalize(0.1, SampleContext(), clip_to_bounds=True)
     assert result == pytest.approx(1.0)
-    
-    
+
+
 # ===========================================================================
 # PosteriorSampler.__init__
 # ===========================================================================
@@ -494,10 +494,10 @@ def test_posterior_sampler_no_index_match_raises(joint_param_row, posterior_file
     with pytest.raises(ValueError, match="No source found"):
         sampler.sample(0.5, SampleContext(array_index=99))
 
+
 # ===========================================================================
 # PosteriorSampler.normalize
 # ===========================================================================
-
 
 
 def test_posterior_sampler_normalize_for_index(tmp_path):

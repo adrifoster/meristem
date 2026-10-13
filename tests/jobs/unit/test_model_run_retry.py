@@ -22,6 +22,8 @@ def test_retry_resets_to_pending_before_submitting(created_run, mocker):
     created_run.stages[0].state.status = StageStatus.FAILED
 
     def check_status(stage, dry_run=False, skip_script=False):
+        # signature must match _submit_stage, which is called with these as keywords
+        # pylint: disable=unused-argument
         assert stage.state.status is StageStatus.PENDING
         assert stage.state.end_time is None
         assert stage.state.submit_time is None

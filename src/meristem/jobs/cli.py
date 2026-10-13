@@ -118,6 +118,17 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser):
         parser.error("--skip-script only to be used with --retry")
 
 
+def _print_job_id(label: str, job_id: str | None) -> None:
+    """Print a submitted job ID, if there is one
+
+    Args:
+        label (str): message to print before the job ID
+        job_id (str | None): PBS job ID, or None if nothing was submitted
+    """
+    if job_id:
+        print(f"{label}: {job_id}")
+
+
 def dispatch(args: argparse.Namespace) -> int:
     """Execute requested action and return an exit code
 
@@ -140,37 +151,36 @@ def dispatch(args: argparse.Namespace) -> int:
         print(run.format_status())
 
     elif args.submit:
-        job_id = run.submit(dry_run=args.dry_run)
-        if job_id:
-            print(f"Submitted: {job_id}")
+        _print_job_id("Submitted", run.submit(dry_run=args.dry_run))
 
     elif args.submit_advance:
-        job_id = run.submit_advance(args.stage, args.cime_job_id, dry_run=args.dry_run)
-        if job_id:
-            print(f"Advance job submitted: {job_id}")
+        _print_job_id(
+            "Advance job submitted",
+            run.submit_advance(args.stage, args.cime_job_id, dry_run=args.dry_run),
+        )
 
     elif args.submit_fail:
-        job_id = run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run)
-        if job_id:
-            print(f"Fail job submitted: {job_id}")
+        _print_job_id(
+            "Fail job submitted",
+            run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run),
+        )
 
     elif args.advance:
-        job_id = run.advance(args.stage, dry_run=args.dry_run)
-        if job_id:
-            print(f"Next stage submitted: {job_id}")
+        _print_job_id(
+            "Next stage submitted", run.advance(args.stage, dry_run=args.dry_run)
+        )
 
     elif args.fail:
         run.fail(args.stage)
 
     elif args.retry:
-        job_id = run.retry(
-            args.stage, dry_run=args.dry_run, skip_script=args.skip_script
+        _print_job_id(
+            "Resubmitted",
+            run.retry(args.stage, dry_run=args.dry_run, skip_script=args.skip_script),
         )
-        if job_id:
-            print(f"Resubmitted: {job_id}")
 
     else:
-        raise RuntimeError(f"Unhandled action — this is a bug in dispatch()")
+        raise RuntimeError("Unhandled action — this is a bug in dispatch()")
     return 0
 
 
@@ -192,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
         return 130
-    except Exception as e:
+    # top-level catch-all: report any error cleanly unless --debug is set
+    except Exception as e:  # pylint: disable=broad-exception-caught
         if args.debug:
             raise
         print(f"ERROR: {e}", file=sys.stderr)

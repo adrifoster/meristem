@@ -10,11 +10,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
 from .parameter import Parameter
 from .parameter_dataset import ParameterDataset
-from .utils import read_param_list
+from .utils import read_param_list, read_posterior_sources
 
 try:
     import matplotlib.pyplot as plt
@@ -130,15 +129,7 @@ def normalize_defaults(
             )
         main = main[main.parameter_name.isin(param_list)].copy()
 
-    posterior_config: dict = {}
-    if posterior_sources is not None:
-        posterior_sources = Path(posterior_sources)
-        if not posterior_sources.exists():
-            raise FileNotFoundError(
-                f"Posterior sources file '{posterior_sources}' does not exist."
-            )
-        with open(posterior_sources, "r", encoding="utf-8") as f:
-            posterior_config = yaml.safe_load(f)
+    posterior_config = read_posterior_sources(posterior_sources)
 
     default_ds = ParameterDataset.from_path(default_param_file)
 
@@ -295,5 +286,5 @@ def plot_param_bounds(df: pd.DataFrame):
         fontweight="500",
         pad=12,
     )
-    
+
     return fig

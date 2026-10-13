@@ -125,7 +125,7 @@ def test_stage_state_cannot_set_submit_time_after_end_time(failed_state):
         failed_state.submit_time = 5_000_000.0
 
 
-def test_stage_state_cannot_set_end_time_before_submit_time(submitted_state):
+def test_stage_state_cannot_set_end_time_before_submit_time():
     """Test StageState cannot set end_time before submit_time"""
     state = StageState(submit_time=1_000_000.0)
     with pytest.raises(ValueError, match="cannot precede"):
@@ -249,7 +249,10 @@ def test_stage_state_equality(submitted_state):
 def test_stage_state_equality_with_non_stage_state_returns_not_implemented():
     """Test that comparing a StageState to a non-StageState returns NotImplemented"""
     state = StageState()
-    assert state.__eq__("not a StageState") is NotImplemented
+    other = "not a StageState"
+    # call __eq__ directly: == would hide the NotImplemented return value
+    result = state.__eq__(other)  # pylint: disable=unnecessary-dunder-call
+    assert result is NotImplemented
 
 
 @pytest.mark.parametrize(

@@ -12,11 +12,13 @@ dependencies:
   - tqdm
   - netcdf4
   - matplotlib
+  - xarray
+  - salib
+  - jinja2
   - black
   - pylint
   - pytest>=8
   - pytest-cov
   - pytest-mock
   - pip:
-      - jinja2
       - -e ".[dev]"

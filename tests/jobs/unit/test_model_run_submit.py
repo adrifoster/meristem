@@ -11,7 +11,8 @@ from meristem.jobs.stages import StageStatus
 from jinja2 import TemplateNotFound
 
 
-def test_submit_writes_jobscript(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_writes_jobscript(created_run):
     """Test that ModelRun.submit() actually writes a jobscript"""
     created_run.submit()
     job_file = created_run.root / f"{created_run.run_id}_spinup_ad.pbs"
@@ -41,7 +42,8 @@ def test_submit_raises_if_template_missing(created_run, mocker):
         ("#PBS -M ", "user"),
     ],
 )
-def test_submit_script_contains_pbs_directives(created_run, mock_qsub, field, expected):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_contains_pbs_directives(created_run, field, expected):
     """Test that ModelRun.submit() creates a PBS file with the correct PBS directives"""
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
@@ -59,35 +61,40 @@ def test_submit_script_contains_pbs_directives(created_run, mock_qsub, field, ex
     assert field + values[expected] in job_file
 
 
-def test_submit_script_no_depend_line(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_no_depend_line(created_run):
     """Test that the depend line is not written for the first ModelRun.submit"""
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert "#PBS -W depend=" not in job_file
 
 
-def test_submit_script_trap_references_run_root(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_trap_references_run_root(created_run):
     """Test that the ERR trap in the job script references the correct run root"""
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"clm-run --root {created_run.root}" in content
 
 
-def test_submit_script_trap_references_stage_name(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_trap_references_stage_name(created_run):
     """Test that the ERR trap in the job script references the correct stage name"""
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"--fail --stage {created_run.stages[0].config.name}" in content
 
 
-def test_submit_script_correct_script(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_correct_script(created_run):
     """Test that ModelRun.submit() creates a PBS file with the script"""
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert str(created_run.stages[0].config.script) in job_file
 
 
-def test_submit_script_cd_into_case_root(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_cd_into_case_root(created_run):
     """Test that ModelRun.submit() contains a cd into the correct case_root"""
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
@@ -101,10 +108,12 @@ def test_submit_script_cd_into_case_root(created_run, mock_qsub):
         ("--submit-advance --stage ", "name"),
     ],
 )
-def test_submit_script_correct_clm_run_submit_advance(
-    created_run, mock_qsub, field, expected
-):
-    """Test that ModelRun.submit() creates a PBS file with the correct clm-run commands for failing"""
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_script_correct_clm_run_submit_advance(created_run, field, expected):
+    """
+    Test that ModelRun.submit() creates a PBS file with the correct clm-run commands
+    for failing
+    """
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     stage = created_run.stages[0]
@@ -114,31 +123,36 @@ def test_submit_script_correct_clm_run_submit_advance(
     assert field + values[expected] in job_file
 
 
-def test_submit_stage_status_set_to_submitted(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_stage_status_set_to_submitted(created_run):
     """Test that ModelRun.submit() sets the first stage status to SUBMITTED"""
     created_run.submit()
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
 
 
-def test_submit_stage_job_id_set(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_stage_job_id_set(created_run):
     """Test that ModelRun.submit() stores the job ID returned by qsub on the stage"""
     created_run.submit()
     assert created_run.stages[0].state.job_id == "12345.pbs"
 
 
-def test_submit_stage_attempts_incremented(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_stage_attempts_incremented(created_run):
     """Test that ModelRun.submit() increments attempts on the stage"""
     created_run.submit()
     assert created_run.stages[0].state.attempts == 1
 
 
-def test_submit_stage_submit_time_set(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_stage_submit_time_set(created_run):
     """Test that ModelRun.submit() sets submit_time on the stage"""
     created_run.submit()
     assert created_run.stages[0].state.submit_time is not None
 
 
-def test_submit_state_persisted_to_disk(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_state_persisted_to_disk(created_run):
     """Test that ModelRun.submit() persists updated stage state to disk"""
     created_run.submit()
     loaded = ModelRun.load(created_run.root)
@@ -147,7 +161,8 @@ def test_submit_state_persisted_to_disk(created_run, mock_qsub):
     assert loaded.stages[0].state.attempts == 1
 
 
-def test_submit_returns_job_id(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_returns_job_id(created_run):
     """Test that ModelRun.submit() returns the PBS job ID"""
     assert created_run.submit() == "12345.pbs"
 
@@ -185,20 +200,23 @@ def test_qsub_calls_subprocess_with_correct_args(created_run, mocker):
     )
 
 
-def test_submit_returns_existing_job_id_when_skipping(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_returns_existing_job_id_when_skipping(created_run):
     """Test that ModelRun.submit() returns the existing job ID when skipping"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     created_run.stages[0].state.job_id = "existing.pbs"
     assert created_run.submit() == "existing.pbs"
 
 
-def test_submit_returns_none_when_skipping_with_no_job_id(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_returns_none_when_skipping_with_no_job_id(created_run):
     """Test that ModelRun.submit() returns empty string when skipping a stage with no job ID"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     assert created_run.submit() is None
 
 
-def test_submit_does_not_mutate_stage_when_skipping(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_does_not_mutate_stage_when_skipping(created_run):
     """Test that ModelRun.submit() does not change stage state when skipping"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     created_run.stages[0].state.increment_attempts()
@@ -214,21 +232,24 @@ def test_submit_dry_run_does_not_call_qsub(created_run, mock_qsub):
     mock_qsub.assert_not_called()
 
 
-def test_submit_dry_run_job_id_format(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_dry_run_job_id_format(created_run):
     """Test that submit(dry_run=True) produces a synthetic DRY_ job ID"""
     created_run.submit(dry_run=True)
     expected = f"DRY_{created_run.run_id}_{created_run.stages[0].config.name}"
     assert created_run.stages[0].state.job_id == expected
 
 
-def test_submit_dry_run_still_writes_job_script(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_dry_run_still_writes_job_script(created_run):
     """Test that submit(dry_run=True) still generates the PBS script"""
     created_run.submit(dry_run=True)
     job_file = created_run.root / f"{created_run.run_id}_spinup_ad.pbs"
     assert job_file.exists()
 
 
-def test_submit_dry_run_still_updates_stage_state(created_run, mock_qsub):
+@pytest.mark.usefixtures("mock_qsub")
+def test_submit_dry_run_still_updates_stage_state(created_run):
     """Test that submit(dry_run=True) still marks the stage as SUBMITTED"""
     created_run.submit(dry_run=True)
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED

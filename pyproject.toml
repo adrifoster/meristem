@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "meristem"
 dynamic = ["version"]
 description = "Calibration tooling for land surface models"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
 "xarray",
 "numpy",
@@ -47,6 +47,15 @@ markers = [
 [tool.pylint.main]
 source-roots = ["src"]
 
+[tool.pylint."tests/paramgen/conftest.py"]
+disable = ["redefined-outer-name", "too-many-lines"]
+
+[tool.pylint."tests/paramgen/test_diagnostics.py"]
+disable = ["wrong-import-order", "wrong-import-position"]
+
+[tool.pylint."tests/*.py"]
+disable = ["too-many-arguments", "too-many-positional-arguments", "duplicate-code"]
+
 [tool.black]
-target-version = ["py310", "py311", "py312"]
+target-version = ["py311", "py312"]
 line-length = 88

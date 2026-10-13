@@ -203,8 +203,24 @@ def test_validate_args_retry_with_skip_script_passes():
         ["--submit", "--root", "my_run"],
         ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"],
         ["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
-        ["--submit-advance", "--root", "/tmp/run", "--stage", "spinup_ad", "--cime-job-id", "12345.pbs"],
-        ["--submit-fail", "--root", "/tmp/run", "--stage", "spinup_ad", "--cime-job-id", "12345.pbs"],
+        [
+            "--submit-advance",
+            "--root",
+            "/tmp/run",
+            "--stage",
+            "spinup_ad",
+            "--cime-job-id",
+            "12345.pbs",
+        ],
+        [
+            "--submit-fail",
+            "--root",
+            "/tmp/run",
+            "--stage",
+            "spinup_ad",
+            "--cime-job-id",
+            "12345.pbs",
+        ],
     ],
 )
 def test_validate_args_skip_script_without_retry_raises(argv):
@@ -222,14 +238,16 @@ def test_dispatch_create_calls_model_run_create(mock_create):
     mock_create.assert_called_once_with("run.yaml")
 
 
-def test_dispatch_create_returns_zero(mock_create):
+@pytest.mark.usefixtures("mock_create")
+def test_dispatch_create_returns_zero():
     """Test that create returns 0"""
     parser = build_parser()
     args = parser.parse_args(["--create", "--config", "run.yaml"])
     assert dispatch(args) == 0
 
 
-def test_dispatch_print_status_calls_format_status(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_print_status_calls_format_status(mock_run):
     """Test that print-status actually calls model_run.format_status"""
     parser = build_parser()
     args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
@@ -237,14 +255,16 @@ def test_dispatch_print_status_calls_format_status(mock_load, mock_run):
     mock_run.format_status.assert_called_once()
 
 
-def test_dispatch_print_status_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_print_status_returns_zero():
     """Test that print-status returns zero"""
     parser = build_parser()
     args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
     assert dispatch(args) == 0
 
 
-def test_dispatch_submit_calls_submit(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_calls_submit(mock_run):
     """Test that submit actually calls model_run.submit"""
     parser = build_parser()
     args = parser.parse_args(["--submit", "--root", "/tmp/run"])
@@ -252,7 +272,8 @@ def test_dispatch_submit_calls_submit(mock_load, mock_run):
     mock_run.submit.assert_called_once_with(dry_run=False)
 
 
-def test_dispatch_submit_dry_run_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_dry_run_passed_through(mock_run):
     """Test that submit with a dry run is passed through"""
     parser = build_parser()
     args = parser.parse_args(["--submit", "--root", "/tmp/run", "--dry-run"])
@@ -260,14 +281,16 @@ def test_dispatch_submit_dry_run_passed_through(mock_load, mock_run):
     mock_run.submit.assert_called_once_with(dry_run=True)
 
 
-def test_dispatch_submit_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_returns_zero():
     """Test that submit returns zero"""
     parser = build_parser()
     args = parser.parse_args(["--submit", "--root", "/tmp/run"])
     assert dispatch(args) == 0
 
 
-def test_dispatch_submit_advance_calls_submit_advance(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_advance_calls_submit_advance(mock_run):
     """Test that submit-advance actually calls model_run.submit_advance"""
     parser = build_parser()
     args = parser.parse_args(
@@ -287,7 +310,8 @@ def test_dispatch_submit_advance_calls_submit_advance(mock_load, mock_run):
     )
 
 
-def test_dispatch_submit_advance_dry_run_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_advance_dry_run_passed_through(mock_run):
     """Test that submit-advance with a dry run is passed through"""
     parser = build_parser()
     args = parser.parse_args(
@@ -308,7 +332,8 @@ def test_dispatch_submit_advance_dry_run_passed_through(mock_load, mock_run):
     )
 
 
-def test_dispatch_submit_fail_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_fail_returns_zero():
     """Test that submit-fail returns zero"""
     parser = build_parser()
     args = parser.parse_args(
@@ -325,7 +350,8 @@ def test_dispatch_submit_fail_returns_zero(mock_load, mock_run):
     assert dispatch(args) == 0
 
 
-def test_dispatch_submit_fail_calls_submit_fail(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_fail_calls_submit_fail(mock_run):
     """Test that submit-fail actually calls model_run.submit_fail"""
     parser = build_parser()
     args = parser.parse_args(
@@ -345,7 +371,8 @@ def test_dispatch_submit_fail_calls_submit_fail(mock_load, mock_run):
     )
 
 
-def test_dispatch_submit_fail_dry_run_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_fail_dry_run_passed_through(mock_run):
     """Test that submit-fail with a dry run is passed through"""
     parser = build_parser()
     args = parser.parse_args(
@@ -364,24 +391,8 @@ def test_dispatch_submit_fail_dry_run_passed_through(mock_load, mock_run):
     mock_run.submit_fail.assert_called_once_with("spinup_ad", "55555.pbs", dry_run=True)
 
 
-def test_dispatch_submit_fail_returns_zero(mock_load, mock_run):
-    """Test that submit-fail returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-        ]
-    )
-    assert dispatch(args) == 0
-
-
-def test_dispatch_advance_calls_advance(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_advance_calls_advance(mock_run):
     """Test that advance actually calles model_run.advance"""
     parser = build_parser()
     args = parser.parse_args(
@@ -391,7 +402,8 @@ def test_dispatch_advance_calls_advance(mock_load, mock_run):
     mock_run.advance.assert_called_once_with("spinup_ad", dry_run=False)
 
 
-def test_dispatch_advance_dry_run_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_advance_dry_run_passed_through(mock_run):
     """Test that advance with a dry run is passed through"""
     parser = build_parser()
     args = parser.parse_args(
@@ -401,7 +413,8 @@ def test_dispatch_advance_dry_run_passed_through(mock_load, mock_run):
     mock_run.advance.assert_called_once_with("spinup_ad", dry_run=True)
 
 
-def test_dispatch_advance_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_advance_returns_zero():
     """Test that advance returns zero"""
     parser = build_parser()
     args = parser.parse_args(
@@ -410,7 +423,8 @@ def test_dispatch_advance_returns_zero(mock_load, mock_run):
     assert dispatch(args) == 0
 
 
-def test_dispatch_fail_calls_fail(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_fail_calls_fail(mock_run):
     """Test that fail actually calls model_run.fail"""
     parser = build_parser()
     args = parser.parse_args(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"])
@@ -418,14 +432,16 @@ def test_dispatch_fail_calls_fail(mock_load, mock_run):
     mock_run.fail.assert_called_once_with("spinup_ad")
 
 
-def test_dispatch_fail_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_fail_returns_zero():
     """Test that fail actually returns zero"""
     parser = build_parser()
     args = parser.parse_args(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"])
     assert dispatch(args) == 0
 
 
-def test_dispatch_retry_calls_retry_with_stage(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_calls_retry_with_stage(mock_run):
     """Test that retry with stage actually calls model_run.stage"""
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
@@ -435,7 +451,8 @@ def test_dispatch_retry_calls_retry_with_stage(mock_load, mock_run):
     )
 
 
-def test_dispatch_retry_calls_retry_without_stage(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_calls_retry_without_stage(mock_run):
     """Test that retry without stage actually calls model_run.stage"""
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run"])
@@ -443,7 +460,8 @@ def test_dispatch_retry_calls_retry_without_stage(mock_load, mock_run):
     mock_run.retry.assert_called_once_with(None, dry_run=False, skip_script=False)
 
 
-def test_dispatch_retry_dry_run_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_dry_run_passed_through(mock_run):
     """Test that retry with dry-run is passed through"""
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--dry-run"])
@@ -451,7 +469,8 @@ def test_dispatch_retry_dry_run_passed_through(mock_load, mock_run):
     mock_run.retry.assert_called_once_with(None, dry_run=True, skip_script=False)
 
 
-def test_dispatch_retry_skip_script_passed_through(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_skip_script_passed_through(mock_run):
     """Test that retry with skip-script is passed through"""
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--skip-script"])
@@ -459,14 +478,16 @@ def test_dispatch_retry_skip_script_passed_through(mock_load, mock_run):
     mock_run.retry.assert_called_once_with(None, dry_run=False, skip_script=True)
 
 
-def test_dispatch_retry_returns_zero(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_returns_zero():
     """Test that retry with stage returns zero"""
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
     assert dispatch(args) == 0
 
 
-def test_dispatch_unhandled_action_raises(mock_load, mock_run):
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_unhandled_action_raises():
     """Test that dispatch raises if no action branch matches"""
     parser = build_parser()
     args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
@@ -498,22 +519,26 @@ def test_main_argument_errors_exit_with_code_2(argv):
     assert exc.value.code == 2
 
 
-def test_main_create_exits_zero(mock_create):
+@pytest.mark.usefixtures("mock_create")
+def test_main_create_exits_zero():
     """Test that main with create and correct args returns 0"""
     assert main(["--create", "--config", "run.yaml"]) == 0
 
 
-def test_main_status_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_status_exits_zero():
     """Test that main with print-status and correct args returns 0"""
     assert main(["--print-status", "--root", "/tmp/run"]) == 0
 
 
-def test_main_submit_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_submit_exits_zero():
     """Test that main with submit and correct args returns 0"""
     assert main(["--submit", "--root", "/tmp/run"]) == 0
 
 
-def test_main_submit_advance_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_submit_advance_exits_zero():
     """Test that main with submit-advance and correct args returns 0"""
     assert (
         main(
@@ -531,17 +556,20 @@ def test_main_submit_advance_exits_zero(mock_load):
     )
 
 
-def test_main_advance_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_advance_exits_zero():
     """Test that main with advance and correct args returns 0"""
     assert main(["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
 
 
-def test_main_fail_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_fail_exits_zero():
     """Test that main with fail and correct args returns 0"""
     assert main(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
 
 
-def test_main_retry_exits_zero(mock_load):
+@pytest.mark.usefixtures("mock_load")
+def test_main_retry_exits_zero():
     """Test that main with retry and correct args returns 0"""
     assert main(["--retry", "--root", "/tmp/run"]) == 0
 

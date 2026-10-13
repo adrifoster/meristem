@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
+import yaml
 
 
 def read_param_list(
@@ -47,6 +48,28 @@ def read_param_list(
             pft_sheets[csv_file.stem] = pd.read_csv(csv_file)
 
     return main, pft_sheets
+
+
+def read_posterior_sources(posterior_sources: Path | None) -> dict:
+    """Read the posterior sources YAML file that maps parameters to posterior draws.
+
+    Args:
+        posterior_sources (Path | None): path to the posterior sources YAML file.
+
+    Returns:
+        dict: posterior config keyed by parameter name, or an empty dict if
+        posterior_sources is None.
+    """
+    if posterior_sources is None:
+        return {}
+
+    posterior_sources = Path(posterior_sources)
+    if not posterior_sources.exists():
+        raise FileNotFoundError(
+            f"Posterior sources file '{posterior_sources}' does not exist."
+        )
+    with open(posterior_sources, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 def validate_normalized_value(normalized_value: float) -> None:

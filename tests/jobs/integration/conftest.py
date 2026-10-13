@@ -1,3 +1,5 @@
+"""Fixtures shared across meristem.jobs.integration tests."""
+
 import shutil
 import pytest
 from pathlib import Path
@@ -36,6 +38,7 @@ def ad_stage_config_dict(script_file) -> dict:
 
 @pytest.fixture
 def run_config_dict(tmp_path, ad_stage_config_dict) -> dict:
+    """A simple run config dict"""
     return {
         "root": str(tmp_path / "myrun"),
         "user": "name@ucar.edu",
@@ -47,11 +50,13 @@ def run_config_dict(tmp_path, ad_stage_config_dict) -> dict:
 
 @pytest.fixture
 def created_run(run_config_dict) -> ModelRun:
+    """A simple run created with run_config_dict"""
     return ModelRun.create(run_config_dict)
 
 
 @pytest.fixture
 def mock_qsub(mocker):
+    """qsub mocker"""
     mock = mocker.patch.object(ModelRun, "_qsub", return_value="12345.pbs")
     return mock
 

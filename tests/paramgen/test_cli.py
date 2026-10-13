@@ -24,7 +24,9 @@ def test_main_run_missing_config_arg_exits(mocker):
 
 def test_main_run_config_not_found_exits(mocker, tmp_path):
     """main() exits with code 1 when the config file does not exist."""
-    mocker.patch("sys.argv", ["meristem-paramgen", "run", str(tmp_path / "missing.yaml")])
+    mocker.patch(
+        "sys.argv", ["meristem-paramgen", "run", str(tmp_path / "missing.yaml")]
+    )
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1

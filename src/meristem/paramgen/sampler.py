@@ -59,7 +59,8 @@ class Sampler(ABC):
         - __init__(self, row, pft_sheet, posterior_config): parse all
           sampling configuration from the spreadsheet row at construction time.
         - sample(self, normalized_value, context): draw a value given a normalised input.
-        - normalize(self, value, context, clip_to_bounds): convert a concrete value back to normalised [0, 1].
+        - normalize(self, value, context, clip_to_bounds): convert a concrete value back
+            to normalised [0, 1].
     """
 
     _registry: dict[str, type[Sampler]] = {}
@@ -236,7 +237,8 @@ class UniformSampler(Sampler, sampler_type="uniform"):
         normalized = np.where(
             degenerate,
             0.5,
-            (np.asarray(value, dtype=float) - min_val) / np.where(degenerate, 1.0, span),
+            (np.asarray(value, dtype=float) - min_val)
+            / np.where(degenerate, 1.0, span),
         )
         return float(normalized) if normalized.ndim == 0 else normalized
 

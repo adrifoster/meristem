@@ -458,7 +458,7 @@ def test_build_lh_prebuilt_wrong_params(lh_ensemble):
 
 def test_build_lh_zero_params(lh_ensemble):
     """Test that build_lh with zero params returns something"""
-    lh_ensemble.num_sampling_units = 0
+    lh_ensemble.sampling_units = []
     lh = lh_ensemble.build_lh()
     assert lh.shape == (5, 0)
 

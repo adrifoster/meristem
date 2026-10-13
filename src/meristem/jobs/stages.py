@@ -5,7 +5,6 @@ StageStatus and StageKind Enums, plus StageState, StageConfig, and Stage
 
 from __future__ import annotations
 
-import inspect
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -333,7 +332,7 @@ class StageState:
 
 
 @dataclass(frozen=True)
-class StageConfig:
+class StageConfig:  # pylint: disable=too-many-instance-attributes
     """Dataclass that holds immutable properties of a run.
 
     Frozen so that config cannot be accidentally mutated after construction.
