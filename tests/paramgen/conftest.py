@@ -17,9 +17,14 @@ from meristem.paramgen.parameter import (
     ScaleFromRootParameter,
     SlicedParameter,
 )
-from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
+from meristem.paramgen.ensemble_config import (
+    LatinHypercubeConfig,
+    MorrisEnsembleConfig,
+    OneAtATimeConfig,
+)
 from meristem.paramgen.param_ensemble import (
     LatinHypercubeEnsemble,
+    MorrisEnsemble,
     OneAtATimeEnsemble,
 )
 from meristem.paramgen.parameter_dataset import (
@@ -988,6 +993,29 @@ def oat_ensemble(
         posterior_sources=posterior_config_file,
     )
     return OneAtATimeEnsemble(config)
+
+
+@pytest.fixture(params=["netcdf", "json"])
+def morris_ensemble(
+    request,
+    ensemble_param_dir,
+    default_netcdf_file,
+    json_param_file,
+    tmp_path,
+    posterior_config_file,
+):
+    """A Morris ensemble parametrized over NetCDF and JSON backends."""
+    param_file = default_netcdf_file if request.param == "netcdf" else json_param_file
+    config = MorrisEnsembleConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=param_file,
+        posterior_sources=posterior_config_file,
+        morris_n=4,
+        levels=4,
+    )
+    return MorrisEnsemble(config)
 
 
 @pytest.fixture

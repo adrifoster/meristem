@@ -85,16 +85,27 @@ class OneAtATimeConfig(EnsembleConfig):
 @dataclass
 class MorrisEnsembleConfig(EnsembleConfig):
     """Configuration for a Morris sensitivity ensemble.
+
+    Attributes
+    ----------
     morris_n : int
-        The number of trajectories to generate.
-    levels: int
-        The number of grid levels for partitioning parameter space
-        (should be an even number).
-    optimal_trajectories: int | None
-        The subset number of optimal trajectories to select from a larger pool
-        (between 2 and N)
+        Number of trajectories to generate.
+    levels : int
+        Number of grid levels for partitioning parameter space. Must be a
+        positive even number.
+    optimal_trajectories : int | None
+        If set, the number of optimal trajectories to select from the larger
+        pool of morris_n (between 2 and morris_n). If None, all morris_n
+        trajectories are used.
     """
 
     morris_n: int = 100
     levels: int = 4
     optimal_trajectories: int | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.levels < 2 or self.levels % 2 != 0:
+            raise ValueError(
+                f"levels must be a positive even number, got {self.levels}."
+            )

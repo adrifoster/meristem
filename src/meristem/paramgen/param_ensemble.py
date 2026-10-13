@@ -419,8 +419,6 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         (n_samples, n_params). If supplied, this matrix is used directly
         instead of generating a new one. Useful for reproducibility or
         when the LH matrix was generated externally.
-    posterior_configs: dict[str, PosteriorConfig]
-        PosteriorConfig objects for pulling from a distribution
 
     """
 
@@ -685,12 +683,23 @@ class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
 
 
 class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
-    """Concrete class for the Latin Hypercube ensemble class
+    """Concrete class for the Morris ensemble class
+
+    Each trajectory has one row per sampling unit plus a starting point, so the
+    ensemble has morris_n * (num_sampling_units + 1) members, or
+    optimal_trajectories * (num_sampling_units + 1) if optimal_trajectories is set.
 
     Parameters
     ----------
-    posterior_configs: dict[str, PosteriorConfig]
-        PosteriorConfig objects for pulling from a distribution
+    morris_n : int
+        number of trajectories to generate.
+    levels : int
+        number of grid levels that partition each sampling unit's [0, 1] range.
+        Must be an even number.
+    optimal_trajectories : int | None
+        If set, select this many trajectories (between 2 and morris_n) from the
+        morris_n generated, chosen to maximize their spread. If None, all
+        morris_n trajectories are used.
     """
 
     def __init__(
@@ -794,8 +803,11 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             df["ensemble"] = f"{self.file_prefix}_{_generate_suffix(i)}"
             param_dfs.append(df)
         param_df = pd.concat(param_dfs, ignore_index=True)
+
+        order = [g.name for g in self.sampling_units]
         return (
             param_df.pivot(index="ensemble", columns="parameter", values="value")
+            .reindex(columns=order)
             .reset_index()
             .rename_axis(None, axis=1)
         )
