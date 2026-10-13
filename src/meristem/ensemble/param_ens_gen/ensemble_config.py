@@ -80,3 +80,20 @@ class LatinHypercubeConfig(EnsembleConfig):
 @dataclass
 class OneAtATimeConfig(EnsembleConfig):
     """Configuration for a One-At-A-Time (OAT) sensitivity ensemble."""
+
+@dataclass
+class MorrisEnsembleConfig(EnsembleConfig):
+    """Configuration for a Morris sensitivity ensemble.
+    morris_N : int
+        The number of trajectories to generate.
+    levels: int
+        The number of grid levels for partitioning parameter space 
+        (should be an even number). 
+    optimal_trajectories: int | None
+        The subset number of optimal trajectories to select from a larger pool 
+        (between 2 and N)
+    """
+    morris_N: int = 100
+    levels: int = 4
+    optimal_trajectories: int | None = None
+    

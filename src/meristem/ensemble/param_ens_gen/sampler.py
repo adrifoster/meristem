@@ -207,7 +207,12 @@ class UniformSampler(Sampler, sampler_type="uniform"):
         context: SampleContext,
         clip_to_bounds: bool = False,
     ) -> float | np.ndarray:
-        """Convert a concrete parameter value into a normalized [0, 1] value."""
+        """Convert a concrete parameter value into a normalized [0, 1] value.
+
+        Positions where min == max have no range to normalize against — the
+        parameter is effectively fixed there — so they return 0.5 rather than
+        dividing by zero.
+        """
 
         min_val, max_val = self.resolve_bounds(
             context.default_value, pft_axis=context.pft_axis
@@ -225,7 +230,15 @@ class UniformSampler(Sampler, sampler_type="uniform"):
                 f"value: {value} is below minimum value(s). "
                 f"minimum value is {min_val}"
             )
-        return (value - min_val) / (max_val - min_val)
+
+        span = np.asarray(max_val, dtype=float) - np.asarray(min_val, dtype=float)
+        degenerate = span == 0.0
+        normalized = np.where(
+            degenerate,
+            0.5,
+            (np.asarray(value, dtype=float) - min_val) / np.where(degenerate, 1.0, span),
+        )
+        return float(normalized) if normalized.ndim == 0 else normalized
 
 
 class PosteriorSampler(Sampler, sampler_type="posterior"):

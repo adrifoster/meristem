@@ -12,10 +12,11 @@ import yaml
 import pandas as pd
 import numpy as np
 from scipy.stats import qmc
+from SALib.sample import morris as sample_morris
 
 from .parameter_dataset import ParameterDataset
 from .parameter import Parameter
-from .ensemble_config import EnsembleConfig, LatinHypercubeConfig, OneAtATimeConfig
+from .ensemble_config import EnsembleConfig, LatinHypercubeConfig, OneAtATimeConfig, MorrisEnsembleConfig
 from .sort_params import sort_params
 from .utils import read_param_list
 
@@ -522,8 +523,11 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
             df["ensemble"] = f"{self.file_prefix}_{_generate_suffix(i)}"
             param_dfs.append(df)
         param_df = pd.concat(param_dfs, ignore_index=True)
+
+        order = [g.name for g in self.sampling_units]
         return (
             param_df.pivot(index="ensemble", columns="parameter", values="value")
+            .reindex(columns=order)
             .reset_index()
             .rename_axis(None, axis=1)
         )
@@ -678,8 +682,145 @@ class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
             )
         return param_df.drop(columns=["normalized_value"])
 
+class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
+    """Concrete class for the Latin Hypercube ensemble class
 
-def _generate_suffix(ensemble_number: int, pad_length: int = 3) -> str:
+    Parameters
+    ----------
+    posterior_configs: dict[str, PosteriorConfig]
+        PosteriorConfig objects for pulling from a distribution
+    """
+
+    def __init__(
+        self,
+        config: MorrisEnsembleConfig,
+    ):
+        super().__init__(config)
+        self.morris_N = config.morris_N
+        self.levels = config.levels
+        self.optimal_trajectories = config.optimal_trajectories
+        
+    @classmethod
+    def from_config(cls, config: dict) -> MorrisEnsemble:
+        """Construct from a plain dict (ensemble_type already removed)
+
+        Args:
+            config (dict): Must contain all required MorrisEnsembleConfig fields.
+            Unrecognised keys raise TypeError.
+
+        Raises:
+            TypeError: Uncrecogized or missing keys
+
+        Returns:
+            MorrisEnsemble: A fully constructed ensemble MorrisEnsemble
+            instance.
+        """
+        try:
+            cfg = MorrisEnsembleConfig(**config)
+        except TypeError as e:
+            raise TypeError(
+                f"Invalid config key for MorrisEnsemble: {e}. "
+                f"Valid keys: {[f.name for f in fields(MorrisEnsembleConfig)]}"
+            ) from e
+        return cls(cfg)
+
+    def create_samples(self) -> list[EnsembleMemberSample]:
+        """Create samples from the list of parameters
+
+        Returns:
+            list[EnsembleMemberSample]: One EnsembleMemberSample per ensemble member,
+            each containing one ParameterSample per parameter.
+        """
+
+        # build the parameter set
+        morris_sample = self.build_morris_samples()
+
+        # draw samples
+        samples = []
+        for i in range(len(morris_sample)):
+            ensemble_member = EnsembleMemberSample(
+                parameter_samples=[
+                    ParameterSample(
+                        group=group,
+                        normalized_value=float(morris_sample[i, j]),
+                    )
+                    for j, group in enumerate(self.sampling_units)
+                ]
+            )
+            samples.append(ensemble_member)
+
+        return samples
+
+    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
+        """Create one member of the ensemble
+
+        Args:
+            sample (EnsembleMemberSample): Parameter samples for this member.
+                Contains one ParameterSample per parameter.
+        Returns:
+            ParameterDataset: one member of the ensemble with updated values from default
+        """
+
+        ds = self.default_ds.copy()
+        for param_sample in sample:
+            for param in param_sample.group.params:
+                value = param.sample(param_sample.normalized_value, self.default_ds)
+                param.set_value(
+                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
+                )
+        return ds
+
+    def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
+        """Create the ensemble key that goes with this ensemble
+
+        Args:
+            samples (list[EnsembleMemberSample]): One EnsembleMemberSample per ensemble
+                member, each containing one ParameterSample per parameter.
+
+        Returns:
+            pd.DataFrame: output data frame that serves as ensemble key
+        """
+
+        param_dfs = []
+        for i, sample in enumerate(samples):
+            group_names = []
+            sample_values = []
+            for param_sample in sample:
+                group_names.append(param_sample.group.name)
+                sample_values.append(param_sample.normalized_value)
+            df = pd.DataFrame({"parameter": group_names, "value": sample_values})
+            df["ensemble"] = f"{self.file_prefix}_{_generate_suffix(i)}"
+            param_dfs.append(df)
+        param_df = pd.concat(param_dfs, ignore_index=True)
+        return (
+            param_df.pivot(index="ensemble", columns="parameter", values="value")
+            .reset_index()
+            .rename_axis(None, axis=1)
+        )
+
+    def build_morris_samples(self) -> np.ndarray:
+        """Create a matrix for the Morris sampling
+
+        Returns:
+            np.ndarray: output matrix
+        """
+        if self.num_sampling_units == 0:
+            return np.empty((0, 0))
+
+        # generate the morris sample
+        problem = {
+            "num_vars": len(self.sampling_units),
+            "names": [g.name for g in self.sampling_units],
+            "bounds": [[0.0, 1.0]] * len(self.sampling_units),
+        }
+        return sample_morris.sample(
+            problem, N=self.morris_N, num_levels=self.levels,
+            optimal_trajectories=self.optimal_trajectories
+        )
+        
+
+
+def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:
     """Generate a suffix for an ensemble member
 
     Args:
