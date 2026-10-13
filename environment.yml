@@ -1,0 +1,24 @@
+name: meristem
+channels: [conda-forge]
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - pandas
+  - pyyaml
+  - jupyterlab
+  - ipykernel
+  - pip
+  - tqdm
+  - netcdf4
+  - matplotlib
+  - xarray
+  - salib
+  - jinja2
+  - black
+  - pylint
+  - pytest>=8
+  - pytest-cov
+  - pytest-mock
+  - pip:
+      - -e ".[dev]"

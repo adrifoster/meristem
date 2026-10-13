@@ -1,0 +1,7 @@
+ensemble_type: Morris
+param_dir: clm_param_dir
+default_param_file: default_clm_param.nc
+ensemble_dir: output_Morris
+file_prefix: clm_morris
+morris_n: 4
+levels: 4

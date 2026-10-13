@@ -1,0 +1,8 @@
+ensemble_type: Morris
+param_dir: fates_param_dir
+default_param_file: default_fates_param.json
+ensemble_dir: output_Morris
+file_prefix: fates_morris
+morris_n: 4
+levels: 4
+posterior_sources: posterior_sources.yaml

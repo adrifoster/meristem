@@ -1,18 +1,22 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "meristem"
-version = "0.0.1"
-description = "Calibration tooling for land surface models"
-requires-python = ">=3.10"
+dynamic = ["version"]
+description = "Parameter ensemble and job tooling for land surface models"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
 dependencies = [
 "xarray",
 "numpy",
+"SALib",
 "scipy",
 "pandas",
 "pyyaml",
+"jinja2",
 "tqdm",
 "netcdf4",
 "matplotlib",
@@ -22,29 +26,38 @@ dependencies = [
 dev = ["pytest>=8", "pytest-cov", "pytest-mock", "black", "pylint"]
 
 [project.scripts]
-param_ens_gen = "param_ens_gen.cli:main"
+meristem-paramgen = "meristem.paramgen.cli:main"   # temporary
+clm-run = "meristem.jobs.cli:main"                 # temporary
+
+[tool.setuptools.dynamic]
+version = {attr = "meristem.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"meristem.jobs" = ["templates/*.txt"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not pbs'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "pbs: requires a PBS scheduler (qsub); skipped by default",
 ]
 
 [tool.pylint.main]
-source-roots = ["."]
+source-roots = ["src"]
 
-[tool.pylint."tests/conftest.py"]
-disable = ["redefined-outer-name"]
+[tool.pylint."tests/paramgen/conftest.py"]
+disable = ["redefined-outer-name", "too-many-lines"]
 
-[tool.pylint."tests/test_diagnostics.py"]
+[tool.pylint."tests/paramgen/test_diagnostics.py"]
 disable = ["wrong-import-order", "wrong-import-position"]
 
 [tool.pylint."tests/*.py"]
 disable = ["too-many-arguments", "too-many-positional-arguments", "duplicate-code"]
 
 [tool.black]
-target-version = ["py310", "py311", "py312"]
+target-version = ["py312", "py313"]
 line-length = 88
