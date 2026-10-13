@@ -34,6 +34,7 @@ run_state.json
 run_state.json.tmp
 
 output_LH/
-output_OAT
-tests/smoke/cases/
+output_OAT/
+output_Morris/
+tests/jobs/smoke/smoke_settings.sh
 

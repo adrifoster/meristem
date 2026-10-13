@@ -12,8 +12,6 @@ fi
 case_root="$1"
 root_dir=$(dirname "${case_root}")
 
-# mkdir ${case_root}
-
 # write smoke test result
 echo "PASSED" > "${root_dir}/smoke_result.txt"
 echo "Smoke test pipeline complete: $(date)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Verify that a tethering smoke test pipeline completed successfully.
+Verify that a meristem.jobs smoke test pipeline completed successfully.
 
 Usage:
     python check_smoke_test.py <root>

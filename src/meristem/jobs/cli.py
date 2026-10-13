@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     actions.add_argument(
         "--retry",
         action="store_true",
-        help="Reset and resubmit a failed or stuck stage",
+        help="Reset and resubmit a pending or failed stage",
     )
     actions.add_argument("--print-status", action="store_true", help="Print run status")
 
@@ -71,9 +71,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cime-job-id", help="CIME PBS job ID (required with --submit-advance)"
     )
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--skip-script", action="store_true")
-    parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write job scripts but don't submit them with qsub",
+    )
+    parser.add_argument(
+        "--skip-script",
+        action="store_true",
+        help="With --retry: resubmit without re-running the setup script",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show the full traceback on errors (useful when reporting bugs)",
+    )
     return parser
 
 

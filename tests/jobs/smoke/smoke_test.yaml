@@ -1,26 +1,27 @@
 #
-# smoke test pipeline for tethering using ABBY NEON site
-# Usage:
-#   export TETHERING_REPO=/path/to/tethering
-#   bash $TETHERING_REPO/tests/smoke/submit_smoke_test.sh
- 
-root: $TETHERING_REPO/tests/smoke/cases
-run_id: smoke_ABBY                      
- 
+# smoke test pipeline for meristem.jobs using a NEON single-site (ABBY) spinup
+#
+# Don't use this file directly: submit_smoke_test.sh sets the variables below
+# from smoke_settings.sh and then creates and submits the run.
+
+root: $SMOKE_ROOT
+run_id: smoke_ABBY
+project: $PROJECT
+
 stages:
   - name: spinup_ad
-    script: $TETHERING_REPO/tests/smoke/scripts/run_job_ad.sh             
+    script: $SMOKE_DIR/scripts/run_job_ad.sh
     queue: develop
 
   - name: spinup_sasu
-    script: $TETHERING_REPO/tests/smoke/scripts/run_job_sasu.sh
+    script: $SMOKE_DIR/scripts/run_job_sasu.sh
     queue: develop
- 
+
   - name: spinup_postad
-    script: $TETHERING_REPO/tests/smoke/scripts/run_job_postad.sh
+    script: $SMOKE_DIR/scripts/run_job_postad.sh
     queue: develop
- 
+
   - name: smoke_check
-    script: $TETHERING_REPO/tests/smoke/scripts/smoke_check.sh
+    script: $SMOKE_DIR/scripts/smoke_check.sh
     queue: develop
-    no_cime: True
+    no_cime: true
