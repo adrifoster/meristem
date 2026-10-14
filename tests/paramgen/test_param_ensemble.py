@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from meristem.paramgen.param_ensemble import (
     ParamEnsemble,
@@ -669,9 +670,10 @@ def test_grouped_params_num_sampling_units(
     )
     ensemble = LatinHypercubeEnsemble(config)
     # 2 params in "photosynthesis" group + 6 expanded params in "water" group + 1 ungrouped
-    # = 9 params, 3 sampling units
+    # = 9 params. "water" holds 2 params expanded over 3 PFTs, so it splits per index
+    # into water_0, water_1, water_2: 1 + 3 + 1 = 5 sampling units
     assert ensemble.num_params == 9
-    assert ensemble.num_sampling_units == 3
+    assert ensemble.num_sampling_units == 5
 
 
 def test_grouped_params_share_normalized_value(
@@ -747,3 +749,131 @@ def test_grouped_ensemble_member_writes_all_params(
     ds = ensemble.create_ensemble_member(samples[0])
     assert "fates_leaf_slatop" in ds
     assert "fates_canopy_closure_thresh" in ds
+
+
+def test_expand_and_fix_on_second_axis_of_multi_dim_param(tmp_path):
+    """Expansion and fixed_indices act on the named dimension of a 2-D parameter,
+    even when it isn't the variable's first axis
+    """
+    xr.Dataset({"v": (("leafage", "pft"), np.ones((2, 3)))}).to_netcdf(
+        tmp_path / "default.nc"
+    )
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "v",
+                "coord": "['leafage', 'pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": 5,
+                "param_max": 5,
+                "expand_dim": "pft",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    ensemble = ParamEnsemble.from_dict(
+        {
+            "ensemble_type": "OAT",
+            "param_dir": str(param_dir),
+            "default_param_file": str(tmp_path / "default.nc"),
+            "ensemble_dir": str(tmp_path / "out"),
+            "file_prefix": "e",
+            "fixed_indices": {"pft": [0], "leafage": [1]},
+        }
+    )
+    assert [p.spec.name for p in ensemble.params] == ["v_1", "v_2"]
+
+    ensemble.create_ensemble()
+    # members alternate minimum/maximum; with min == max both write 5 at one pft
+    for member, pft in [("e_0000", 1), ("e_0002", 2)]:
+        with xr.open_dataset(tmp_path / "out" / f"{member}.nc") as ds:
+            expected = np.ones((2, 3))
+            expected[0, pft] = 5.0
+            np.testing.assert_allclose(ds.v.values, expected)
+
+
+def test_expanded_param_with_pft_bounds_writes_each_pfts_bounds(
+    tmp_path, default_param_file, pft_sheet
+):
+    """An OAT ensemble of an expanded parameter with per-PFT bounds sets each PFT
+    to its own minimum and maximum, leaving the other PFTs at default
+    """
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": "pft",
+                "param_max": "pft",
+                "expand_dim": "fates_pft",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    pft_sheet.to_csv(param_dir / "fates_leaf_slatop.csv", index=False)
+
+    ensemble = ParamEnsemble.from_dict(
+        {
+            "ensemble_type": "OAT",
+            "param_dir": str(param_dir),
+            "default_param_file": str(default_param_file),
+            "ensemble_dir": str(tmp_path / "out"),
+            "file_prefix": "e",
+        }
+    )
+    defaults = [0.010, 0.020, 0.030]
+    mins = pft_sheet["param_min"].tolist()
+    maxs = pft_sheet["param_max"].tolist()
+    for i, sample in enumerate(ensemble.create_samples()):
+        pft, bound = divmod(i, 2)
+        expected = list(defaults)
+        expected[pft] = maxs[pft] if bound else mins[pft]
+        member = ensemble.create_ensemble_member(sample)
+        np.testing.assert_allclose(member["fates_leaf_slatop"].values, expected)
+
+
+def test_grouped_expanded_params_split_per_index(
+    grouped_param_dir, default_param_file, tmp_path
+):
+    """A group of expanded params becomes one sampling unit per index, each holding
+    the params for that index
+    """
+    config = LatinHypercubeConfig(
+        param_dir=grouped_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        ensemble_members=5,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    water_units = {
+        unit.name: sorted(p.spec.name for p in unit.params)
+        for unit in ensemble.sampling_units
+        if unit.name.startswith("water")
+    }
+    assert water_units == {
+        f"water_{i}": sorted([f"fates_nonhydro_smpso_{i}", f"smpsc_delta_{i}"])
+        for i in range(3)
+    }
+
+
+def test_grouped_expanded_params_key_has_per_index_columns(
+    grouped_param_dir, default_param_file, tmp_path
+):
+    """The ensemble key has one column per index of an expanded group"""
+    config = LatinHypercubeConfig(
+        param_dir=grouped_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        ensemble_members=5,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    key = ensemble.create_ensemble_key(ensemble.create_samples())
+    assert {"water_0", "water_1", "water_2"} <= set(key.columns)
+    assert "water" not in key.columns

@@ -297,6 +297,8 @@ paramgen supports four parameter types, set via the `param_type` column in `main
 
 Setting `expand_dim` on a parameter in `main.csv` tells paramgen to treat each index along that dimension as a separate, independently-sampled parameter. For example, setting `expand_dim = fates_pft` on `fates_leaf_slatop` will produce one parameter per PFT (`fates_leaf_slatop_0`, `fates_leaf_slatop_1`, etc.), each varying independently in the ensemble.
 
+Each expanded parameter keeps the bounds for its own index. With PFT-specific bounds (`param_min = pft`), `fates_leaf_slatop_1` is sampled between the second PFT's minimum and maximum; with percent bounds, it uses a percentage of the second PFT's default. Indices listed in `fixed_indices` for the expanded dimension are not expanded, so they stay at their default values and add no column to the ensemble.
+
 ## Grouping parameters
 
 Setting `group_name` on a parameter in `main.csv` links it to other parameters with the same group name. All parameters in a group receive the same normalized sample value in each ensemble member.
@@ -306,6 +308,10 @@ For a Latin Hypercube ensemble, each group occupies one column in the latin hype
 For an OAT ensemble, all parameters in a group move to their minimum together, then their maximum together, as a single pair of ensemble members.
 
 For a Morris ensemble, each group counts as one variable, so a trajectory has (number of groups and ungrouped parameters) + 1 members, and all parameters in a group step together.
+
+### Grouping expanded parameters
+
+Expansion happens before grouping, so a group of expanded parameters is split into one group per index. For example, if `fates_nonhydro_smpso` and `smpsc_delta` both have `expand_dim = fates_pft` and `group_name = water`, paramgen makes the groups `water_0` (`fates_nonhydro_smpso_0` and `smpsc_delta_0`), `water_1`, and so on. Each PFT varies independently, while the parameters for the same PFT move together. The ensemble key has one column per index (`water_0`, `water_1`, ...).
 
 **Constraints on groups:**
 

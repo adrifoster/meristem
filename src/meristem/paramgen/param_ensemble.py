@@ -386,9 +386,14 @@ class ParamEnsemble(ABC):
         """Build sampling units from params list.
 
         Each group becomes one sampling unit. Ungrouped parameters each become their
-        own singleton sampling unit
+        own singleton sampling unit.
+
+        Groups of expanded parameters are split per index: expansion turns each
+        parameter into independent per-index parameters, and a group then links the
+        parameters that share an index. e.g. group 'water' with expanded params A and
+        B gives units 'water_0' = [A_0, B_0], 'water_1' = [A_1, B_1], ...
         """
-        group_lookup: dict[str, ParamGroup] = {}
+        group_lookup: dict[tuple[str, int | None], ParamGroup] = {}
         self.sampling_units: list[ParamGroup] = []
 
         for param in self.params:
@@ -398,12 +403,16 @@ class ParamEnsemble(ABC):
                 self.sampling_units.append(
                     ParamGroup(name=param.spec.name, params=[param])
                 )
-            else:
-                if group_name not in group_lookup:
-                    new_group = ParamGroup(name=group_name, params=[])
-                    group_lookup[group_name] = new_group
-                    self.sampling_units.append(new_group)
-                group_lookup[group_name].params.append(param)
+                continue
+
+            # _validate_groups ensures all params in a group share one expand_dim
+            index = param.active_index.index if param.active_index else None
+            key = (group_name, index)
+            if key not in group_lookup:
+                name = group_name if index is None else f"{group_name}_{index}"
+                group_lookup[key] = ParamGroup(name=name, params=[])
+                self.sampling_units.append(group_lookup[key])
+            group_lookup[key].params.append(param)
 
 
 class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):

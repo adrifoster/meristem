@@ -348,7 +348,7 @@ def test_set_value_dispatches_to_write_at_index_when_expanded(
     default_param.set_value(working_param_dataset, param_dataset, 9.0)
 
     mock_at_index.assert_called_once_with(
-        working_param_dataset, DimIndex("fates_pft", 1), 9.0
+        working_param_dataset, DimIndex("fates_pft", 1), 9.0, {}
     )
     mock_full.assert_not_called()
 
