@@ -53,6 +53,7 @@ def full_stage_config_dict(minimal_stage_config_dict) -> dict:
         "memory": "24GB",
         "no_cime": False,
         "extra_pbs": ["#PBS -l gpu=1"],
+        "case_root": "/scratch/cases/spinup_ad",
     }
 
 
@@ -102,7 +103,6 @@ def submitted_state() -> StageState:
     return StageState(
         status=StageStatus.SUBMITTED,
         job_id="12345.pbs",
-        case_root="/scratch/cases/spinup_ad",
         submit_time=1_000_000.0,
         end_time=None,
         attempts=1,
@@ -115,7 +115,6 @@ def failed_state() -> StageState:
     return StageState(
         status=StageStatus.FAILED,
         job_id="12345.pbs",
-        case_root="/scratch/cases/spinup_ad",
         submit_time=1_000_000.0,
         end_time=3_000_000.0,
         attempts=1,

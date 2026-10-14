@@ -202,7 +202,6 @@ def test_stage_state_to_dict_all_fields_present(failed_state):
     assert isinstance(stage_dict["status"], str)
     assert stage_dict["status"] == "failed"
     assert stage_dict["job_id"] == "12345.pbs"
-    assert stage_dict["case_root"] == "/scratch/cases/spinup_ad"
     assert stage_dict["attempts"] == 1
     assert stage_dict["submit_time"] == 1000000.0
     assert stage_dict["end_time"] == 3000000.0
@@ -260,7 +259,6 @@ def test_stage_state_equality_with_non_stage_state_returns_not_implemented():
     [
         ("_status", StageStatus.DONE),
         ("job_id", "99999.pbs"),  # no underscore
-        ("case_root", "/scratch/cases/other"),  # no underscore
         ("_submit_time", 2_000_000.0),
         ("_end_time", 2_003_600.0),
         ("_attempts", 5),
@@ -329,7 +327,7 @@ def test_stage_state_repr(failed_state):
     result = repr(failed_state)
     assert result == (
         f"StageState(status={failed_state.status!r}, job_id={failed_state.job_id!r}, "
-        f"case_root={failed_state.case_root!r}, submit_time={failed_state.submit_time!r}, "
+        f"submit_time={failed_state.submit_time!r}, "
         f"end_time={failed_state.end_time!r}, attempts={failed_state.attempts!r})"
     )
 
@@ -513,6 +511,27 @@ def test_stage_config_from_dict_no_cime_read(no_cime_stage_config_dict):
     assert stage_config.no_cime is True
 
 
+def test_stage_config_from_dict_defaults_case_root_to_none(minimal_stage_config_dict):
+    """Test that StageConfig initiated without case_root defaults to None"""
+    stage_config = StageConfig.from_dict(minimal_stage_config_dict)
+    assert stage_config.case_root is None
+
+
+def test_stage_config_converts_case_root_to_path(full_stage_config):
+    """Test that StageConfig converts a string case_root to a Path"""
+    assert full_stage_config.case_root == Path("/scratch/cases/spinup_ad")
+
+
+def test_stage_config_to_dict_case_root_is_string(full_stage_config):
+    """Test that StageConfig's to_dict serializes case_root as a string"""
+    assert full_stage_config.to_dict()["case_root"] == "/scratch/cases/spinup_ad"
+
+
+def test_stage_config_to_dict_case_root_none(minimal_stage_config):
+    """Test that StageConfig's to_dict keeps an unset case_root as None"""
+    assert minimal_stage_config.to_dict()["case_root"] is None
+
+
 def test_stage_config_from_dict_does_not_mutate_input(full_stage_config_dict):
     """Test that initializing StageConfig doesn't mutate the input"""
     copy = dict(full_stage_config_dict)
@@ -586,6 +605,16 @@ def test_stage_from_dict_does_not_mutate_input(full_stage):
     copy = dict(stage_dict)
     Stage.from_dict(stage_dict)
     assert stage_dict == copy
+
+
+def test_stage_from_dict_legacy_null_case_root(minimal_stage_config_dict):
+    """Test that a stage dict from an older state file, where case_root was a
+    runtime key and always null, loads with the default case_root
+    """
+    stage = Stage.from_dict(
+        {**minimal_stage_config_dict, "status": "pending", "case_root": None}
+    )
+    assert stage.config.case_root is None
 
 
 def test_stage_config_is_frozen_through_stage(full_stage):

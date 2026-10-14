@@ -14,4 +14,4 @@ set -euo pipefail
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate meristem
  
-meristem run --root {{ root }} --advance --stage {{ stage_name }}
+meristem run --root {{ root | shquote }} --advance --stage {{ stage_name | shquote }}

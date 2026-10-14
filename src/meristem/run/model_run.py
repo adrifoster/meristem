@@ -7,6 +7,7 @@ import time
 import json
 from pathlib import Path
 import re
+import shlex
 
 from jinja2 import Environment, FileSystemLoader
 import yaml
@@ -23,6 +24,8 @@ _ENV = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
 )
+# quote a value for safe use as a single shell word in job scripts
+_ENV.filters["shquote"] = lambda value: shlex.quote(str(value))
 
 # state file name
 _STATE_FILE = "run_state.json"
@@ -86,6 +89,13 @@ class ModelRun:
             )
         if not self.stages:
             raise ValueError("stages must not be empty")
+        # the PBS log file (#PBS -o) lives under root, and PBS directives can't
+        # reliably hold paths with whitespace
+        if any(char.isspace() for char in str(self.root)):
+            raise ValueError(
+                f"root {str(self.root)!r} must not contain whitespace "
+                "(PBS can't write job logs to such paths)."
+            )
 
     @classmethod
     def create(
@@ -274,6 +284,8 @@ class ModelRun:
         Returns:
             Path: path to stage's case root
         """
+        if stage.config.case_root is not None:
+            return stage.config.case_root
         return self.root / stage.config.name
 
     def format_status(self):
@@ -517,7 +529,11 @@ class ModelRun:
         """
         case_root = self._case_root_for(stage)
         previous_stage = self._previous_stage(stage.config.name)
-        previous_stage_name = previous_stage.config.name if previous_stage else ""
+        previous_case_root = (
+            self._case_root_for(previous_stage) if previous_stage else None
+        )
+        # CIME names a case after the basename of its case directory
+        previous_case = previous_case_root.name if previous_case_root else ""
 
         job_name = f"{self.run_id}_{stage.config.name}"
         job_file = self.root / f"{job_name}.pbs"
@@ -540,12 +556,14 @@ class ModelRun:
             extra=extra,
             root=self.root,
             name=stage.config.name,
-            previous_case=previous_stage_name,
+            previous_case=previous_case,
+            previous_case_root=previous_case_root or "",
             run_id=self.run_id,
             script=stage.config.script,
             case_root=case_root,
             cime=not stage.config.no_cime,
             skip_script=skip_script,
+            submit_args=stage.config.submit_args,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file

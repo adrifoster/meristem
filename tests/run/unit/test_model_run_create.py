@@ -156,3 +156,11 @@ def test_model_run_create_scheduler_arg_overrides_config(
     run_config_dict["scheduler"] = "pbs"
     run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
     assert run.scheduler is fake_scheduler
+
+
+def test_model_run_create_root_with_whitespace_raises(tmp_path, run_config_dict):
+    """Test that a root containing whitespace is rejected before it is created"""
+    run_config_dict["root"] = str(tmp_path / "my run")
+    with pytest.raises(ValueError, match="whitespace"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()

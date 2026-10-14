@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Setup script for the accelerated-decomposition (AD) spinup stage.
-# Called by meristem.run as: bash run_job_ad.sh <case_root> <previous_stage_name>
-# (previous_stage_name is empty for this first stage)
+# Called by meristem.run as: bash run_job_ad.sh <case_root> <previous_case_name> <previous_case_root>
+# (the previous-case arguments are not passed for this first stage)
 
 # machine- and user-specific settings: CTSM_ROOT, OUT_DIR, PROJECT, SITE
 source "$(dirname "${BASH_SOURCE[0]}")/../smoke_settings.sh"

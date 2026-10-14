@@ -19,7 +19,6 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
     {
         "status",
         "job_id",
-        "case_root",
         "submit_time",
         "end_time",
         "attempts",
@@ -149,8 +148,6 @@ class StageState:
         Current status of the stage
     job_id: str or None
         PBS job ID assigned after submission
-    case_root: str or None
-        Absolute path to the CESM case directory
     submit_time: float or None
         Unix timestamp of the most recent submission
     end_time: float or None
@@ -163,14 +160,12 @@ class StageState:
         self,
         status: StageStatus = StageStatus.PENDING,
         job_id: str | None = None,
-        case_root: str | None = None,
         submit_time: float | None = None,
         end_time: float | None = None,
         attempts: int = 0,
     ):
         self._status = status
         self.job_id = job_id
-        self.case_root = case_root
         self._submit_time = submit_time
         self._end_time = end_time
         self._attempts = attempts
@@ -272,7 +267,6 @@ class StageState:
         return (
             self.status == other.status
             and self.job_id == other.job_id
-            and self.case_root == other.case_root
             and self._submit_time == other._submit_time
             and self._end_time == other._end_time
             and self._attempts == other._attempts
@@ -281,8 +275,8 @@ class StageState:
     def __repr__(self) -> str:
         return (
             f"StageState(status={self.status!r}, job_id={self.job_id!r}, "
-            f"case_root={self.case_root!r}, submit_time={self._submit_time!r}, "
-            f"end_time={self._end_time!r}, attempts={self._attempts!r})"
+            f"submit_time={self._submit_time!r}, end_time={self._end_time!r}, "
+            f"attempts={self._attempts!r})"
         )
 
     def to_dict(self) -> dict:
@@ -297,7 +291,6 @@ class StageState:
         return {
             "status": self.status.to_str(),
             "job_id": self.job_id,
-            "case_root": self.case_root,
             "submit_time": self._submit_time,
             "end_time": self._end_time,
             "attempts": self._attempts,
@@ -319,7 +312,6 @@ class StageState:
         return cls(
             status=StageStatus.from_str(input_dict.get("status", "")),
             job_id=input_dict.get("job_id"),
-            case_root=input_dict.get("case_root"),
             submit_time=input_dict.get("submit_time"),
             end_time=input_dict.get("end_time"),
             attempts=input_dict.get("attempts", 0),
@@ -350,6 +342,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
     extra_pbs: additional raw #PBS directives
+    case_root: absolute path to the CESM case directory. If None, the run uses
+        <root>/<name>
+    submit_args: extra submission arguments, optional
     """
 
     name: str
@@ -363,6 +358,8 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     memory: str = "10GB"
     no_cime: bool = False
     extra_pbs: tuple[str, ...] = ()
+    case_root: Path | None = None
+    submit_args: str | None = None
 
     def __post_init__(self):
         if not self.name:
@@ -372,6 +369,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
 
         # __setattr__ is required because the dataclass is frozen
         object.__setattr__(self, "script", Path(self.script))
+
+        if self.case_root is not None:
+            object.__setattr__(self, "case_root", Path(self.case_root))
 
         _validate_walltime(self.walltime)
 
@@ -404,6 +404,8 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         """Serialize configuration fields to a plain dictionary"""
         return {
             "name": self.name,
+            "case_root": str(self.case_root) if self.case_root is not None else None,
+            "submit_args": self.submit_args if self.submit_args is not None else None,
             "script": str(self.script),
             "walltime": self.walltime,
             "queue": self.queue,

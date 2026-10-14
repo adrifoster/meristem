@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -70,14 +72,16 @@ def test_submit_script_trap_references_run_root(created_run):
     """Test that the ERR trap in the job script references the correct run root"""
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
-    assert f"meristem run --root {created_run.root}" in content
+    assert f"RUN_ROOT={created_run.root}\n" in content
+    assert 'trap \'meristem run --root "$RUN_ROOT"' in content
 
 
 def test_submit_script_trap_references_stage_name(created_run):
     """Test that the ERR trap in the job script references the correct stage name"""
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
-    assert f"--fail --stage {created_run.stages[0].config.name}" in content
+    assert f"STAGE={created_run.stages[0].config.name}\n" in content
+    assert '--fail --stage "$STAGE"\' ERR' in content
 
 
 def test_submit_script_correct_script(created_run):
@@ -95,24 +99,28 @@ def test_submit_script_cd_into_case_root(created_run):
     assert f"cd {case_root}" in job_file
 
 
-@pytest.mark.parametrize(
-    "field,expected",
-    [
-        ("--submit-advance --stage ", "name"),
-    ],
-)
-def test_submit_script_correct_clm_run_submit_advance(created_run, field, expected):
+def test_submit_script_uses_configured_case_root(
+    tmp_path, run_config_dict, fake_scheduler
+):
+    """Test that a stage's case_root overrides the default <root>/<name>"""
+    case_root = tmp_path / "elsewhere" / "my_case"
+    run_config_dict["stages"][0]["case_root"] = str(case_root)
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    job_file = (run.root / f"{run.run_id}_spinup_ad.pbs").read_text()
+    assert f"{run.stages[0].config.script} {case_root}" in job_file
+    assert f"cd {case_root}" in job_file
+
+
+@pytest.mark.parametrize("command", ["--submit-advance", "--submit-fail"])
+def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
     Test that ModelRun.submit() creates a PBS file with the correct meristem run commands
-    for failing
+    for advancing and failing
     """
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
-    stage = created_run.stages[0]
-    values = {
-        "name": stage.config.name,
-    }
-    assert field + values[expected] in job_file
+    assert f'meristem run --root "$RUN_ROOT" {command} --stage "$STAGE"' in job_file
 
 
 def test_submit_stage_status_set_to_submitted(created_run):
@@ -261,3 +269,98 @@ def test_submit_qsub_failure_does_not_increment_attempts(created_run, mocker):
     with pytest.raises(subprocess.CalledProcessError):
         created_run.submit()
     assert created_run.stages[0].state.attempts == 0
+
+
+def _setup_script_args(job_file: Path) -> list[str]:
+    """Arguments passed to the user's setup script in a generated job script"""
+    for line in job_file.read_text().splitlines():
+        if line.startswith("bash -c"):
+            # split the way bash would, so quoted paths stay one argument
+            return shlex.split(line.split('"$@"\' ', 1)[1])[1:]
+    raise AssertionError(f"no setup script call in {job_file}")
+
+
+def test_submit_first_stage_passes_no_previous_case(created_run):
+    """Test that the first stage's setup script gets only its case_root"""
+    created_run.submit()
+    job_file = created_run.root / f"{created_run.run_id}_spinup_ad.pbs"
+    assert _setup_script_args(job_file) == [str(created_run.root / "spinup_ad")]
+
+
+def test_advance_passes_previous_case_name_and_root(two_stage_run):
+    """Test that the next stage's setup script gets the previous case name and root"""
+    two_stage_run.submit()
+    two_stage_run.advance("spinup_ad")
+    job_file = two_stage_run.root / f"{two_stage_run.run_id}_spinup_sasu.pbs"
+    assert _setup_script_args(job_file) == [
+        str(two_stage_run.root / "spinup_sasu"),
+        "spinup_ad",
+        str(two_stage_run.root / "spinup_ad"),
+    ]
+
+
+def test_advance_passes_configured_previous_case_root(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+):
+    """Test that a custom case_root on the previous stage sets both the previous
+    case name (its basename) and the previous case root
+    """
+    ad_case_root = tmp_path / "elsewhere" / "my_ad_case"
+    config = {
+        "root": str(tmp_path / "two_stage"),
+        "run_id": "member_0001",
+        "project": "PROJ123",
+        "user": "auser",
+        "stages": [
+            {**ad_stage_config_dict, "case_root": str(ad_case_root)},
+            sasu_stage_config_dict,
+        ],
+    }
+    run = ModelRun.create(config, scheduler=fake_scheduler)
+    run.submit()
+    run.advance("spinup_ad")
+    job_file = run.root / f"{run.run_id}_spinup_sasu.pbs"
+    assert _setup_script_args(job_file)[1:] == ["my_ad_case", str(ad_case_root)]
+
+
+@pytest.mark.parametrize(
+    "awkward_name",
+    ["has space", "has $dollar", "has 'quote", "has;semicolon"],
+)
+def test_submit_script_quotes_awkward_paths(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler, awkward_name
+):
+    """Test that script and case paths with shell special characters reach the
+    setup script as single, unmodified arguments
+    """
+    script = tmp_path / f"{awkward_name}.sh"
+    script.touch()
+    ad_case_root = tmp_path / awkward_name / "ad case"
+    sasu_case_root = tmp_path / awkward_name / "sasu case"
+    config = {
+        "root": str(tmp_path / "two_stage"),
+        "run_id": "member_0001",
+        "project": "PROJ123",
+        "user": "auser",
+        "stages": [
+            {**ad_stage_config_dict, "case_root": str(ad_case_root)},
+            {
+                **sasu_stage_config_dict,
+                "script": str(script),
+                "case_root": str(sasu_case_root),
+            },
+        ],
+    }
+    run = ModelRun.create(config, scheduler=fake_scheduler)
+    run.submit()
+    run.advance("spinup_ad")
+    job_file = run.root / f"{run.run_id}_spinup_sasu.pbs"
+    content = job_file.read_text()
+
+    assert f"' {shlex.quote(str(script))} " in content
+    assert _setup_script_args(job_file) == [
+        str(sasu_case_root),
+        "ad case",
+        str(ad_case_root),
+    ]
+    assert f"cd {shlex.quote(str(sasu_case_root))}\n" in content
