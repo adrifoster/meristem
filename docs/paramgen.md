@@ -79,7 +79,7 @@ Either a Python dictionary (when using the library directly) or a YAML file (whe
 Run the ensemble generator from a YAML configuration file without writing any Python:
 
 ```bash
-meristem-paramgen run config.yaml
+meristem paramgen config.yaml
 ```
 
 where `config.yaml` contains the same keys as the `from_dict` dictionary below. For example:

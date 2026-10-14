@@ -62,7 +62,7 @@ and `.nc` with `.json`.
 Generates 20 ensemble members by sampling all parameters simultaneously using a Latin Hypercube design.
 
 ```bash
-meristem-paramgen run lh_config.yaml
+meristem paramgen lh_config.yaml
 ```
 
 Output is written to `output_LH/`:
@@ -77,7 +77,7 @@ Generates two ensemble members per parameter (or group): one at its minimum valu
 maximum value, with all other parameters held at default.
 
 ```bash
-meristem-paramgen run oat_config.yaml
+meristem paramgen oat_config.yaml
 ```
 
 Output is written to `output_OAT/`:
@@ -93,7 +93,7 @@ trajectory changes one parameter or group at a time, so it has one member per pa
 plus a starting point.
 
 ```bash
-meristem-paramgen run morris_config.yaml
+meristem paramgen morris_config.yaml
 ```
 
 Output is written to `output_Morris/`:

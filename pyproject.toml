@@ -26,8 +26,7 @@ dependencies = [
 dev = ["pytest>=8", "pytest-cov", "pytest-mock", "black", "pylint"]
 
 [project.scripts]
-meristem-paramgen = "meristem.paramgen.cli:main"   # temporary
-clm-run = "meristem.jobs.cli:main"                 # temporary
+meristem = "meristem.cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "meristem.__version__"}
@@ -36,7 +35,7 @@ version = {attr = "meristem.__version__"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"meristem.jobs" = ["templates/*.txt"]
+"meristem.run" = ["templates/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

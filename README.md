@@ -20,15 +20,18 @@ format and, for job chaining, setup scripts for its run stages. Job chaining cur
 
 ## Workflow
 
-meristem has two parts, which can be used together or on their own:
+meristem has three parts:
 
-1. **`meristem.paramgen`**: describe parameters and their ranges in a CSV, choose a sampling design, and
-   get one parameter file per ensemble member, plus a key of the sampled values. This runs anywhere.
-2. **`meristem.jobs`**: describe the stages of a run (e.g. spinup → transient) in a YAML file, and submit
-   them as a chain of PBS jobs that advance on success and stop cleanly on failure. This runs on a PBS
-   cluster with CESM/CTSM.
+1. **`meristem.paramgen`**: generate parameter files. Describe parameters and their ranges in a CSV,
+   choose a sampling design, and get one parameter file per ensemble member, plus a key of the
+   sampled values. This runs anywhere.
+2. **`meristem.run`**: run one model run. Describe its stages (e.g. spinup → transient) in a YAML
+   file, and submit them as a chain of PBS jobs that advance on success and stop cleanly on failure.
+   A run can also be a single stage. This runs on a PBS cluster with CESM/CTSM.
+3. **`meristem.ensemble`** *(in progress)*: run an ensemble. One run per paramgen parameter file,
+   each with one or more stages, submitted and tracked together.
 
-Running a whole ensemble (one tethered run per ensemble member) is in progress.
+`paramgen` and `run` can each be used on their own. `ensemble` builds on both.
 
 ## Installation
 
@@ -46,7 +49,7 @@ This installs meristem in editable mode, along with its dependencies and the dev
 (pytest, pylint, black).
 
 > [!IMPORTANT]
-> If you use `meristem.jobs`, keep the environment name `meristem`: the generated PBS job scripts run
+> If you use `meristem.run`, keep the environment name `meristem`: the generated PBS job scripts run
 > `conda activate meristem`.
 
 To install into an existing environment instead, run `pip install -e .` from the repository root
@@ -60,7 +63,7 @@ The repository includes a small CLM example. From the repository root:
 
 ```bash
 cd examples/paramgen/clm_example
-meristem-paramgen run lh_config.yaml
+meristem paramgen lh_config.yaml
 ```
 
 `lh_config.yaml` asks for a 20-member Latin Hypercube ensemble:
@@ -116,9 +119,9 @@ stages:
 Then create the run, submit the first stage, and check on it:
 
 ```bash
-clm-run --create --config run.yaml
-clm-run --root /glade/derecho/scratch/user/my_spinup --submit
-clm-run --root /glade/derecho/scratch/user/my_spinup --print-status
+meristem run --create --config run.yaml
+meristem run --root /glade/derecho/scratch/user/my_spinup --submit
+meristem run --root /glade/derecho/scratch/user/my_spinup --print-status
 ```
 
 Each stage submits the next one when its model run finishes successfully.
@@ -128,8 +131,8 @@ Each stage submits the next one when its model run finishes successfully.
 - [docs/paramgen.md](docs/paramgen.md): parameter ensembles in detail: the `main.csv` format,
   Latin Hypercube, one-at-a-time and Morris designs, parameter types, grouping, fixed indices
   and posterior sampling.
-- [docs/jobs.md](docs/jobs.md): tethered runs in detail: how the PBS jobs fit together,
-  the config reference, writing setup scripts, and the `clm-run` command reference.
+- [docs/run.md](docs/run.md): runs in detail: how the tethered PBS jobs fit together,
+  the config reference, writing setup scripts, and the `meristem run` command reference.
 - [examples/paramgen](examples/paramgen): worked CLM and FATES examples, including posterior sampling.
 
 ## Contributing

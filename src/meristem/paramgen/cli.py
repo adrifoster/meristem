@@ -35,6 +35,11 @@ def _load_config(config_path: Path) -> dict:
 
 
 def _run(args: argparse.Namespace):
+    """Generate the ensemble described by the config file in args.config
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+    """
 
     config = _load_config(Path(args.config))
 
@@ -55,34 +60,37 @@ def _run(args: argparse.Namespace):
     print(f"Ensemble complete. Output written to {ensemble.ensemble_dir}/")
 
 
-def main():
-    """Entry point for the meristem-paramgen CLI."""
-    parser = argparse.ArgumentParser(
-        prog="meristem-paramgen",
-        description="Generate CLM/FATES parameter ensembles.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the argument parser.
 
-    # run subcommand
-    run_parser = subparsers.add_parser(
-        "run",
-        help="Generate an ensemble from a YAML config file.",
+    Returns:
+        argparse.ArgumentParser: argument parser
+    """
+    parser = argparse.ArgumentParser(
+        prog="meristem paramgen",
         description=(
-            "Generate a parameter ensemble from a YAML config file. "
+            "Generate a CLM/FATES parameter ensemble from a YAML config file. "
             "The config file should contain the same keys as the Python "
             "ParamEnsemble.from_dict() interface."
         ),
     )
-    run_parser.add_argument(
+    parser.add_argument(
         "config",
         metavar="CONFIG",
         help="Path to the YAML configuration file.",
     )
-    run_parser.set_defaults(func=_run)
-
-    args = parser.parse_args()
-    args.func(args)
+    return parser
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for the meristem paramgen command.
+
+    Args:
+        argv (list[str] | None): argument list (defaults to sys.argv if None).
+
+    Returns:
+        int: exit code, 0 on success (errors exit via sys.exit)
+    """
+    args = build_parser().parse_args(argv)
+    _run(args)
+    return 0
