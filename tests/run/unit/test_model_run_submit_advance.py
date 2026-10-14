@@ -9,14 +9,12 @@ import pytest
 from meristem.run.stages import StageStatus
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_unknown_stage_raises(created_run):
     """Test that submit_advance() raises for an unknown stage name"""
     with pytest.raises(ValueError, match="nonexistent_stage"):
         created_run.submit_advance("nonexistent_stage", "5555.deched")
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_writes_jobscript(created_run):
     """Test that ModelRun.submit_advance() actually writes a jobscript"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED
@@ -36,7 +34,6 @@ def test_submit_advance_writes_jobscript(created_run):
         ("#PBS -W depend=afterok:", "cime_job_id"),
     ],
 )
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_script_contains_pbs_directives(created_run, field, expected):
     """Test that ModelRun.submit_advance() creates a PBS file with the correct PBS directives"""
 
@@ -60,7 +57,6 @@ def test_submit_advance_script_contains_pbs_directives(created_run, field, expec
     assert field + values[expected] in job_file
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_script_references_run_root(created_run):
     """Test that the job script references the correct run root"""
     stage = created_run.stages[0]
@@ -74,7 +70,6 @@ def test_submit_advance_script_references_run_root(created_run):
     assert f"meristem run --root {created_run.root}" in content
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_script_references_stage_name(created_run):
     """Test that the job script references the correct stage name"""
     stage = created_run.stages[0]
@@ -88,35 +83,33 @@ def test_submit_advance_script_references_stage_name(created_run):
     assert f"--stage {created_run.stages[0].config.name}" in content
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_returns_job_id(created_run):
     """Test that submit_advance() returns the PBS job ID"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
     stage.state.submit_time = time.time() - 100
     result = created_run.submit_advance("spinup_ad", "55555.pbs")
-    assert result == "12345.pbs"
+    assert result == "1.fake"
 
 
-def test_submit_advance_calls_qsub(created_run, mock_qsub):
+def test_submit_advance_calls_qsub(created_run, fake_scheduler):
     """Test that submit_advance() calls qsub"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
     stage.state.submit_time = time.time() - 100
     created_run.submit_advance("spinup_ad", "55555.pbs")
-    mock_qsub.assert_called_once()
+    assert len(fake_scheduler.submitted) == 1
 
 
-def test_submit_advance_dry_run_does_not_call_qsub(created_run, mock_qsub):
+def test_submit_advance_dry_run_does_not_call_qsub(created_run, fake_scheduler):
     """Test that submit_advance(dry_run=True) does not call qsub"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
     stage.state.submit_time = time.time() - 100
     created_run.submit_advance("spinup_ad", "55555.pbs", dry_run=True)
-    mock_qsub.assert_not_called()
+    assert not fake_scheduler.submitted
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_dry_run_job_id_format(created_run):
     """Test that submit_advance(dry_run=True) produces a synthetic DRY_ job ID"""
     stage = created_run.stages[0]
@@ -126,7 +119,6 @@ def test_submit_advance_dry_run_job_id_format(created_run):
     assert result == f"DRY_advance_{created_run.run_id}_spinup_ad"
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_dry_run_still_writes_script(created_run):
     """Test that submit_advance(dry_run=True) still writes the advance script"""
     stage = created_run.stages[0]
@@ -140,13 +132,14 @@ def test_submit_advance_dry_run_still_writes_script(created_run):
 def test_submit_advance_qsub_failure_raises(created_run, mocker):
     """Test that a qsub failure propagates out of submit_advance()"""
     mocker.patch.object(
-        created_run, "_qsub", side_effect=subprocess.CalledProcessError(1, "qsub")
+        created_run.scheduler,
+        "submit",
+        side_effect=subprocess.CalledProcessError(1, "qsub"),
     )
     with pytest.raises(subprocess.CalledProcessError):
         created_run.submit_advance("spinup_ad", "55555.pbs")
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_does_not_update_stage_state(created_run):
     """submit_advance() does not update stage status or job_id
     The advance job ID belongs to the *next* stage, not the current one.

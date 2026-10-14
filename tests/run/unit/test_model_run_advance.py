@@ -9,7 +9,6 @@ from meristem.run.model_run import ModelRun
 from meristem.run.stages import StageStatus
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_marks_stage_done(two_stage_run):
     """Test that ModelRun.advance() marks the completed stage as DONE"""
     two_stage_run.submit()
@@ -17,7 +16,6 @@ def test_advance_marks_stage_done(two_stage_run):
     assert two_stage_run.stages[0].state.status is StageStatus.DONE
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_sets_end_time(two_stage_run):
     """Test that ModelRun.advance() sets end_time on the completed stage"""
     two_stage_run.submit()
@@ -25,16 +23,14 @@ def test_advance_sets_end_time(two_stage_run):
     assert two_stage_run.stages[0].state.end_time is not None
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_persists_completed_stage_to_disk(two_stage_run):
     """Test that ModelRun.advance() saves the DONE state to disk"""
     two_stage_run.submit()
     two_stage_run.advance("spinup_ad")
-    loaded = ModelRun.load(two_stage_run.root)
+    loaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
     assert loaded.stages[0].state.status is StageStatus.DONE
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_submits_next_stage(two_stage_run):
     """Test that advance() submits the next PENDING stage"""
     two_stage_run.submit()
@@ -42,32 +38,28 @@ def test_advance_submits_next_stage(two_stage_run):
     assert two_stage_run.stages[1].state.status is StageStatus.SUBMITTED
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_next_stage_job_id_set(two_stage_run):
     """Test that advance() sets a job ID on the next stage"""
     two_stage_run.submit()
     two_stage_run.advance("spinup_ad")
-    assert two_stage_run.stages[1].state.job_id == "12345.pbs"
+    assert two_stage_run.stages[1].state.job_id == "2.fake"
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_returns_next_job_id(two_stage_run):
     """Test that advance() returns the PBS job ID of the next stage"""
     two_stage_run.submit()
     result = two_stage_run.advance("spinup_ad")
-    assert result == "12345.pbs"
+    assert result == "2.fake"
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_persists_next_stage_submission(two_stage_run):
     """Test that advance() persists the next stage submission to disk"""
     two_stage_run.submit()
     two_stage_run.advance("spinup_ad")
-    loaded = ModelRun.load(two_stage_run.root)
+    loaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
     assert loaded.stages[1].state.status is StageStatus.SUBMITTED
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_last_stage_returns_none(two_stage_run):
     """Test that advance() returns None when the last stage completes"""
     two_stage_run.submit()
@@ -76,16 +68,15 @@ def test_advance_last_stage_returns_none(two_stage_run):
     assert result is None
 
 
-def test_advance_last_stage_does_not_call_qsub(two_stage_run, mock_qsub):
+def test_advance_last_stage_does_not_call_qsub(two_stage_run, fake_scheduler):
     """Test that advance() does not call qsub when the last stage completes"""
     object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.DONE)
     object.__setattr__(two_stage_run.stages[1].state, "_status", StageStatus.SUBMITTED)
     object.__setattr__(two_stage_run.stages[1].state, "_submit_time", time.time() - 100)
     two_stage_run.advance("spinup_sasu")
-    mock_qsub.assert_not_called()
+    assert not fake_scheduler.submitted
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_last_stage_still_marks_done(two_stage_run):
     """Test that advance() marks the last stage DONE even with no next stage"""
     object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.DONE)
@@ -95,15 +86,14 @@ def test_advance_last_stage_still_marks_done(two_stage_run):
     assert two_stage_run.stages[1].state.status is StageStatus.DONE
 
 
-def test_advance_dry_run_does_not_call_qsub(two_stage_run, mock_qsub):
+def test_advance_dry_run_does_not_call_qsub(two_stage_run, fake_scheduler):
     """Test that advance(dry_run=True) does not call qsub"""
     two_stage_run.stages[0].state.status = StageStatus.SUBMITTED
     two_stage_run.stages[0].state.submit_time = time.time() - 100
     two_stage_run.advance("spinup_ad", dry_run=True)
-    mock_qsub.assert_not_called()
+    assert not fake_scheduler.submitted
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_dry_run_still_marks_stage_done(two_stage_run):
     """Test that advance(dry_run=True) still marks the completed stage as DONE"""
     two_stage_run.submit()
@@ -111,7 +101,6 @@ def test_advance_dry_run_still_marks_stage_done(two_stage_run):
     assert two_stage_run.stages[0].state.status is StageStatus.DONE
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_dry_run_next_stage_job_id_format(two_stage_run):
     """Test that advance(dry_run=True) gives the next stage a DRY_ job ID"""
     two_stage_run.submit()
@@ -120,14 +109,12 @@ def test_advance_dry_run_next_stage_job_id_format(two_stage_run):
     assert two_stage_run.stages[1].state.job_id == expected
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_unknown_stage_raises(two_stage_run):
     """Test that advance() raises for an unknown stage name"""
     with pytest.raises(ValueError, match="nonexistent_stage"):
         two_stage_run.advance("nonexistent_stage")
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_does_not_affect_other_stages(two_stage_run):
     """Test that advance() only modifies the completed and next stages"""
     two_stage_run.submit()
@@ -145,7 +132,6 @@ def test_advance_does_not_affect_other_stages(two_stage_run):
         StageStatus.DONE,
     ],
 )
-@pytest.mark.usefixtures("mock_qsub")
 def test_advance_non_pending_or_failed_rases(created_run, cant_advance_status):
     """Test that ModelRun.advance() raises a value error if status isn't PENDING or FAILED"""
     object.__setattr__(created_run.stages[0].state, "_status", cant_advance_status)

@@ -135,21 +135,16 @@ def ad_stage(ad_stage_config_dict) -> Stage:
 
 
 @pytest.fixture
-def created_run(run_config_dict) -> ModelRun:
-    """An instantiated ModelRun instance from run_config_dict"""
-    return ModelRun.create(run_config_dict)
+def created_run(run_config_dict, fake_scheduler) -> ModelRun:
+    """An instantiated ModelRun instance from run_config_dict, using a FakeScheduler"""
+    return ModelRun.create(run_config_dict, scheduler=fake_scheduler)
 
 
 @pytest.fixture
-def mock_qsub(mocker):
-    """Mock qsub so we can unit test it"""
-    mock = mocker.patch.object(ModelRun, "_qsub", return_value="12345.pbs")
-    return mock
-
-
-@pytest.fixture
-def two_stage_run(tmp_path, ad_stage_config_dict, sasu_stage_config_dict):
-    """A two-stage ModelRun instance"""
+def two_stage_run(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+):
+    """A two-stage ModelRun instance, using a FakeScheduler"""
     config = {
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
@@ -157,4 +152,4 @@ def two_stage_run(tmp_path, ad_stage_config_dict, sasu_stage_config_dict):
         "user": "auser",
         "stages": [ad_stage_config_dict, sasu_stage_config_dict],
     }
-    return ModelRun.create(config)
+    return ModelRun.create(config, scheduler=fake_scheduler)

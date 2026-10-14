@@ -49,16 +49,9 @@ def run_config_dict(tmp_path, ad_stage_config_dict) -> dict:
 
 
 @pytest.fixture
-def created_run(run_config_dict) -> ModelRun:
-    """A simple run created with run_config_dict"""
-    return ModelRun.create(run_config_dict)
-
-
-@pytest.fixture
-def mock_qsub(mocker):
-    """qsub mocker"""
-    mock = mocker.patch.object(ModelRun, "_qsub", return_value="12345.pbs")
-    return mock
+def created_run(run_config_dict, fake_scheduler) -> ModelRun:
+    """A simple run created with run_config_dict, using a FakeScheduler"""
+    return ModelRun.create(run_config_dict, scheduler=fake_scheduler)
 
 
 @pytest.fixture

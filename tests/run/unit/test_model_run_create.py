@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from meristem.run.model_run import ModelRun, _STATE_FILE
+from meristem.run.scheduler import PbsScheduler
 
 
 def test_model_run_create_valid_config_passes(run_config_dict):
@@ -123,3 +124,35 @@ def test_model_run_create_from_yaml(tmp_path, run_config_dict):
     yaml_path.write_text(yaml.dump(run_config_dict), encoding="utf-8")
     run = ModelRun.create(yaml_path)
     assert run.project == "PROJ123"
+
+
+def test_model_run_create_default_scheduler_is_pbs(run_config_dict):
+    """Test that ModelRun.create uses PBS when the config has no scheduler key"""
+    run = ModelRun.create(run_config_dict)
+    assert isinstance(run.scheduler, PbsScheduler)
+
+
+def test_model_run_create_scheduler_from_config(run_config_dict):
+    """Test that ModelRun.create builds the scheduler named in the config"""
+    run_config_dict["scheduler"] = "pbs"
+    run = ModelRun.create(run_config_dict)
+    assert isinstance(run.scheduler, PbsScheduler)
+
+
+def test_model_run_create_unknown_scheduler_raises_before_touching_filesystem(
+    run_config_dict,
+):
+    """Test that an unknown scheduler name fails before the root is created"""
+    run_config_dict["scheduler"] = "nonexistent"
+    with pytest.raises(ValueError, match="nonexistent"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_create_scheduler_arg_overrides_config(
+    run_config_dict, fake_scheduler
+):
+    """Test that a scheduler passed to ModelRun.create wins over the config key"""
+    run_config_dict["scheduler"] = "pbs"
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    assert run.scheduler is fake_scheduler

@@ -19,7 +19,6 @@ def test_smoke_script_syntax(script):
     assert result.returncode == 0, f"Syntax error in {script.name}:\n{result.stderr}"
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_script_passes_bash_validation(created_run):
     """Test that generated PBS submit script passes bash -n validation"""
     created_run.submit()
@@ -30,7 +29,6 @@ def test_submit_script_passes_bash_validation(created_run):
     assert result.returncode == 0, f"Syntax error in {job_file.name}:\n{result.stderr}"
 
 
-@pytest.mark.usefixtures("mock_qsub")
 def test_submit_advance_script_passes_bash_validation(created_run):
     """Test that ModelRun.submit_advance() script passes bash -n validation"""
     created_run.stages[0].state.status = StageStatus.SUBMITTED

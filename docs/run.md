@@ -103,6 +103,7 @@ Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
 | `user` | no | `$USER` | PBS username, used for job emails (`#PBS -M`). If omitted, the `USER` environment variable is used |
+| `scheduler` | no | `pbs` | Job scheduler used to submit job scripts. Saved in the state file. Only `pbs` is currently supported |
 
 Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded when the run is created,
 e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.

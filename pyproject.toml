@@ -58,5 +58,5 @@ disable = ["wrong-import-order", "wrong-import-position"]
 disable = ["too-many-arguments", "too-many-positional-arguments", "duplicate-code"]
 
 [tool.black]
-target-version = ["py312", "py313"]
+target-version = ["py312"]
 line-length = 88
