@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from meristem.commands import meristem_cmd
 from meristem.run import model_run
 from meristem.run.model_run import ModelRun
 from meristem.run.stages import StageStatus
@@ -178,6 +179,57 @@ def test_submit_command_stage_survives_reload(command_run, fake_scheduler):
     job_file = reloaded.root / f"{reloaded.run_id}_spinup_ad.pbs"
     assert _command_call(job_file)[-1].endswith("meristem ensemble prepare --member 1")
     assert 'source "$0"' not in job_file.read_text()
+
+
+def _job_scripts(run: ModelRun) -> dict[str, str]:
+    """Render the submit, advance, and fail job scripts for a run's first stage"""
+    # pylint: disable=protected-access
+    stage = run.stages[0]
+    return {
+        "submit": run._write_job_script(stage).read_text(),
+        "advance": run._write_advance_script(stage, "5555.fake").read_text(),
+        "fail": run._write_fail_script(stage, "5555.fake").read_text(),
+    }
+
+
+@pytest.mark.parametrize("kind", ["submit", "advance", "fail"])
+def test_job_scripts_call_this_meristem_install(created_run, kind):
+    """Test that every job script calls meristem through the interpreter that
+    wrote it, rather than activating a conda environment
+    """
+    content = _job_scripts(created_run)[kind]
+    assert meristem_cmd() in content
+    assert "conda activate" not in content
+
+
+def test_submit_command_stage_can_call_meristem_without_conda(
+    run_config_dict, command_stage_config_dict, fake_scheduler
+):
+    """Test that a command stage's bash -c child shell can call `meristem` with
+    only system directories on PATH (no activated environment)
+    """
+    run_config_dict["stages"] = [
+        {**command_stage_config_dict, "command": "meristem --version"}
+    ]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    job_file = run.root / f"{run.run_id}_spinup_ad.pbs"
+
+    # the function definition, its export, and the command call, in order
+    snippet = "\n".join(
+        line
+        for line in job_file.read_text().splitlines()
+        if line.startswith(("meristem() {", "export -f meristem", "bash -c"))
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", "set -euo pipefail\n" + snippet],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "meristem" in result.stdout
 
 
 def test_submit_command_stage_strict_mode_stops_on_failure(

@@ -12,6 +12,7 @@ import shlex
 from jinja2 import Environment, FileSystemLoader
 import yaml
 
+from meristem.commands import meristem_cmd
 from .scheduler import DEFAULT_SCHEDULER, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
@@ -555,6 +556,7 @@ class ModelRun:
 
         template = _ENV.get_template("submit_script_template.txt")
         template = template.render(
+            meristem=meristem_cmd(),
             job_name=job_name,
             queue=stage.config.queue,
             select=stage.config.select,
@@ -597,6 +599,7 @@ class ModelRun:
 
         template = _ENV.get_template("advance_script_template.txt")
         template = template.render(
+            meristem=meristem_cmd(),
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,
@@ -624,6 +627,7 @@ class ModelRun:
 
         template = _ENV.get_template("fail_script_template.txt")
         template = template.render(
+            meristem=meristem_cmd(),
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,

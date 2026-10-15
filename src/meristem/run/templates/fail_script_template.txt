@@ -10,8 +10,4 @@
 #PBS -W depend=afternotok:{{ cime_job_id }}
 set -euo pipefail
 
-# activate conda environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate meristem
- 
-meristem run --root {{ root | shquote }} --fail --stage {{ stage_name | shquote }}
+{{ meristem }} run --root {{ root | shquote }} --fail --stage {{ stage_name | shquote }}

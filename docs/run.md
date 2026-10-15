@@ -34,8 +34,12 @@ Only the first stage needs to be submitted manually. The rest of the pipeline ru
 
 - A machine with PBS (e.g. Derecho)
 - CESM/CTSM set up on that machine
-- meristem installed in a conda environment named `meristem`. The generated job scripts run
-  `conda activate meristem` so that `meristem run` is available inside each job.
+- meristem installed in a Python environment on a filesystem the compute nodes can see (e.g.
+  `/glade/work`). Generated job scripts call meristem through the absolute path of the Python
+  that created the run (`/path/to/python -m meristem`), so no environment needs to be activated
+  inside the jobs. Don't move, delete, or rebuild that environment while a run is in progress.
+- Setup scripts and stage `command`s can call `meristem` directly. They do not get an
+  activated conda environment, so a setup script that needs one must activate it itself.
 
 ----
 

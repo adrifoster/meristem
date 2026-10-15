@@ -13,16 +13,17 @@
 {% endif %}
 {{ extra }}
 
-# activate conda environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate meristem
-
 set -euo pipefail
- 
+
+{# meristem is already shell-quoted by meristem_cmd(); don't shquote it again #}
+# export so child shells (bash -c commands, setup scripts) can call meristem too
+meristem() { {{ meristem }} "$@"; }
+export -f meristem
+
 RUN_ROOT={{ root | shquote }}
 STAGE={{ name | shquote }}
 trap 'meristem run --root "$RUN_ROOT" --fail --stage "$STAGE"' ERR
- 
+
 echo "=== Run: {{ run_id }} / stage: {{ name }} ==="
 echo "=== Started: $(date) ==="
 

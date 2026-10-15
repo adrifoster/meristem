@@ -9,9 +9,5 @@
 #PBS -M {{ user }}
 #PBS -W depend=afterok:{{ cime_job_id }}
 set -euo pipefail
-
-# activate conda environment
-source $(conda info --base)/etc/profile.d/conda.sh
-conda activate meristem
  
-meristem run --root {{ root | shquote }} --advance --stage {{ stage_name | shquote }}
+{{ meristem }} run --root {{ root | shquote }} --advance --stage {{ stage_name | shquote }}
