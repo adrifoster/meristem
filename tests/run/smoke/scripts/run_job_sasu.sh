@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Setup script for the SASU spinup stage, starting from the previous stage's restart.
-# Called by meristem.run as: bash run_job_sasu.sh <case_root> <previous_stage_name>
+# Called by meristem.run as: bash run_job_sasu.sh <case_root> <previous_case_name> <previous_case_root>
 
 # machine- and user-specific settings: CTSM_ROOT, OUT_DIR, PROJECT, SITE
 source "$(dirname "${BASH_SOURCE[0]}")/../smoke_settings.sh"
@@ -10,7 +10,7 @@ COMPSET=2000_DATM%1PT_CLM60%BGC_SICE_SOCN_SROF_SGLC_SWAV
 RES=CLM_USRDAT
 
 if [ $# -lt 2 ] || [ -z "$2" ]; then
-  echo "ERROR: please specify case_root and previous_stage_name"
+  echo "ERROR: please specify case_root and previous_case_name"
   exit 1
 fi
 case_root="$1"

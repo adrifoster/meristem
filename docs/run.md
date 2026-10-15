@@ -98,11 +98,12 @@ Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
 
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
-| `root` | yes | | Working directory for the run. Job scripts, logs, the state file and each stage's case live here |
+| `root` | yes | | Working directory for the run. Job scripts, logs, the state file and each stage's case live here. Must not contain whitespace, since PBS writes job logs here |
 | `stages` | yes | | List of stages, run in order (see below) |
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
 | `user` | no | `$USER` | PBS username, used for job emails (`#PBS -M`). If omitted, the `USER` environment variable is used |
+| `scheduler` | no | `pbs` | Job scheduler used to submit job scripts. Saved in the state file. Only `pbs` is currently supported |
 
 Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded when the run is created,
 e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
@@ -111,9 +112,10 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
-| `name` | yes | | Unique stage name. The stage's case is created at `<root>/<name>` |
+| `name` | yes | | Unique stage name. By default the stage's case is created at `<root>/<name>` |
 | `script` | yes | | Path to the setup script for this stage (see [Setup scripts](#setup-scripts)) |
 | `queue` | yes | | PBS queue for the setup job |
+| `case_root` | no | `<root>/<name>` | Absolute path to the stage's case directory |
 | `walltime` | no | `01:00:00` | Walltime for the setup job (`HH:MM:SS`) |
 | `select` | no | `1` | Number of nodes for the setup job |
 | `ncpus` | no | `1` | CPUs per node for the setup job |
@@ -180,13 +182,17 @@ meristem run --root <path> --retry --stage <name>
 Each stage requires a setup script that creates, configures and builds the case. The setup job calls it as:
 
 ```bash
-bash <script> <case_root> <previous_stage_name>
+bash <script> <case_root> <previous_case_name> <previous_case_root>
 ```
 
-- `case_root` is where the script should create the case: `<root>/<stage name>`.
-- `previous_stage_name` is the name of the previous stage, which is also its case name. Use it to
-  start from the previous stage's restart files, e.g. `./xmlchange RUN_REFCASE=$2`. For the first
-  stage it isn't passed at all, so `$#` is 1. The previous stage's case is at `$(dirname "$1")/$2`.
+- `case_root` is where the script should create the case: the stage's `case_root` if set, otherwise
+  `<root>/<stage name>`.
+- `previous_case_name` is the CIME case name of the previous stage: the last component of its
+  `case_root`, which is the previous stage's name unless it set a custom `case_root`. Use it to start
+  from the previous stage's restart files, e.g. `./xmlchange RUN_REFCASE=$2`.
+- `previous_case_root` is the full path to the previous stage's case directory.
+
+For the first stage, neither previous-case argument is passed, so `$#` is 1.
 
 The script runs with `set -euo pipefail` enforced, so any failing command fails the stage.
 

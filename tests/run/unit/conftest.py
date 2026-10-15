@@ -53,6 +53,7 @@ def full_stage_config_dict(minimal_stage_config_dict) -> dict:
         "memory": "24GB",
         "no_cime": False,
         "extra_pbs": ["#PBS -l gpu=1"],
+        "case_root": "/scratch/cases/spinup_ad",
     }
 
 
@@ -102,7 +103,6 @@ def submitted_state() -> StageState:
     return StageState(
         status=StageStatus.SUBMITTED,
         job_id="12345.pbs",
-        case_root="/scratch/cases/spinup_ad",
         submit_time=1_000_000.0,
         end_time=None,
         attempts=1,
@@ -115,7 +115,6 @@ def failed_state() -> StageState:
     return StageState(
         status=StageStatus.FAILED,
         job_id="12345.pbs",
-        case_root="/scratch/cases/spinup_ad",
         submit_time=1_000_000.0,
         end_time=3_000_000.0,
         attempts=1,
@@ -135,21 +134,16 @@ def ad_stage(ad_stage_config_dict) -> Stage:
 
 
 @pytest.fixture
-def created_run(run_config_dict) -> ModelRun:
-    """An instantiated ModelRun instance from run_config_dict"""
-    return ModelRun.create(run_config_dict)
+def created_run(run_config_dict, fake_scheduler) -> ModelRun:
+    """An instantiated ModelRun instance from run_config_dict, using a FakeScheduler"""
+    return ModelRun.create(run_config_dict, scheduler=fake_scheduler)
 
 
 @pytest.fixture
-def mock_qsub(mocker):
-    """Mock qsub so we can unit test it"""
-    mock = mocker.patch.object(ModelRun, "_qsub", return_value="12345.pbs")
-    return mock
-
-
-@pytest.fixture
-def two_stage_run(tmp_path, ad_stage_config_dict, sasu_stage_config_dict):
-    """A two-stage ModelRun instance"""
+def two_stage_run(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+):
+    """A two-stage ModelRun instance, using a FakeScheduler"""
     config = {
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
@@ -157,4 +151,4 @@ def two_stage_run(tmp_path, ad_stage_config_dict, sasu_stage_config_dict):
         "user": "auser",
         "stages": [ad_stage_config_dict, sasu_stage_config_dict],
     }
-    return ModelRun.create(config)
+    return ModelRun.create(config, scheduler=fake_scheduler)

@@ -28,10 +28,10 @@ def _stages_done(run: ModelRun) -> bool:
     Returns:
         bool: True if all stages are DONE
     """
-    failed = [s for s in run.stages if s.status.status is StageStatus.FAILED]
-    pending = [s for s in run.stages if s.status.status is StageStatus.PENDING]
-    submitted = [s for s in run.stages if s.status.status is StageStatus.SUBMITTED]
-    done = [s for s in run.stages if s.status.status is StageStatus.DONE]
+    failed = [s for s in run.stages if s.state.status is StageStatus.FAILED]
+    pending = [s for s in run.stages if s.state.status is StageStatus.PENDING]
+    submitted = [s for s in run.stages if s.state.status is StageStatus.SUBMITTED]
+    done = [s for s in run.stages if s.state.status is StageStatus.DONE]
 
     if failed:
         print(f"FAILED: {len(failed)} stage(s) failed:")

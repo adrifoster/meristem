@@ -36,8 +36,11 @@ class SampleContext:
     array_index : int | None
         The active array index when sampling an expanded (per-index) parameter.
         None when sampling all free indices together (broadcast mode).
-        Used by PosteriorSampler to select the correct PosteriorSource.
-        Ignored by UniformSampler.
+        Used by PosteriorSampler to select the correct PosteriorSource, and by
+        UniformSampler to select this index from bounds resolved over the full array.
+    index_axis : int | None
+        Axis of default_value that array_index selects along. None when
+        array_index is None.
     n_indices : int | None
         Total number of positions along the free dimension (1 for scalars).
         Used by PosteriorSampler in broadcast mode to size the output arrays.
@@ -48,6 +51,7 @@ class SampleContext:
 
     default_value: float | np.ndarray | list[np.ndarray] | None = None
     array_index: int | None = None
+    index_axis: int | None = None
     n_indices: list[int] | None = None
     pft_axis: int | None = None
 
@@ -200,7 +204,9 @@ class UniformSampler(Sampler, sampler_type="uniform"):
         """Generate a sample for a parameter"""
         validate_normalized_value(normalized_value)
         min_val, max_val = self.resolve_bounds(context.default_value, context.pft_axis)
-        return min_val + normalized_value * (max_val - min_val)
+        return _at_array_index(
+            min_val + normalized_value * (max_val - min_val), context
+        )
 
     def normalize(
         self,
@@ -215,8 +221,11 @@ class UniformSampler(Sampler, sampler_type="uniform"):
         dividing by zero.
         """
 
-        min_val, max_val = self.resolve_bounds(
-            context.default_value, pft_axis=context.pft_axis
+        min_val, max_val = (
+            _at_array_index(bound, context)
+            for bound in self.resolve_bounds(
+                context.default_value, pft_axis=context.pft_axis
+            )
         )
 
         if clip_to_bounds:
@@ -414,6 +423,28 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
                         result[k][array_idx] = row[var]
 
         return result
+
+
+def _at_array_index(
+    value: float | np.ndarray, context: SampleContext
+) -> float | np.ndarray:
+    """Select an expanded parameter's position from a value resolved over the full array.
+
+    Bounds are resolved against the full default array, so per-index bounds (e.g.
+    per-PFT bounds) land in the right place; an expanded parameter then takes only
+    its own index. Scalars and unexpanded parameters pass through unchanged.
+
+    Args:
+        value (float | np.ndarray): value over the full array, or a scalar
+        context (SampleContext): sampling context
+
+    Returns:
+        float | np.ndarray: value at context.array_index along context.index_axis
+    """
+    if context.array_index is None or np.ndim(value) == 0:
+        return value
+    axis = 0 if context.index_axis is None else context.index_axis
+    return np.take(value, context.array_index, axis=axis)
 
 
 def _validate_bounds(

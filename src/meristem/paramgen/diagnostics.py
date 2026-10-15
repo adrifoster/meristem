@@ -10,18 +10,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 from .parameter import Parameter
 from .parameter_dataset import ParameterDataset
 from .utils import read_param_list, read_posterior_sources
-
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-
-    HAS_MATPLOTLIB = True
-except ImportError:  # pragma: no cover
-    HAS_MATPLOTLIB = False
 
 _CATEGORY_COLORS = {
     "acclimation": "#5BA8A0",
@@ -56,28 +50,34 @@ def _expand_normalized(
     normalized: float | np.ndarray | list,
     pft_index: int | None = None,
 ) -> list[tuple[str, float, str]]:
-    """Expand a normalized value into (name, value, category) tuples."""
+    """Expand a normalized value into (name, value, category) tuples.
+
+    Array values are labelled by their index along each dimension, e.g.
+    'name_1_2' for a 2-D parameter. If pft_index is set, only values at that index
+    along the PFT dimension are kept, and that index is dropped from the label.
+    Parameters without a PFT dimension are kept whole.
+    """
     param_names = (
         param.spec.base_params if param.spec.base_params else [param.spec.name]
     )
     normalized_list = normalized if isinstance(normalized, list) else [normalized]
     subcategory = param.spec.subcategory
+    pft_axis = param.pft_axis if pft_index is not None else None
 
     rows = []
     for pname, norm_val in zip(param_names, normalized_list):
         arr = np.asarray(norm_val)
         if arr.ndim == 0:
             rows.append((pname, float(arr), subcategory))
-        else:
-            for i, v in enumerate(arr.flat):
-                if pft_index is None or i == pft_index:
-                    rows.append(
-                        (
-                            f"{pname}_{i}" if pft_index is None else pname,
-                            float(v),
-                            subcategory,
-                        )
-                    )
+            continue
+        for idx in np.ndindex(arr.shape):
+            label_idx = idx
+            if pft_axis is not None:
+                if idx[pft_axis] != pft_index:
+                    continue
+                label_idx = idx[:pft_axis] + idx[pft_axis + 1 :]
+            label = "_".join([pname, *(str(i) for i in label_idx)])
+            rows.append((label, float(arr[idx]), subcategory))
     return rows
 
 
@@ -106,8 +106,9 @@ def normalize_defaults(
         param_list (list[str] | None, optional): Subset of parameters to
             normalize. If None, all parameters in main.csv are used.
             Defaults to None.
-        pft_index (int | None, optional): If set, only returns this PFT axis. Defaults to
-        None.
+        pft_index (int | None, optional): If set, only returns values at this
+            0-based index along each parameter's PFT dimension. Parameters without
+            a PFT dimension are returned whole. Defaults to None.
 
     Returns:
         pd.DataFrame: One row per parameter with columns:
@@ -159,6 +160,73 @@ def normalize_defaults(
             if not (isinstance(val, float) and np.isnan(val))
         )
     return pd.DataFrame(rows, columns=["parameter", "normalized_value", "category"])
+
+
+def read_ensemble_values(
+    ensemble_dir: Path,
+    file_prefix: str,
+    variables: list[str] | None = None,
+    drop_constant: bool = True,
+) -> pd.DataFrame:
+    """Read each ensemble member's physical parameter values from its file.
+
+    Values come from the generated parameter files, not from the ensemble key, so
+    they don't depend on main.csv, the default file, or posterior files staying
+    unchanged. Array values get one column per element, labelled by their index
+    along each dimension (e.g. 'name_1_2').
+
+    Args:
+        ensemble_dir (Path): Directory the ensemble was written to.
+        file_prefix (str): The ensemble's file prefix. Members are read from
+            '{file_prefix}.txt' in ensemble_dir.
+        variables (list[str] | None, optional): Variables to read. If None, all
+            numeric variables are read. Defaults to None.
+        drop_constant (bool, optional): Drop columns with the same value in every
+            member, leaving only what was perturbed. Defaults to True.
+
+    Raises:
+        FileNotFoundError: If the member list or a member's file is missing.
+
+    Returns:
+        pd.DataFrame: One row per member, indexed by member name, with one column
+            per parameter value.
+    """
+    ensemble_dir = Path(ensemble_dir)
+    members = (ensemble_dir / f"{file_prefix}.txt").read_text().split()
+
+    rows = {}
+    for member in members:
+        path = next(
+            (
+                ensemble_dir / f"{member}{ext}"
+                for ext in (".nc", ".json")
+                if (ensemble_dir / f"{member}{ext}").exists()
+            ),
+            None,
+        )
+        if path is None:
+            raise FileNotFoundError(
+                f"No parameter file (.nc or .json) for member '{member}' "
+                f"in {ensemble_dir}."
+            )
+        ds = ParameterDataset.from_path(path)
+        try:
+            row = {}
+            for var in variables if variables is not None else ds.data_vars:
+                arr = np.asarray(ds[var].values)
+                if variables is None and not np.issubdtype(arr.dtype, np.number):
+                    continue
+                for idx in np.ndindex(arr.shape):
+                    row["_".join([var, *(str(i) for i in idx)])] = arr[idx]
+            rows[member] = row
+        finally:
+            ds.close()
+
+    df = pd.DataFrame.from_dict(rows, orient="index")
+    df.index.name = "ensemble"
+    if drop_constant and len(df) > 1:
+        df = df.loc[:, df.nunique(dropna=False) > 1]
+    return df
 
 
 def _build_legend(present_cats: list[str], category_colors: dict, default_color: str):
@@ -223,11 +291,6 @@ def plot_param_bounds(df: pd.DataFrame):
     Returns:
         matplotlib.figure.Figure: The figure object.
     """
-    if not HAS_MATPLOTLIB:
-        raise ImportError(
-            "matplotlib is required for plotting. "
-            "Install it with: conda install matplotlib"
-        )  # pragma: no cover
 
     df = df.sort_values(by="category")
     n_params = len(df)

@@ -10,8 +10,9 @@ import pandas as pd
 import numpy as np
 
 from .param_spec import ParamSpec
-from .sampler import Sampler, SampleContext, PosteriorSampler
-from .parameter_dataset import ParameterDataset
+from .distribution_stat import PFTStat
+from .sampler import Sampler, SampleContext, PosteriorSampler, UniformSampler
+from .parameter_dataset import ParameterDataset, ParameterVariable
 
 
 class DimIndex(NamedTuple):
@@ -69,6 +70,7 @@ class Parameter(ABC):
         self._validate_specs()
         self._validate_params(default_ds)
         self._validate_posterior()
+        self._validate_pft_dim()
 
     @classmethod
     def from_row(
@@ -129,6 +131,19 @@ class Parameter(ABC):
             else [1]
         )
 
+    @property
+    def pft_axis(self) -> int | None:
+        """Axis of the PFT dimension within free_dims, or None if there isn't one.
+
+        Uses spec.pft_dim if set. Otherwise uses the one free dimension whose name
+        contains 'pft'; if none or several do, returns None.
+        """
+        dims = self.free_dims or []
+        if self.spec.pft_dim is not None:
+            return dims.index(self.spec.pft_dim)
+        candidates = [i for i, dim in enumerate(dims) if "pft" in dim.lower()]
+        return candidates[0] if len(candidates) == 1 else None
+
     def _validate_specs(self) -> None:
         """Validate type-specific required fields on self.spec.
 
@@ -166,6 +181,31 @@ class Parameter(ABC):
                     f"{actual_dims} in default dataset but spec.dims is "
                     f"{self.spec.dims}. Dimensions must match exactly."
                 )
+
+    def _validate_pft_dim(self) -> None:
+        """Check that the PFT dimension can be identified where it's needed.
+
+        Raises:
+            ValueError: If spec.pft_dim is not a free dimension, or if a
+                non-scalar parameter has per-PFT bounds but no single PFT
+                dimension can be identified.
+        """
+        dims = self.free_dims or []
+        if self.spec.pft_dim is not None and self.spec.pft_dim not in dims:
+            raise ValueError(
+                f"Parameter '{self.spec.name}': pft_dim '{self.spec.pft_dim}' is not "
+                f"one of its free dimensions {dims}."
+            )
+        has_pft_bounds = isinstance(self.sampler, UniformSampler) and (
+            isinstance(self.sampler.min_stat, PFTStat)
+            or isinstance(self.sampler.max_stat, PFTStat)
+        )
+        if has_pft_bounds and dims and self.pft_axis is None:
+            raise ValueError(
+                f"Parameter '{self.spec.name}': has per-PFT bounds but the PFT "
+                f"dimension can't be identified from its dimensions {dims}. "
+                "Set 'pft_dim' in main.csv to name it."
+            )
 
     def _validate_posterior(self):
         if not isinstance(self.sampler, PosteriorSampler):
@@ -230,8 +270,7 @@ class Parameter(ABC):
         Returns:
             float: Sampled parameter value.
         """
-        default_value = self.get_default(default_ds)
-        context = self._build_context(default_value)
+        context = self._build_context(self._full_default(default_ds))
         return self.sampler.sample(normalized_value, context)
 
     def normalize(
@@ -258,8 +297,7 @@ class Parameter(ABC):
         Returns:
             float: normalized [0-1] parameter value.
         """
-        default_value = self.get_default(default_ds)
-        context = self._build_context(default_value)
+        context = self._build_context(self._full_default(default_ds))
         return self.sampler.normalize(value, context, clip_to_bounds=clip_to_bounds)
 
     def _build_context(
@@ -268,30 +306,64 @@ class Parameter(ABC):
     ) -> SampleContext:
         """Build a SampleContext for this parameter.
 
+        For an expanded parameter, default_value is still the full default array, so
+        the sampler can resolve bounds over every index (e.g. per-PFT bounds) before
+        selecting this parameter's index along index_axis.
+
         Args:
-            default_value: Default value(s) for this parameter.
+            default_value: Full default value(s) for this parameter.
         Returns:
             SampleContext populated for this parameter.
         """
-        pft_axis = next(
-            (i for i, dim in enumerate(self.spec.dims) if "pft" in dim.lower()),
-            None,
-        )
+        dims = self.free_dims or []
+        index_axis = None
+        if self.active_index is not None:
+            if self.active_index.dim not in dims:
+                raise ValueError(
+                    f"Parameter '{self.spec.name}': expanded dimension "
+                    f"'{self.active_index.dim}' is not one of its dimensions {dims}."
+                )
+            index_axis = dims.index(self.active_index.dim)
         return SampleContext(
             default_value=default_value,
             array_index=(
                 self.active_index.index if self.active_index is not None else None
             ),
+            index_axis=index_axis,
             n_indices=self.n_indices,
-            pft_axis=pft_axis,
+            pft_axis=self.pft_axis,
         )
 
-    @abstractmethod
     def get_default(
         self,
         default_ds: ParameterDataset,
     ) -> float | np.ndarray | list[np.ndarray]:
-        """Extract the relevant default value(s) from a netCDF dataset.
+        """Extract the relevant default value(s) from a parameter dataset.
+
+        For an expanded parameter, only the value(s) at active_index.
+
+        Args:
+            default_ds (ParameterDataset): The default parameter dataset
+
+        Returns:
+            float | np.ndarray | list[np.ndarray]: default value
+        """
+        full = self._full_default(default_ds)
+        if self.active_index is None:
+            return full
+        dims = self.free_dims or []
+        if isinstance(full, list):
+            return [_take(arr, dims, self.active_index) for arr in full]
+        return _take(full, dims, self.active_index)
+
+    @abstractmethod
+    def _full_default(
+        self,
+        default_ds: ParameterDataset,
+    ) -> float | np.ndarray | list[np.ndarray]:
+        """Extract the full default value(s), ignoring any active_index.
+
+        The returned array's dimensions are free_dims.
 
         Args:
             default_ds (ParameterDataset): The default parameter dataset
@@ -319,7 +391,7 @@ class Parameter(ABC):
         """
         value = self._apply_precision(value)
         if self.active_index is not None:
-            self._write_at_index(ds, self.active_index, value)
+            self._write_at_index(ds, self.active_index, value, fixed_indices or {})
         else:
             self._write_full(ds, default_ds, value, fixed_indices or {})
 
@@ -329,17 +401,22 @@ class Parameter(ABC):
         ds: ParameterDataset,
         index: DimIndex,
         value: float | np.ndarray | list[np.ndarray],
+        fixed_indices: dict[str, list[int]],
     ) -> None:
-        """Write a scalar to a single pinned position in the dataset.
+        """Write a value at one position along the expanded dimension.
 
-        Called when this parameter is expanded (``active_index`` is set).
-        ``value`` must be scalar (or a single-element array); subclasses
-        should enforce this via ``_as_scalar``.
+        Called when this parameter is expanded (``active_index`` is set). For a
+        1-D variable that position is a single element; for a multi-dimensional
+        variable it is the sub-array at ``index`` along ``index.dim``. ``value``
+        must be a scalar (broadcast across the sub-array) or match the sub-array's
+        shape; subclasses should enforce this via ``_fit_to_shape``.
 
         Args:
             ds (ParameterDataset): Working copy of the parameter dataset. Modified in place.
             index (DimIndex): The dimension and position to write.
-            value (float | np.ndarray | list[np.ndarray]): Scalar value to write.
+            value (float | np.ndarray | list[np.ndarray]): Value to write.
+            fixed_indices (dict[str, list[int]]): Dimension-to-indices mapping for
+                positions on the variable's other dimensions to leave unchanged.
         """
 
     @abstractmethod
@@ -411,23 +488,25 @@ class DefaultParameter(Parameter, param_type="default"):
     def _variables_to_validate(self) -> list[str]:
         return [self.spec.name]
 
-    def get_default(
+    def _full_default(
         self, default_ds: ParameterDataset
     ) -> float | np.ndarray | list[np.ndarray]:
-        arr = default_ds[self.spec.original_name].values
-        if self.active_index is not None:
-            return arr[self.active_index.index]
-        return arr
+        return default_ds[self.spec.original_name].values
 
     def _write_at_index(
         self,
         ds: ParameterDataset,
         index: DimIndex,
         value: float | np.ndarray | list[np.ndarray],
+        fixed_indices: dict[str, list[int]],
     ):
-        arr = ds[self.spec.original_name].values.copy()
-        arr[index.index] = _as_scalar(value, self.spec.original_name)
-        ds[self.spec.original_name].values = arr
+        _write_at(
+            ds[self.spec.original_name],
+            index,
+            value,
+            fixed_indices,
+            self.spec.original_name,
+        )
 
     def _write_full(
         self,
@@ -436,10 +515,10 @@ class DefaultParameter(Parameter, param_type="default"):
         value: float | np.ndarray | list[np.ndarray],
         fixed_indices: dict[str, list[int]],
     ):
-        arr = ds[self.spec.original_name].values.copy()
-        fixed = fixed_indices.get(self.free_dims[0], []) if self.free_dims else []
-        arr = _broadcast_to_array(arr, value, fixed, self.spec.original_name)
-        ds[self.spec.original_name].values = arr
+        var = ds[self.spec.original_name]
+        var.values = _broadcast_to_array(
+            var.values.copy(), value, var.dims, fixed_indices, self.spec.original_name
+        )
 
 
 class SlicedParameter(Parameter, param_type="sliced"):
@@ -471,51 +550,60 @@ class SlicedParameter(Parameter, param_type="sliced"):
     def _variables_to_validate(self) -> list[str]:
         return self.spec.base_params
 
-    def get_default(self, default_ds: ParameterDataset) -> np.ndarray:
-        arr = default_ds[self.spec.base_params[0]].isel(
-            {self.spec.slice_dim: self.spec.slice_index}
+    def _full_default(self, default_ds: ParameterDataset) -> np.ndarray:
+        return np.asarray(
+            default_ds[self.spec.base_params[0]].isel(
+                {self.spec.slice_dim: self.spec.slice_index}
+            )
         )
-        if self.active_index is not None:
-            return arr[self.active_index.index]
-        return np.asarray(arr)
 
     def _write_at_index(
         self,
         ds: ParameterDataset,
         index: DimIndex,
         value: float | np.ndarray | list[np.ndarray],
+        fixed_indices: dict[str, list[int]],
     ):
-
         base_param_name = self.spec.base_params[0]
         arr = ds[base_param_name].values.copy()
-        da_dims = list(ds[base_param_name].dims)
-        idx = self._slice_index_tuple(arr, da_dims)
-        idx[da_dims.index(index.dim)] = index.index
-        arr[tuple(idx)] = _as_scalar(value, base_param_name)
+        idx = self._slice_index_tuple(arr, ds[base_param_name].dims)
+        arr[idx] = _write_at_array(
+            arr[idx],
+            self._slice_dims(ds),
+            index,
+            value,
+            fixed_indices,
+            base_param_name,
+        )
         ds[base_param_name].values = arr
 
-    def _slice_index_tuple(self, arr: np.ndarray, da_dims: list[str]) -> list:
+    def _slice_index_tuple(self, arr: np.ndarray, da_dims: list[str]) -> tuple:
         """Build an index tuple pointing at the configured slice."""
-        idx = [slice(None)] * arr.ndim
-        idx[da_dims.index(self.spec.slice_dim)] = self.spec.slice_index
-        return idx
+        return _position(da_dims, arr.ndim, self.spec.slice_dim, self.spec.slice_index)
+
+    def _slice_dims(self, ds: ParameterDataset) -> list[str]:
+        """Dimensions of the configured slice: the variable's dims minus slice_dim."""
+        return [
+            d for d in ds[self.spec.base_params[0]].dims if d != self.spec.slice_dim
+        ]
 
     def _write_full(
         self,
         ds: ParameterDataset,
         default_ds: ParameterDataset,
         value: float | np.ndarray | list[np.ndarray],
-        fixed_indices: dict[str, list[int]] | None = None,
+        fixed_indices: dict[str, list[int]],
     ):
         base_param_name = self.spec.base_params[0]
         arr = ds[base_param_name].values.copy()
-        da_dims = list(ds[base_param_name].dims)
-        idx = self._slice_index_tuple(arr, da_dims)
-        fixed = fixed_indices.get(self.free_dims[0], []) if self.free_dims else []
-        slice_arr = _broadcast_to_array(
-            arr[tuple(idx)].copy(), value, fixed, base_param_name
+        idx = self._slice_index_tuple(arr, ds[base_param_name].dims)
+        arr[idx] = _broadcast_to_array(
+            arr[idx].copy(),
+            value,
+            self._slice_dims(ds),
+            fixed_indices,
+            base_param_name,
         )
-        arr[tuple(idx)] = slice_arr
         ds[base_param_name].values = arr
 
 
@@ -557,25 +645,23 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
             variables.append(self.spec.root_param)
         return variables
 
-    def get_default(self, default_ds: ParameterDataset) -> np.ndarray:
-        arr = default_ds[self.spec.base_params[0]].values
-        if self.active_index is not None:
-            return arr[self.active_index.index]
-        return arr
+    def _full_default(self, default_ds: ParameterDataset) -> np.ndarray:
+        return default_ds[self.spec.base_params[0]].values
 
     def _write_at_index(
         self,
         ds: ParameterDataset,
         index: DimIndex,
         value: float | np.ndarray | list[np.ndarray],
+        fixed_indices: dict[str, list[int]],
     ):
         # root_param must already be written by the caller — see class docstring.
+        # root_param has the same dims as base_param (checked by _validate_params)
         base_param_name = self.spec.base_params[0]
-        arr = ds[base_param_name].values.copy()
-        root_arr = ds[self.spec.root_param].values
-        delta = _as_scalar(value, base_param_name)
-        arr[index.index] = root_arr[index.index] + delta
-        ds[base_param_name].values = arr
+        var = ds[base_param_name]
+        root_at_index = _take(ds[self.spec.root_param].values, var.dims, index)
+        delta = _fit_to_shape(value, np.shape(root_at_index), base_param_name)
+        _write_at(var, index, root_at_index + delta, fixed_indices, base_param_name)
 
     def _write_full(
         self,
@@ -586,16 +672,13 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
     ):
         # root_param must already be written by the caller — see class docstring.
         base_param_name = self.spec.base_params[0]
+        var = ds[base_param_name]
         root_arr = ds[self.spec.root_param].values
-        default_arr = default_ds[base_param_name].values
-        fixed = fixed_indices.get(self.free_dims[0], []) if self.free_dims else []
-
-        new_arr = root_arr + np.asarray(value)
-
-        if fixed:
-            new_arr[fixed] = default_arr[fixed]
-
-        ds[base_param_name].values = new_arr
+        new_arr = np.array(root_arr + np.asarray(value), dtype=float)
+        _hold_fixed(
+            new_arr, default_ds[base_param_name].values, var.dims, fixed_indices
+        )
+        var.values = new_arr
 
 
 class JointParameter(Parameter, param_type="joint"):
@@ -620,11 +703,8 @@ class JointParameter(Parameter, param_type="joint"):
     def _variables_to_validate(self) -> list[str]:
         return self.spec.base_params
 
-    def get_default(self, default_ds: ParameterDataset) -> list[np.ndarray]:
-        arrays = [default_ds[p].values for p in self.spec.base_params]
-        if self.active_index is not None:
-            return [arr[self.active_index.index] for arr in arrays]
-        return arrays
+    def _full_default(self, default_ds: ParameterDataset) -> list[np.ndarray]:
+        return [default_ds[p].values for p in self.spec.base_params]
 
     def _coerce_value_seq(
         self, value: float | np.ndarray | list[np.ndarray]
@@ -658,25 +738,24 @@ class JointParameter(Parameter, param_type="joint"):
         ds: ParameterDataset,
         index: DimIndex,
         value: float | np.ndarray | list[np.ndarray],
+        fixed_indices: dict[str, list[int]],
     ):
         """ "Write a list of arrays into the dataset, one per base_param.
 
         Args:
             ds (ParameterDataset): Working copy of the parameter dataset. Modified in place.
-            default_ds (ParameterDataset): Unchanging default dataset.
+            index (DimIndex): The dimension and position to write.
             value (float | np.ndarray | list[np.ndarray]): One array per entry in
                 spec.base_params. Must have the same length as spec.base_params.
-            fixed_indices (dict[str, list[int]] | None, optional): Indices to hold at
-                default. Defaults to None.
+            fixed_indices (dict[str, list[int]]): Positions on other dimensions to
+                leave unchanged.
 
         Raises:
             TypeError: If value is not iterable (e.g. a bare float was passed).
             ValueError: If len(value) does not match len(spec.base_params).
         """
         for parameter, val in zip(self.spec.base_params, self._coerce_value_seq(value)):
-            arr = ds[parameter].values.copy()
-            arr[index.index] = _as_scalar(val, parameter)
-            ds[parameter].values = arr
+            _write_at(ds[parameter], index, val, fixed_indices, parameter)
 
     def _write_full(
         self,
@@ -685,11 +764,11 @@ class JointParameter(Parameter, param_type="joint"):
         value: float | np.ndarray | list[np.ndarray],
         fixed_indices: dict[str, list[int]],
     ):
-        fixed = fixed_indices.get(self.free_dims[0], []) if self.free_dims else []
         for parameter, val in zip(self.spec.base_params, self._coerce_value_seq(value)):
-            arr = ds[parameter].values.copy()
-            arr = _broadcast_to_array(arr, val, fixed, parameter)
-            ds[parameter].values = arr
+            var = ds[parameter]
+            var.values = _broadcast_to_array(
+                var.values.copy(), val, var.dims, fixed_indices, parameter
+            )
 
 
 # ----------------------------------------------------------------------------------------
@@ -697,10 +776,124 @@ class JointParameter(Parameter, param_type="joint"):
 # ----------------------------------------------------------------------------------------
 
 
+def _position(dims: list[str], ndim: int, dim: str, index: int | list[int]) -> tuple:
+    """Build an index tuple selecting index along dim and everything along other dims.
+
+    Args:
+        dims (list[str]): dimension names of the array, in order
+        ndim (int): number of dimensions of the array
+        dim (str): dimension to index along
+        index (int | list[int]): position(s) along dim
+
+    Raises:
+        ValueError: dim is not one of dims
+
+    Returns:
+        tuple: index tuple
+    """
+    dims = list(dims)
+    if dim not in dims:
+        raise ValueError(
+            f"Dimension '{dim}' is not one of the variable's dimensions {dims}."
+        )
+    idx: list = [slice(None)] * ndim
+    idx[dims.index(dim)] = index
+    return tuple(idx)
+
+
+def _take(arr: np.ndarray, dims: list[str], index: DimIndex) -> float | np.ndarray:
+    """Return the value(s) of arr at index along index.dim.
+
+    Args:
+        arr (np.ndarray): input array
+        dims (list[str]): dimension names of arr, in order
+        index (DimIndex): dimension and position to select
+
+    Returns:
+        float | np.ndarray: scalar for a 1-D array, otherwise the sub-array
+    """
+    return arr[_position(dims, np.ndim(arr), index.dim, index.index)]
+
+
+def _hold_fixed(
+    new: np.ndarray,
+    held: np.ndarray,
+    dims: list[str],
+    fixed_indices: dict[str, list[int]],
+) -> None:
+    """Copy the fixed positions of held into new, in place.
+
+    A position is fixed if its index along any dimension in fixed_indices is listed.
+
+    Args:
+        new (np.ndarray): array being written. Modified in place.
+        held (np.ndarray): array holding the values to keep, same shape as new
+        dims (list[str]): dimension names of both arrays, in order
+        fixed_indices (dict[str, list[int]]): dimension-to-indices mapping of
+            positions to keep. Dimensions the arrays don't have are ignored.
+    """
+    for dim, indices in fixed_indices.items():
+        if dim in dims and len(indices) > 0:
+            pos = _position(dims, new.ndim, dim, list(indices))
+            new[pos] = held[pos]
+
+
+def _write_at_array(
+    arr: np.ndarray,
+    dims: list[str],
+    index: DimIndex,
+    value: float | np.ndarray,
+    fixed_indices: dict[str, list[int]],
+    name: str,
+) -> np.ndarray:
+    """Return a copy of arr with value written at index along index.dim.
+
+    Fixed positions on the other dimensions keep their values from arr.
+
+    Args:
+        arr (np.ndarray): array to write into
+        dims (list[str]): dimension names of arr, in order
+        index (DimIndex): dimension and position to write
+        value (float | np.ndarray): scalar, or array shaped like the sub-array at index
+        fixed_indices (dict[str, list[int]]): positions to leave unchanged
+        name (str): parameter name, for error messages
+
+    Returns:
+        np.ndarray: output array
+    """
+    result = arr.copy()
+    pos = _position(dims, result.ndim, index.dim, index.index)
+    result[pos] = _fit_to_shape(value, result[pos].shape, name)
+    _hold_fixed(result, arr, dims, fixed_indices)
+    return result
+
+
+def _write_at(
+    variable: ParameterVariable,
+    index: DimIndex,
+    value: float | np.ndarray,
+    fixed_indices: dict[str, list[int]],
+    name: str,
+) -> None:
+    """Write value into a dataset variable at index along index.dim.
+
+    Args:
+        variable (ParameterVariable): variable to write. Modified in place.
+        index (DimIndex): dimension and position to write
+        value (float | np.ndarray): scalar, or array shaped like the sub-array at index
+        fixed_indices (dict[str, list[int]]): positions to leave unchanged
+        name (str): parameter name, for error messages
+    """
+    variable.values = _write_at_array(
+        variable.values, variable.dims, index, value, fixed_indices, name
+    )
+
+
 def _broadcast_to_array(
     arr: np.ndarray,
     value: float | np.ndarray,
-    fixed: list[int],
+    dims: list[str],
+    fixed_indices: dict[str, list[int]],
     name: str,
 ) -> np.ndarray:
     """Write value into arr at all non-fixed positions.
@@ -709,9 +902,11 @@ def _broadcast_to_array(
     Array value: must match arr shape; fixed positions are skipped.
 
     Args:
-        arr (np.ndarray): default array from dataset
+        arr (np.ndarray): current array from dataset
         value (float | np.ndarray): input value
-        fixed (list[int]): list of indices to keep at default
+        dims (list[str]): dimension names of arr, in order
+        fixed_indices (dict[str, list[int]]): dimension-to-indices mapping of
+            positions to keep at their current value
         name (str): parameter name
 
     Raises:
@@ -727,36 +922,39 @@ def _broadcast_to_array(
             f"match target array shape {arr.shape}."
         )
 
+    if arr.ndim == 0:
+        return np.asarray(float(value_arr))
+
     result = arr.copy()
-    free = [i for i in range(len(result)) if i not in fixed] if arr.ndim > 0 else None
-
-    if free is None:
-        result = np.asarray(float(value_arr))
-    elif value_arr.ndim == 0:
-        result[free] = float(value_arr)
-    else:
-        result[free] = value_arr[free]
-
+    result[...] = value_arr
+    _hold_fixed(result, arr, dims, fixed_indices)
     return result
 
 
-def _as_scalar(value: float | np.ndarray, name: str) -> float:
-    """Return value as a Python float; raise if it is a non-scalar array.
+def _fit_to_shape(
+    value: float | np.ndarray, shape: tuple[int, ...], name: str
+) -> float | np.ndarray:
+    """Return value ready to write into a target of the given shape.
 
     Args:
         value (float | np.ndarray): input value
+        shape (tuple[int, ...]): shape of the target
         name (str): parameter name
 
     Raises:
-        ValueError: incorrect input shape (non-scalar array)
+        ValueError: value is neither a scalar nor shaped like the target
 
     Returns:
-        float: output float
+        float | np.ndarray: a Python float for scalar (or single-element) input,
+        otherwise the array itself
     """
     arr = np.asarray(value)
-    if arr.ndim > 0 and arr.size != 1:
-        raise ValueError(
-            f"Parameter '{name}': expected a scalar value but got an "
-            f"array of shape {arr.shape}. Pass a scalar or expand the spec."
-        )
-    return float(arr.item())
+    if arr.size == 1:
+        return float(arr.item())
+    if arr.shape == tuple(shape):
+        return arr
+    raise ValueError(
+        f"Parameter '{name}': expected a scalar value or an array of shape "
+        f"{tuple(shape)} but got an array of shape {arr.shape}. "
+        "Pass a scalar or expand the spec."
+    )

@@ -6,8 +6,19 @@ import numpy as np
 import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
+import xarray as xr
 
-from meristem.paramgen.diagnostics import normalize_defaults, plot_param_bounds
+from meristem.paramgen.diagnostics import (
+    _expand_normalized,
+    normalize_defaults,
+    plot_param_bounds,
+    read_ensemble_values,
+)
+from meristem.paramgen.parameter import Parameter
+from meristem.paramgen.parameter_dataset import (
+    NetCDFParameterDataset,
+    ParameterDataset,
+)
 
 
 def test_plot_param_bounds_returns_figure(ensemble_param_dir, default_param_file):
@@ -236,3 +247,99 @@ def test_normalize_defaults_filters_nan_values(tmp_path, default_param_file):
     df = normalize_defaults(tmp_path, default_param_file)
     assert len(df) == 3
     assert not df["normalized_value"].isna().any()
+
+
+def _two_dim_param(dims: list[str], pft_dim: str | None = None) -> Parameter:
+    """A (2, 3) default parameter 'v' on the given dimensions."""
+    ds = NetCDFParameterDataset(xr.Dataset({"v": (dims, np.ones((2, 3)))}))
+    row = pd.Series(
+        {
+            "parameter_name": "v",
+            "subcategory": "photosynthesis",
+            "coord": str(dims),
+            "param_type": "default",
+            "strategy": "uniform",
+            "param_min": "0",
+            "param_max": "1",
+            "pft_dim": pft_dim,
+        }
+    )
+    return Parameter.from_row(row, ds)
+
+
+def test_expand_normalized_labels_2d_by_dimension_index():
+    """2-D values are labelled by their index along each dimension."""
+    param = _two_dim_param(["leafage", "fates_pft"])
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3))
+    assert [(name, val) for name, val, _ in rows] == [
+        ("v_0_0", 0.0),
+        ("v_0_1", 1.0),
+        ("v_0_2", 2.0),
+        ("v_1_0", 3.0),
+        ("v_1_1", 4.0),
+        ("v_1_2", 5.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "dims, pft_dim",
+    [(["leafage", "fates_pft"], None), (["leafage", "plant_type"], "plant_type")],
+)
+def test_expand_normalized_pft_index_filters_along_pft_dim(dims, pft_dim):
+    """pft_index selects along the PFT dimension, not by flat position."""
+    param = _two_dim_param(dims, pft_dim=pft_dim)
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3), pft_index=2)
+    assert [(name, val) for name, val, _ in rows] == [("v_0", 2.0), ("v_1", 5.0)]
+
+
+def test_expand_normalized_pft_index_keeps_non_pft_param_whole():
+    """pft_index leaves a parameter without a PFT dimension unfiltered."""
+    param = _two_dim_param(["leafage", "plant_type"])
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3), pft_index=0)
+    assert len(rows) == 6
+
+
+def test_read_ensemble_values_matches_member_files(lh_ensemble):
+    """read_ensemble_values returns each member's values as written to its file,
+    keeping only the values that vary across members
+    """
+    lh_ensemble.create_ensemble()
+    ens_dir = lh_ensemble.ensemble_dir
+    df = read_ensemble_values(ens_dir, "test")
+
+    assert list(df.index) == [f"test_{i:04d}" for i in range(5)]
+    assert "fates_leaf_slatop_0" in df.columns
+    assert (df.nunique() > 1).all()
+    ext = lh_ensemble.default_ds.file_extension
+    for member in df.index:
+        ds = ParameterDataset.from_path(ens_dir / f"{member}{ext}")
+        np.testing.assert_allclose(
+            df.loc[member, ["fates_leaf_slatop_0", "fates_leaf_slatop_1"]],
+            ds["fates_leaf_slatop"].values[:2],
+        )
+        ds.close()
+
+
+def test_read_ensemble_values_variables_and_keep_constant(lh_ensemble):
+    """read_ensemble_values reads only the listed variables and, with
+    drop_constant=False, keeps every element
+    """
+    lh_ensemble.create_ensemble()
+    df = read_ensemble_values(
+        lh_ensemble.ensemble_dir,
+        "test",
+        variables=["fates_leaf_slatop"],
+        drop_constant=False,
+    )
+    assert list(df.columns) == [
+        "fates_leaf_slatop_0",
+        "fates_leaf_slatop_1",
+        "fates_leaf_slatop_2",
+    ]
+
+
+def test_read_ensemble_values_missing_member_file_raises(tmp_path):
+    """read_ensemble_values raises when a listed member has no parameter file."""
+    (tmp_path / "test.txt").write_text("test_0000\n")
+    with pytest.raises(FileNotFoundError, match="test_0000"):
+        read_ensemble_values(tmp_path, "test")

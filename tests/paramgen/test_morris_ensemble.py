@@ -2,6 +2,7 @@
 
 import pytest
 import numpy as np
+import yaml
 
 from meristem.paramgen.param_ensemble import ParamEnsemble, MorrisEnsemble
 from meristem.paramgen.ensemble_config import MorrisEnsembleConfig
@@ -125,19 +126,17 @@ def test_build_morris_samples_optimal_trajectories(
 def test_build_morris_samples_bad_optimal_trajectories_raises(
     ensemble_param_dir, default_netcdf_file, tmp_path, posterior_config_file
 ):
-    """Test that optimal_trajectories larger than morris_n raises"""
-    config = MorrisEnsembleConfig(
-        param_dir=ensemble_param_dir,
-        ensemble_dir=tmp_path / "ensemble",
-        file_prefix="test",
-        default_param_file=default_netcdf_file,
-        posterior_sources=posterior_config_file,
-        morris_n=4,
-        optimal_trajectories=5,
-    )
-    ensemble = MorrisEnsemble(config)
+    """Test that optimal_trajectories larger than morris_n raises at config time"""
     with pytest.raises(ValueError, match="optimal_trajectories"):
-        ensemble.build_morris_samples()
+        MorrisEnsembleConfig(
+            param_dir=ensemble_param_dir,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_netcdf_file,
+            posterior_sources=posterior_config_file,
+            morris_n=4,
+            optimal_trajectories=5,
+        )
 
 
 def test_build_morris_samples_zero_params(morris_ensemble):
@@ -230,3 +229,60 @@ def test_grouped_morris_trajectory_length_uses_sampling_units(
     samples = ensemble.create_samples()
     assert len(samples) == 4 * (ensemble.num_sampling_units + 1)
     assert len(samples) < 4 * (ensemble.num_params + 1)
+
+
+def _morris_with_seed(param_dir, default_file, tmp_path, posterior_file, seed):
+    """A small Morris ensemble with the given seed."""
+    return MorrisEnsemble(
+        MorrisEnsembleConfig(
+            param_dir=param_dir,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_file,
+            posterior_sources=posterior_file,
+            morris_n=6,
+            optimal_trajectories=3,
+            seed=seed,
+        )
+    )
+
+
+def test_morris_same_seed_gives_same_sample(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Two ensembles built with the same seed give identical Morris samples,
+    including the optimal-trajectory selection, and a different seed doesn't
+    """
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    x_a = _morris_with_seed(*args, seed=42).build_morris_samples()
+    x_b = _morris_with_seed(*args, seed=42).build_morris_samples()
+    x_c = _morris_with_seed(*args, seed=43).build_morris_samples()
+    np.testing.assert_array_equal(x_a, x_b)
+    assert not np.array_equal(x_a, x_c)
+
+
+def test_morris_seed_none_generates_seed(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """With no seed given, the ensemble generates one that reproduces its sample."""
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    ensemble = _morris_with_seed(*args, seed=None)
+    assert isinstance(ensemble.seed, int)
+    np.testing.assert_array_equal(
+        ensemble.build_morris_samples(),
+        _morris_with_seed(*args, seed=ensemble.seed).build_morris_samples(),
+    )
+
+
+def test_morris_written_config_reproduces_sample(morris_ensemble):
+    """Rebuilding from the written config gives the same Morris sample."""
+    morris_ensemble.write_config()
+    path = morris_ensemble.ensemble_dir / "test_config.yaml"
+    with open(path, encoding="utf-8") as f:
+        written = yaml.safe_load(f)
+    assert written["ensemble_type"] == "Morris"
+    assert written["seed"] == morris_ensemble.seed
+    rebuilt = ParamEnsemble.from_dict(written)
+    np.testing.assert_array_equal(
+        rebuilt.build_morris_samples(), morris_ensemble.build_morris_samples()
+    )

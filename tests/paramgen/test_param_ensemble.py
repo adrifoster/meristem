@@ -1,10 +1,15 @@
 """Tests for ParamEnsemble"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import numpy as np
 import pandas as pd
+import xarray as xr
+import yaml
+
+import meristem
 
 from meristem.paramgen.param_ensemble import (
     ParamEnsemble,
@@ -505,11 +510,11 @@ def test_oat_create_ensemble_member(oat_ensemble):
     assert "fates_leaf_slatop" in ds
 
 
-def test_oat_create_ensemble_member_wrong_length(oat_ensemble, lh_ensemble):
-    """OAT raises if sample has more than one ParameterSample."""
+def test_oat_create_ensemble_key_wrong_length(oat_ensemble, lh_ensemble):
+    """OAT key raises if a member has more than one ParameterSample."""
     lh_samples = lh_ensemble.create_samples()
     with pytest.raises(ValueError, match="exactly one"):
-        oat_ensemble.create_ensemble_member(lh_samples[0])
+        oat_ensemble.create_ensemble_key(lh_samples)
 
 
 def test_lh_create_ensemble_key(lh_ensemble):
@@ -669,9 +674,10 @@ def test_grouped_params_num_sampling_units(
     )
     ensemble = LatinHypercubeEnsemble(config)
     # 2 params in "photosynthesis" group + 6 expanded params in "water" group + 1 ungrouped
-    # = 9 params, 3 sampling units
+    # = 9 params. "water" holds 2 params expanded over 3 PFTs, so it splits per index
+    # into water_0, water_1, water_2: 1 + 3 + 1 = 5 sampling units
     assert ensemble.num_params == 9
-    assert ensemble.num_sampling_units == 3
+    assert ensemble.num_sampling_units == 5
 
 
 def test_grouped_params_share_normalized_value(
@@ -747,3 +753,266 @@ def test_grouped_ensemble_member_writes_all_params(
     ds = ensemble.create_ensemble_member(samples[0])
     assert "fates_leaf_slatop" in ds
     assert "fates_canopy_closure_thresh" in ds
+
+
+def test_expand_and_fix_on_second_axis_of_multi_dim_param(tmp_path):
+    """Expansion and fixed_indices act on the named dimension of a 2-D parameter,
+    even when it isn't the variable's first axis
+    """
+    xr.Dataset({"v": (("leafage", "pft"), np.ones((2, 3)))}).to_netcdf(
+        tmp_path / "default.nc"
+    )
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "v",
+                "coord": "['leafage', 'pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": 5,
+                "param_max": 5,
+                "expand_dim": "pft",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    ensemble = ParamEnsemble.from_dict(
+        {
+            "ensemble_type": "OAT",
+            "param_dir": str(param_dir),
+            "default_param_file": str(tmp_path / "default.nc"),
+            "ensemble_dir": str(tmp_path / "out"),
+            "file_prefix": "e",
+            "fixed_indices": {"pft": [0], "leafage": [1]},
+        }
+    )
+    assert [p.spec.name for p in ensemble.params] == ["v_1", "v_2"]
+
+    ensemble.create_ensemble()
+    # members alternate minimum/maximum; with min == max both write 5 at one pft
+    for member, pft in [("e_0000", 1), ("e_0002", 2)]:
+        with xr.open_dataset(tmp_path / "out" / f"{member}.nc") as ds:
+            expected = np.ones((2, 3))
+            expected[0, pft] = 5.0
+            np.testing.assert_allclose(ds.v.values, expected)
+
+
+def test_expanded_param_with_pft_bounds_writes_each_pfts_bounds(
+    tmp_path, default_param_file, pft_sheet
+):
+    """An OAT ensemble of an expanded parameter with per-PFT bounds sets each PFT
+    to its own minimum and maximum, leaving the other PFTs at default
+    """
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": "pft",
+                "param_max": "pft",
+                "expand_dim": "fates_pft",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    pft_sheet.to_csv(param_dir / "fates_leaf_slatop.csv", index=False)
+
+    ensemble = ParamEnsemble.from_dict(
+        {
+            "ensemble_type": "OAT",
+            "param_dir": str(param_dir),
+            "default_param_file": str(default_param_file),
+            "ensemble_dir": str(tmp_path / "out"),
+            "file_prefix": "e",
+        }
+    )
+    defaults = [0.010, 0.020, 0.030]
+    mins = pft_sheet["param_min"].tolist()
+    maxs = pft_sheet["param_max"].tolist()
+    for i, sample in enumerate(ensemble.create_samples()):
+        pft, bound = divmod(i, 2)
+        expected = list(defaults)
+        expected[pft] = maxs[pft] if bound else mins[pft]
+        member = ensemble.create_ensemble_member(sample)
+        np.testing.assert_allclose(member["fates_leaf_slatop"].values, expected)
+
+
+def test_grouped_expanded_params_split_per_index(
+    grouped_param_dir, default_param_file, tmp_path
+):
+    """A group of expanded params becomes one sampling unit per index, each holding
+    the params for that index
+    """
+    config = LatinHypercubeConfig(
+        param_dir=grouped_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        ensemble_members=5,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    water_units = {
+        unit.name: sorted(p.spec.name for p in unit.params)
+        for unit in ensemble.sampling_units
+        if unit.name.startswith("water")
+    }
+    assert water_units == {
+        f"water_{i}": sorted([f"fates_nonhydro_smpso_{i}", f"smpsc_delta_{i}"])
+        for i in range(3)
+    }
+
+
+def test_grouped_expanded_params_key_has_per_index_columns(
+    grouped_param_dir, default_param_file, tmp_path
+):
+    """The ensemble key has one column per index of an expanded group"""
+    config = LatinHypercubeConfig(
+        param_dir=grouped_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        ensemble_members=5,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    key = ensemble.create_ensemble_key(ensemble.create_samples())
+    assert {"water_0", "water_1", "water_2"} <= set(key.columns)
+    assert "water" not in key.columns
+
+
+# =============================================================================
+# seed
+# =============================================================================
+
+
+def _lh_with_seed(param_dir, default_file, tmp_path, posterior_file, seed):
+    """A small LatinHypercube ensemble with the given seed."""
+    return LatinHypercubeEnsemble(
+        LatinHypercubeConfig(
+            param_dir=param_dir,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_file,
+            posterior_sources=posterior_file,
+            ensemble_members=5,
+            seed=seed,
+        )
+    )
+
+
+def test_lh_same_seed_gives_same_sample(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Two ensembles built with the same seed give identical LH matrices,
+    and a different seed gives a different one
+    """
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    lh_a = _lh_with_seed(*args, seed=42).build_lh()
+    lh_b = _lh_with_seed(*args, seed=42).build_lh()
+    lh_c = _lh_with_seed(*args, seed=43).build_lh()
+    np.testing.assert_array_equal(lh_a, lh_b)
+    assert not np.array_equal(lh_a, lh_c)
+
+
+def test_lh_seed_none_generates_seed(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """With no seed given, the ensemble generates one that reproduces its sample."""
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    ensemble = _lh_with_seed(*args, seed=None)
+    assert isinstance(ensemble.seed, int)
+    np.testing.assert_array_equal(
+        ensemble.build_lh(), _lh_with_seed(*args, seed=ensemble.seed).build_lh()
+    )
+
+
+# =============================================================================
+# written config
+# =============================================================================
+
+
+def _read_written_config(ensemble) -> dict:
+    with open(ensemble.ensemble_dir / "test_config.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def test_create_ensemble_writes_config(lh_ensemble):
+    """create_ensemble writes the version, type, resolved seed, and absolute paths."""
+    lh_ensemble.create_ensemble()
+    written = _read_written_config(lh_ensemble)
+    assert written["meristem_version"] == meristem.__version__
+    assert written["ensemble_type"] == "LatinHypercube"
+    assert written["seed"] == lh_ensemble.seed
+    assert written["ensemble_members"] == 5
+    assert Path(written["param_dir"]).is_absolute()
+    assert Path(written["default_param_file"]).is_absolute()
+
+
+def test_oat_written_config_has_no_seed(oat_ensemble):
+    """An OAT ensemble's written config has no seed, since it has no randomness."""
+    oat_ensemble.create_ensemble()
+    written = _read_written_config(oat_ensemble)
+    assert written["ensemble_type"] == "OAT"
+    assert "seed" not in written
+
+
+def test_lh_written_config_reproduces_sample(lh_ensemble):
+    """Rebuilding from the written config gives the same LH matrix."""
+    lh_ensemble.create_ensemble()
+    rebuilt = ParamEnsemble.from_dict(_read_written_config(lh_ensemble))
+    np.testing.assert_array_equal(rebuilt.build_lh(), lh_ensemble.build_lh())
+
+
+def test_written_config_round_trips_prebuilt(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """A prebuilt matrix is written so the rebuilt ensemble uses the same one."""
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        posterior_sources=posterior_config_file,
+        ensemble_members=2,
+    )
+    n_units = LatinHypercubeEnsemble(config).num_sampling_units
+    prebuilt = np.random.default_rng(0).random((2, n_units))
+    ensemble = LatinHypercubeEnsemble(replace(config, prebuilt=prebuilt))
+    ensemble.write_config()
+    rebuilt = ParamEnsemble.from_dict(_read_written_config(ensemble))
+    np.testing.assert_array_equal(rebuilt.prebuilt, prebuilt)
+
+
+def test_resolved_seed_does_not_modify_input_config(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Resolving the seed leaves the caller's config object untouched."""
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        posterior_sources=posterior_config_file,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    assert config.seed is None
+    assert ensemble.config.seed == ensemble.seed
+
+
+def test_from_dict_warns_on_version_mismatch(lh_ensemble):
+    """from_dict warns when the config was written by another meristem version."""
+    lh_ensemble.write_config()
+    written = _read_written_config(lh_ensemble)
+    written["meristem_version"] = "0.0.0-other"
+    with pytest.warns(UserWarning, match="0.0.0-other"):
+        ParamEnsemble.from_dict(written)
+
+
+def test_from_dict_matching_version_does_not_warn(lh_ensemble, recwarn):
+    """from_dict accepts a config written by this version without warning."""
+    lh_ensemble.write_config()
+    ParamEnsemble.from_dict(_read_written_config(lh_ensemble))
+    assert not [w for w in recwarn if "meristem" in str(w.message)]

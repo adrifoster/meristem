@@ -3,16 +3,19 @@ ParamEnsemble class - responsible for generating the entire ensemble
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from abc import ABC, abstractmethod
+import warnings
 
 from tqdm import tqdm
+import yaml
 import pandas as pd
 import numpy as np
 from scipy.stats import qmc
 from SALib.sample import morris as sample_morris
 
+from .. import __version__
 from .parameter_dataset import ParameterDataset
 from .parameter import Parameter
 from .ensemble_config import (
@@ -104,18 +107,26 @@ class ParamEnsemble(ABC):
         their default values across all ensemble members. For example,
         {'fates_pft': [7, 8, 9]} fixes PFTs 8, 9, and 10 (0-based).
         If None, all indices are free.
+    config: EnsembleConfig
+        The config this ensemble was built from, with any values resolved at
+        construction (e.g. a generated seed) filled in. Written out with the ensemble.
     """
 
     _registry: dict[str, type[ParamEnsemble]] = {}
+    ensemble_type: str
 
     def __init_subclass__(cls, ensemble_type: str, **kwargs):
         super().__init_subclass__(**kwargs)
+        cls.ensemble_type = ensemble_type
         ParamEnsemble._registry[ensemble_type] = cls
 
     def __init__(
         self,
         config: EnsembleConfig,
     ):
+        # the config as resolved for this ensemble; subclasses replace any values
+        # chosen at construction (e.g. a generated seed) so it can be written out
+        self.config = config
 
         # read in the parameter metadata
         main, pft_sheets = read_param_list(config.param_dir)
@@ -222,6 +233,15 @@ class ParamEnsemble(ABC):
         """
         config = config.copy()
 
+        # written by write_config; warn if the ensemble came from another version
+        written_version = config.pop("meristem_version", None)
+        if written_version is not None and str(written_version) != __version__:
+            warnings.warn(
+                f"Config was written by meristem {written_version}, but this is "
+                f"meristem {__version__}. The ensemble may not be reproduced exactly.",
+                stacklevel=2,
+            )
+
         ensemble_type = config.pop("ensemble_type", None)
         if ensemble_type is None:
             raise ValueError(
@@ -237,12 +257,31 @@ class ParamEnsemble(ABC):
             )
         return subclass.from_config(config)
 
+    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
+        """Create one member of the ensemble
+
+        Args:
+            sample (EnsembleMemberSample): Parameter samples for this member.
+                Contains one ParameterSample per parameter.
+        Returns:
+            ParameterDataset: one member of the ensemble with updated values from default
+        """
+        ds = self.default_ds.copy()
+        for param_sample in sample:
+            for param in param_sample.group.params:
+                value = param.sample(param_sample.normalized_value, self.default_ds)
+                param.set_value(
+                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
+                )
+        return ds
+
     def create_ensemble(self):
         """Create and write out all ensemble parameter files
 
         Args:
             ensemble parameter files.
         """
+        self.write_config()
         samples = self.create_samples()
         for i, sample in tqdm(enumerate(samples), total=len(samples), unit="member"):
             ds = self.create_ensemble_member(sample)
@@ -260,6 +299,26 @@ class ParamEnsemble(ABC):
             self.file_prefix,
             list(ensemble_key.ensemble.values),
         )
+
+    def write_config(self) -> Path:
+        """Write the resolved config, ensemble type, and meristem version to
+        '{file_prefix}_config.yaml' in ensemble_dir.
+
+        The file can be passed back to from_dict (or the CLI) to regenerate the
+        ensemble. Paths are written as absolute paths.
+
+        Returns:
+            Path: Path to the written file.
+        """
+        out = {
+            "meristem_version": __version__,
+            "ensemble_type": self.ensemble_type,
+            **{k: _to_yaml_value(v) for k, v in asdict(self.config).items()},
+        }
+        path = self.ensemble_dir / f"{self.file_prefix}_config.yaml"
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(out, f, sort_keys=False)
+        return path
 
     @classmethod
     @abstractmethod
@@ -286,17 +345,6 @@ class ParamEnsemble(ABC):
         Returns:
             list[EnsembleMemberSample]: One EnsembleMemberSample per ensemble member,
             each containing one ParameterSample per parameter.
-        """
-
-    @abstractmethod
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
         """
 
     @abstractmethod
@@ -386,9 +434,14 @@ class ParamEnsemble(ABC):
         """Build sampling units from params list.
 
         Each group becomes one sampling unit. Ungrouped parameters each become their
-        own singleton sampling unit
+        own singleton sampling unit.
+
+        Groups of expanded parameters are split per index: expansion turns each
+        parameter into independent per-index parameters, and a group then links the
+        parameters that share an index. e.g. group 'water' with expanded params A and
+        B gives units 'water_0' = [A_0, B_0], 'water_1' = [A_1, B_1], ...
         """
-        group_lookup: dict[str, ParamGroup] = {}
+        group_lookup: dict[tuple[str, int | None], ParamGroup] = {}
         self.sampling_units: list[ParamGroup] = []
 
         for param in self.params:
@@ -398,12 +451,16 @@ class ParamEnsemble(ABC):
                 self.sampling_units.append(
                     ParamGroup(name=param.spec.name, params=[param])
                 )
-            else:
-                if group_name not in group_lookup:
-                    new_group = ParamGroup(name=group_name, params=[])
-                    group_lookup[group_name] = new_group
-                    self.sampling_units.append(new_group)
-                group_lookup[group_name].params.append(param)
+                continue
+
+            # _validate_groups ensures all params in a group share one expand_dim
+            index = param.active_index.index if param.active_index else None
+            key = (group_name, index)
+            if key not in group_lookup:
+                name = group_name if index is None else f"{group_name}_{index}"
+                group_lookup[key] = ParamGroup(name=name, params=[])
+                self.sampling_units.append(group_lookup[key])
+            group_lookup[key].params.append(param)
 
 
 class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
@@ -419,7 +476,8 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         (n_samples, n_params). If supplied, this matrix is used directly
         instead of generating a new one. Useful for reproducibility or
         when the LH matrix was generated externally.
-
+    seed: int | None
+        Optional seed for reproducibility
     """
 
     def __init__(
@@ -429,6 +487,11 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         super().__init__(config)
         self.n_samples = config.ensemble_members
         self.prebuilt = config.prebuilt
+        self.seed = config.seed
+
+        if self.seed is None:
+            self.seed = np.random.SeedSequence().entropy
+        self.config = replace(config, seed=self.seed)
 
     @classmethod
     def from_config(cls, config: dict) -> LatinHypercubeEnsemble:
@@ -480,25 +543,6 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
             samples.append(ensemble_member)
 
         return samples
-
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-
-        ds = self.default_ds.copy()
-        for param_sample in sample:
-            for param in param_sample.group.params:
-                value = param.sample(param_sample.normalized_value, self.default_ds)
-                param.set_value(
-                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
-                )
-        return ds
 
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
@@ -557,7 +601,9 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
             return prebuilt
 
         # otherwise generate one
-        return qmc.LatinHypercube(d=self.num_sampling_units).random(n=self.n_samples)
+        return qmc.LatinHypercube(d=self.num_sampling_units, rng=self.seed).random(
+            n=self.n_samples
+        )
 
 
 class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
@@ -610,31 +656,6 @@ class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
                 EnsembleMemberSample([ParameterSample(group, 1.0)])  # maximum
             )
         return samples
-
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-        if len(sample) != 1:
-            raise ValueError(
-                f"OneAtATimeEnsemble expects exactly one ParameterSample per member "
-                f"but got {len(sample)}."
-            )
-
-        param_sample = sample.parameter_samples[0]
-        ds = self.default_ds.copy()
-        for param in param_sample.group.params:
-            value = param.sample(param_sample.normalized_value, self.default_ds)
-            param.set_value(
-                ds, self.default_ds, value, fixed_indices=self.fixed_indices
-            )
-
-        return ds
 
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
@@ -697,9 +718,11 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         number of grid levels that partition each sampling unit's [0, 1] range.
         Must be an even number.
     optimal_trajectories : int | None
-        If set, select this many trajectories (between 2 and morris_n) from the
+        If set, select this many trajectories (at least 2 and less than morris_n) from the
         morris_n generated, chosen to maximize their spread. If None, all
         morris_n trajectories are used.
+    seed : int | None
+        optional seed for reproducibility
     """
 
     def __init__(
@@ -710,6 +733,11 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         self.morris_n = config.morris_n
         self.levels = config.levels
         self.optimal_trajectories = config.optimal_trajectories
+        self.seed = config.seed
+
+        if self.seed is None:
+            self.seed = np.random.SeedSequence().entropy
+        self.config = replace(config, seed=self.seed)
 
     @classmethod
     def from_config(cls, config: dict) -> MorrisEnsemble:
@@ -762,25 +790,6 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
 
         return samples
 
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-
-        ds = self.default_ds.copy()
-        for param_sample in sample:
-            for param in param_sample.group.params:
-                value = param.sample(param_sample.normalized_value, self.default_ds)
-                param.set_value(
-                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
-                )
-        return ds
-
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
 
@@ -832,7 +841,23 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             N=self.morris_n,
             num_levels=self.levels,
             optimal_trajectories=self.optimal_trajectories,
+            seed=self.seed,
         )
+
+
+def _to_yaml_value(value):
+    """Convert a config value to a plain type that yaml.safe_dump can write."""
+    if isinstance(value, Path):
+        return str(value.resolve())
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _to_yaml_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_yaml_value(v) for v in value]
+    return value
 
 
 def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:

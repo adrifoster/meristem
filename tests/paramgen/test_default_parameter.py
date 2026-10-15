@@ -352,3 +352,152 @@ def test_default_normalize_at_midpoint(default_row, param_dataset):
     """normalize() returns 0.5 for the midpoint of min and max."""
     param = Parameter.from_row(default_row, param_dataset)
     assert param.normalize(0.0275, param_dataset) == pytest.approx(0.5)
+
+
+# multi-dimensional parameters: parameter_a has dims (dim_1, dim_2) and values
+# [[50, 60, 70], [40, 50, 60]], so dim_2 is the second axis
+
+
+def test_default_get_default_expanded_along_second_axis(multi_dim_row, param_dataset):
+    """get_default selects along the active dimension, not the first axis"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="dim_2", index=1)
+    np.testing.assert_allclose(param.get_default(param_dataset), [60.0, 50.0])
+
+
+def test_default_set_value_expanded_along_second_axis(
+    multi_dim_row, param_dataset, working_param_dataset
+):
+    """set_value with an active_index on the second axis writes that column only"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="dim_2", index=1)
+    param.set_value(working_param_dataset, param_dataset, 9.0)
+    np.testing.assert_allclose(
+        working_param_dataset["parameter_a"].values,
+        [[50.0, 9.0, 70.0], [40.0, 9.0, 60.0]],
+    )
+
+
+def test_default_set_value_expanded_accepts_sub_array(
+    multi_dim_row, param_dataset, working_param_dataset
+):
+    """set_value with an active_index accepts an array shaped like the sub-array"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="dim_2", index=2)
+    param.set_value(working_param_dataset, param_dataset, np.array([1.0, 2.0]))
+    np.testing.assert_allclose(
+        working_param_dataset["parameter_a"].values,
+        [[50.0, 60.0, 1.0], [40.0, 50.0, 2.0]],
+    )
+
+
+def test_default_set_value_expanded_rejects_wrong_shape(
+    multi_dim_row, param_dataset, working_param_dataset
+):
+    """set_value with an active_index rejects an array not shaped like the sub-array"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="dim_2", index=1)
+    with pytest.raises(ValueError, match="scalar"):
+        param.set_value(working_param_dataset, param_dataset, np.array([1.0, 2.0, 3.0]))
+
+
+def test_default_set_value_expanded_on_missing_dim_raises(
+    multi_dim_row, param_dataset, working_param_dataset
+):
+    """set_value raises if the active dimension isn't one of the variable's dims"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="fates_pft", index=1)
+    with pytest.raises(ValueError, match="fates_pft"):
+        param.set_value(working_param_dataset, param_dataset, 9.0)
+
+
+@pytest.mark.parametrize(
+    "fixed_indices,expected",
+    [
+        ({"dim_2": [0]}, [[50.0, 9.0, 9.0], [40.0, 9.0, 9.0]]),
+        ({"dim_1": [1]}, [[9.0, 9.0, 9.0], [40.0, 50.0, 60.0]]),
+        ({"dim_1": [0], "dim_2": [2]}, [[50.0, 60.0, 70.0], [9.0, 9.0, 60.0]]),
+    ],
+)
+def test_default_set_value_multi_dim_fixed_indices_held(
+    multi_dim_row, param_dataset, working_param_dataset, fixed_indices, expected
+):
+    """fixed_indices hold positions on whichever dimension they name"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.set_value(
+        working_param_dataset, param_dataset, 9.0, fixed_indices=fixed_indices
+    )
+    np.testing.assert_allclose(working_param_dataset["parameter_a"].values, expected)
+
+
+def test_default_set_value_expanded_fixed_indices_on_other_dim_held(
+    multi_dim_row, param_dataset, working_param_dataset
+):
+    """an expanded parameter leaves fixed positions on its other dimensions alone"""
+    param = Parameter.from_row(multi_dim_row, param_dataset)
+    param.active_index = DimIndex(dim="dim_2", index=1)
+    param.set_value(
+        working_param_dataset, param_dataset, 9.0, fixed_indices={"dim_1": [1]}
+    )
+    np.testing.assert_allclose(
+        working_param_dataset["parameter_a"].values,
+        [[50.0, 9.0, 70.0], [40.0, 50.0, 60.0]],
+    )
+
+
+# per-PFT bounds on expanded parameters: pft_sheet gives
+# param_min [0.005, 0.004, 0.008] and param_max [0.040, 0.035, 0.060]
+
+
+@pytest.mark.parametrize(
+    "index,expected_min,expected_max",
+    [(0, 0.005, 0.040), (1, 0.004, 0.035), (2, 0.008, 0.060)],
+)
+def test_default_expanded_uses_own_pft_bounds(
+    pft_row, pft_sheet, param_dataset, index, expected_min, expected_max
+):
+    """An expanded parameter with per-PFT bounds samples within its own PFT's bounds"""
+    param = Parameter.from_row(pft_row, param_dataset, pft_sheet=pft_sheet)
+    param.active_index = DimIndex(dim="fates_pft", index=index)
+    assert param.sample(0.0, param_dataset) == pytest.approx(expected_min)
+    assert param.sample(1.0, param_dataset) == pytest.approx(expected_max)
+    assert param.sample(0.5, param_dataset) == pytest.approx(
+        (expected_min + expected_max) / 2
+    )
+
+
+def test_default_expanded_normalize_uses_own_pft_bounds(
+    pft_row, pft_sheet, param_dataset
+):
+    """normalize on an expanded parameter uses its own PFT's bounds"""
+    param = Parameter.from_row(pft_row, param_dataset, pft_sheet=pft_sheet)
+    param.active_index = DimIndex(dim="fates_pft", index=1)
+    assert param.normalize(0.004, param_dataset) == pytest.approx(0.0)
+    assert param.normalize(0.035, param_dataset) == pytest.approx(1.0)
+
+
+def test_default_expanded_percent_bounds_use_own_default(default_row, param_dataset):
+    """An expanded parameter with percent bounds resolves them from its own default"""
+    default_row["param_min"] = "50percent"
+    default_row["param_max"] = "50percent"
+    param = Parameter.from_row(default_row, param_dataset)
+    param.active_index = DimIndex(dim="fates_pft", index=2)
+    # default at PFT 2 is 0.030
+    assert param.sample(0.0, param_dataset) == pytest.approx(0.015)
+    assert param.sample(1.0, param_dataset) == pytest.approx(0.045)
+
+
+def test_default_expanded_pft_bounds_on_2d_param(
+    multi_dim_row, pft_sheet, param_dataset
+):
+    """Per-PFT bounds on a 2-D parameter expanded along pft (its second axis)
+    give that PFT's bounds down the whole column
+    """
+    multi_dim_row["parameter_name"] = "fates_leaf_vcmax25top"
+    multi_dim_row["coord"] = "['fates_leafage_class', 'fates_pft']"
+    multi_dim_row["param_min"] = "pft"
+    multi_dim_row["param_max"] = "pft"
+    param = Parameter.from_row(multi_dim_row, param_dataset, pft_sheet=pft_sheet)
+    param.active_index = DimIndex(dim="fates_pft", index=1)
+    np.testing.assert_allclose(param.sample(0.0, param_dataset), [0.004, 0.004])
+    np.testing.assert_allclose(param.sample(1.0, param_dataset), [0.035, 0.035])

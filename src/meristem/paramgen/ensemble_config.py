@@ -6,9 +6,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
+
+
+def _is_int(value) -> bool:
+    """True for Python and numpy integers, but not bools."""
+    return isinstance(value, (int, np.integer)) and not isinstance(value, bool)
+
+
+def _check_int(name: str, value, minimum: int, allow_none: bool = False) -> None:
+    """Raise ValueError unless value is an integer >= minimum (or None if allowed)."""
+    if allow_none and value is None:
+        return
+    if not _is_int(value) or value < minimum:
+        expected = f"an integer >= {minimum}" + (" or None" if allow_none else "")
+        raise ValueError(f"{name} must be {expected}, got {value!r}.")
 
 
 @dataclass
@@ -41,13 +54,13 @@ class EnsembleConfig:
         parameters are expected.
     """
 
-    param_dir: str | Path
-    ensemble_dir: str | Path
+    param_dir: Path
+    ensemble_dir: Path
     file_prefix: str
-    default_param_file: str | Path
-    param_list: Optional[list[str]] = None
-    fixed_indices: Optional[dict[str, list[int]]] = None
-    posterior_sources: Optional[Path] = None
+    default_param_file: Path
+    param_list: list[str] | None = None
+    fixed_indices: dict[str, list[int]] | None = None
+    posterior_sources: Path | None = None
 
     def __post_init__(self):
         self.param_dir = Path(self.param_dir)
@@ -55,6 +68,41 @@ class EnsembleConfig:
         self.default_param_file = Path(self.default_param_file)
         if self.posterior_sources is not None:
             self.posterior_sources = Path(self.posterior_sources)
+
+        if (
+            not isinstance(self.file_prefix, str)
+            or not self.file_prefix
+            or "/" in self.file_prefix
+        ):
+            raise ValueError(
+                "file_prefix must be a non-empty string without '/', "
+                f"got {self.file_prefix!r}."
+            )
+
+        if self.param_list is not None and (
+            isinstance(self.param_list, str)
+            or not self.param_list
+            or not all(isinstance(name, str) for name in self.param_list)
+        ):
+            raise ValueError(
+                "param_list must be a non-empty list of parameter names or None, "
+                f"got {self.param_list!r}."
+            )
+
+        if self.fixed_indices is not None:
+            if not isinstance(self.fixed_indices, dict):
+                raise ValueError(
+                    "fixed_indices must be a dict of dimension name to a list of "
+                    f"indices, got {self.fixed_indices!r}."
+                )
+            for dim, indices in self.fixed_indices.items():
+                if isinstance(indices, (str, bytes)) or not all(
+                    _is_int(i) for i in np.atleast_1d(indices)
+                ):
+                    raise ValueError(
+                        f"fixed_indices['{dim}'] must be a list of integer indices, "
+                        f"got {indices!r}."
+                    )
 
 
 @dataclass
@@ -71,10 +119,34 @@ class LatinHypercubeConfig(EnsembleConfig):
         (n_samples, n_params). If supplied, this matrix is used directly
         instead of generating a new one. Useful for reproducibility or
         when the LH matrix was generated externally.
+    seed : int | None
+        optional seed for reproducibility
     """
 
     ensemble_members: int = 100
-    prebuilt: Optional[np.ndarray] = None
+    prebuilt: np.ndarray | None = None
+    seed: int | None = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        _check_int("ensemble_members", self.ensemble_members, minimum=1)
+        _check_int("seed", self.seed, minimum=0, allow_none=True)
+
+        if self.prebuilt is not None:
+            self.prebuilt = np.asarray(self.prebuilt, dtype=float)
+            if self.prebuilt.ndim != 2:
+                raise ValueError(
+                    "prebuilt must be a 2-D array of shape "
+                    f"(ensemble_members, n_params), got {self.prebuilt.ndim}-D."
+                )
+            if self.prebuilt.shape[0] != self.ensemble_members:
+                raise ValueError(
+                    f"prebuilt has {self.prebuilt.shape[0]} rows but "
+                    f"ensemble_members is {self.ensemble_members}."
+                )
+            if not np.all((self.prebuilt >= 0.0) & (self.prebuilt <= 1.0)):
+                raise ValueError("prebuilt values must all be in [0, 1].")
 
 
 @dataclass
@@ -95,17 +167,36 @@ class MorrisEnsembleConfig(EnsembleConfig):
         positive even number.
     optimal_trajectories : int | None
         If set, the number of optimal trajectories to select from the larger
-        pool of morris_n (between 2 and morris_n). If None, all morris_n
-        trajectories are used.
+        pool of morris_n (at least 2 and less than morris_n). If None, all
+        morris_n trajectories are used.
+    seed : int | None
+        optional seed for reproducibility
     """
 
     morris_n: int = 100
     levels: int = 4
     optimal_trajectories: int | None = None
+    seed: int | None = None
 
     def __post_init__(self):
         super().__post_init__()
-        if self.levels < 2 or self.levels % 2 != 0:
+        _check_int("morris_n", self.morris_n, minimum=1)
+        if not _is_int(self.levels) or self.levels < 2 or self.levels % 2 != 0:
             raise ValueError(
-                f"levels must be a positive even number, got {self.levels}."
+                f"levels must be a positive even number, got {self.levels!r}."
             )
+        _check_int(
+            "optimal_trajectories",
+            self.optimal_trajectories,
+            minimum=2,
+            allow_none=True,
+        )
+        if (
+            self.optimal_trajectories is not None
+            and self.optimal_trajectories >= self.morris_n
+        ):
+            raise ValueError(
+                f"optimal_trajectories ({self.optimal_trajectories}) must be less "
+                f"than morris_n ({self.morris_n})."
+            )
+        _check_int("seed", self.seed, minimum=0, allow_none=True)

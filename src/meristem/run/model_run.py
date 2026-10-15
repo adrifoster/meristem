@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import time
 import json
 from pathlib import Path
 import re
+import shlex
 
 from jinja2 import Environment, FileSystemLoader
 import yaml
 
+from .scheduler import DEFAULT_SCHEDULER, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
 # templates dir
@@ -23,6 +24,8 @@ _ENV = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
 )
+# quote a value for safe use as a single shell word in job scripts
+_ENV.filters["shquote"] = lambda value: shlex.quote(str(value))
 
 # state file name
 _STATE_FILE = "run_state.json"
@@ -48,6 +51,7 @@ class ModelRun:
     stages: ordered tuple of Stage instances
     user: username for the machine - used for PBS job submission. can use os.environ variable
     project: PBS project code to use for job submission. can use os.environ variable
+    scheduler: job scheduler used to submit job scripts. defaults to PBS
     """
 
     def __init__(
@@ -57,12 +61,14 @@ class ModelRun:
         stages: tuple[Stage, ...] | list[Stage],
         user: str,
         project: str,
+        scheduler: Scheduler | None = None,
     ):
         self.root = Path(root)
         self.run_id = run_id
         self.stages: tuple[Stage, ...] = tuple(stages)
         self.user = user if user else os.getenv("USER")
         self.project = project if project else os.getenv("PROJECT")
+        self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
         self._validate()
 
     def _validate(self):
@@ -83,11 +89,19 @@ class ModelRun:
             )
         if not self.stages:
             raise ValueError("stages must not be empty")
+        # the PBS log file (#PBS -o) lives under root, and PBS directives can't
+        # reliably hold paths with whitespace
+        if any(char.isspace() for char in str(self.root)):
+            raise ValueError(
+                f"root {str(self.root)!r} must not contain whitespace "
+                "(PBS can't write job logs to such paths)."
+            )
 
     @classmethod
     def create(
         cls,
         config: Path | str | dict,
+        scheduler: Scheduler | None = None,
     ) -> ModelRun:
         """Initialise a brand-new run from a YAML file or config dict.
 
@@ -96,6 +110,8 @@ class ModelRun:
 
         Args:
             config: path to a YAML file, or a dict with the same schema
+            scheduler: scheduler to use. If None, built from the config's
+                "scheduler" key (default "pbs")
 
         Returns:
             ModelRun: ModelRun instance
@@ -122,17 +138,21 @@ class ModelRun:
             stages=stages,
             user=cfg.get("user", ""),
             project=cfg.get("project", ""),
+            scheduler=scheduler
+            or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
         )
         run.root.mkdir(parents=True, exist_ok=True)
         run.save()
         return run
 
     @classmethod
-    def load(cls, root: Path | str) -> ModelRun:
+    def load(cls, root: Path | str, scheduler: Scheduler | None = None) -> ModelRun:
         """Load an existing run from its state file.
 
         Args:
             root (Path | str): Path to root
+            scheduler (Scheduler | None, optional): scheduler to use. If None, built
+                from the state file's "scheduler" key (default "pbs")
 
         Returns:
             ModelRun: ModelRun instance
@@ -155,6 +175,9 @@ class ModelRun:
             user=state.get("user", ""),
             stages=[Stage.from_dict(stage) for stage in state["stages"]],
             project=state.get("project", ""),
+            # state files written before the scheduler key existed are PBS runs
+            scheduler=scheduler
+            or get_scheduler(state.get("scheduler", DEFAULT_SCHEDULER)),
         )
 
     def save(self):
@@ -167,6 +190,7 @@ class ModelRun:
             "run_id": self.run_id,
             "user": self.user,
             "project": self.project,
+            "scheduler": self.scheduler.name,
             "stages": [stage.to_dict() for stage in self.stages],
         }
         tmp = self.root / f"{_STATE_FILE}.tmp"
@@ -260,6 +284,8 @@ class ModelRun:
         Returns:
             Path: path to stage's case root
         """
+        if stage.config.case_root is not None:
+            return stage.config.case_root
         return self.root / stage.config.name
 
     def format_status(self):
@@ -338,7 +364,7 @@ class ModelRun:
         job_id = (
             f"DRY_advance_{self.run_id}_{stage_name}"
             if dry_run
-            else self._qsub(job_file)
+            else self.scheduler.submit(job_file)
         )
         print(
             f"  {self.run_id} / {stage_name}: advance job submitted {job_id} "
@@ -365,7 +391,9 @@ class ModelRun:
         stage = self._stage(stage_name)
         job_file = self._write_fail_script(stage, cime_job_id)
         job_id = (
-            f"DRY_fail_{self.run_id}_{stage_name}" if dry_run else self._qsub(job_file)
+            f"DRY_fail_{self.run_id}_{stage_name}"
+            if dry_run
+            else self.scheduler.submit(job_file)
         )
         print(
             f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
@@ -468,7 +496,7 @@ class ModelRun:
         job_id = (
             f"DRY_{self.run_id}_{stage.config.name}"
             if dry_run
-            else self._qsub(job_file)
+            else self.scheduler.submit(job_file)
         )
 
         # record successful submission
@@ -501,7 +529,11 @@ class ModelRun:
         """
         case_root = self._case_root_for(stage)
         previous_stage = self._previous_stage(stage.config.name)
-        previous_stage_name = previous_stage.config.name if previous_stage else ""
+        previous_case_root = (
+            self._case_root_for(previous_stage) if previous_stage else None
+        )
+        # CIME names a case after the basename of its case directory
+        previous_case = previous_case_root.name if previous_case_root else ""
 
         job_name = f"{self.run_id}_{stage.config.name}"
         job_file = self.root / f"{job_name}.pbs"
@@ -524,12 +556,14 @@ class ModelRun:
             extra=extra,
             root=self.root,
             name=stage.config.name,
-            previous_case=previous_stage_name,
+            previous_case=previous_case,
+            previous_case_root=previous_case_root or "",
             run_id=self.run_id,
             script=stage.config.script,
             case_root=case_root,
             cime=not stage.config.no_cime,
             skip_script=skip_script,
+            submit_args=stage.config.submit_args,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
@@ -587,23 +621,6 @@ class ModelRun:
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
-
-    def _qsub(self, job_file: Path) -> str:
-        """Submit the PBS input job_file
-
-        Args:
-            job_file (Path): input job file
-
-        Returns:
-            str: job_id printed from submission
-        """
-        result = subprocess.run(
-            ["qsub", str(job_file)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip()
 
 
 def _validate_config(config: dict) -> None:
