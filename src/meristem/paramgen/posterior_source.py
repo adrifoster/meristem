@@ -101,7 +101,7 @@ class PosteriorSource:
                 f"PosteriorSource: cannot find input file '{self.path}'."
             )
 
-        df = pd.read_table(self.path, sep=" ")
+        df = pd.read_table(self.path, sep=r"\s+")
 
         missing = [p for p in self.parameters if p not in df.columns]
         if missing:

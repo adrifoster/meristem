@@ -56,7 +56,11 @@ def _run(args: argparse.Namespace):
         f"output directory: {ensemble.ensemble_dir}"
     )
 
-    ensemble.create_ensemble()
+    try:
+        ensemble.create_ensemble(overwrite=args.overwrite)
+    except FileExistsError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"Ensemble complete. Output written to {ensemble.ensemble_dir}/")
 
 
@@ -78,6 +82,14 @@ def build_parser() -> argparse.ArgumentParser:
         "config",
         metavar="CONFIG",
         help="Path to the YAML configuration file.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Replace an existing ensemble with the same file_prefix in "
+            "ensemble_dir (its files are deleted first)."
+        ),
     )
     return parser
 

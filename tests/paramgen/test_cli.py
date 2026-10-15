@@ -75,7 +75,37 @@ def test_main_calls_create_ensemble(
 
     assert main([str(config_file)]) == 0
 
-    mock_ensemble.create_ensemble.assert_called_once()
+    mock_ensemble.create_ensemble.assert_called_once_with(overwrite=False)
+
+
+def test_main_overwrite_flag_passed_through(mocker, tmp_path):
+    """--overwrite is passed to create_ensemble."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"ensemble_type": "LatinHypercube"}))
+    mock_ensemble = mocker.MagicMock()
+    mocker.patch(
+        "meristem.paramgen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
+    )
+
+    assert main([str(config_file), "--overwrite"]) == 0
+
+    mock_ensemble.create_ensemble.assert_called_once_with(overwrite=True)
+
+
+def test_main_existing_ensemble_exits(mocker, tmp_path, capsys):
+    """A FileExistsError from create_ensemble exits with code 1 and the message."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"ensemble_type": "LatinHypercube"}))
+    mock_ensemble = mocker.MagicMock()
+    mock_ensemble.create_ensemble.side_effect = FileExistsError("already exists")
+    mocker.patch(
+        "meristem.paramgen.cli.ParamEnsemble.from_dict", return_value=mock_ensemble
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main([str(config_file)])
+    assert exc_info.value.code == 1
+    assert "already exists" in capsys.readouterr().err
 
 
 def test_main_prints_summary(
