@@ -510,11 +510,11 @@ def test_oat_create_ensemble_member(oat_ensemble):
     assert "fates_leaf_slatop" in ds
 
 
-def test_oat_create_ensemble_member_wrong_length(oat_ensemble, lh_ensemble):
-    """OAT raises if sample has more than one ParameterSample."""
+def test_oat_create_ensemble_key_wrong_length(oat_ensemble, lh_ensemble):
+    """OAT key raises if a member has more than one ParameterSample."""
     lh_samples = lh_ensemble.create_samples()
     with pytest.raises(ValueError, match="exactly one"):
-        oat_ensemble.create_ensemble_member(lh_samples[0])
+        oat_ensemble.create_ensemble_key(lh_samples)
 
 
 def test_lh_create_ensemble_key(lh_ensemble):

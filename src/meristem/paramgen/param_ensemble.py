@@ -257,6 +257,24 @@ class ParamEnsemble(ABC):
             )
         return subclass.from_config(config)
 
+    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
+        """Create one member of the ensemble
+
+        Args:
+            sample (EnsembleMemberSample): Parameter samples for this member.
+                Contains one ParameterSample per parameter.
+        Returns:
+            ParameterDataset: one member of the ensemble with updated values from default
+        """
+        ds = self.default_ds.copy()
+        for param_sample in sample:
+            for param in param_sample.group.params:
+                value = param.sample(param_sample.normalized_value, self.default_ds)
+                param.set_value(
+                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
+                )
+        return ds
+
     def create_ensemble(self):
         """Create and write out all ensemble parameter files
 
@@ -327,17 +345,6 @@ class ParamEnsemble(ABC):
         Returns:
             list[EnsembleMemberSample]: One EnsembleMemberSample per ensemble member,
             each containing one ParameterSample per parameter.
-        """
-
-    @abstractmethod
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
         """
 
     @abstractmethod
@@ -537,25 +544,6 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
 
         return samples
 
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-
-        ds = self.default_ds.copy()
-        for param_sample in sample:
-            for param in param_sample.group.params:
-                value = param.sample(param_sample.normalized_value, self.default_ds)
-                param.set_value(
-                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
-                )
-        return ds
-
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
 
@@ -668,31 +656,6 @@ class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
                 EnsembleMemberSample([ParameterSample(group, 1.0)])  # maximum
             )
         return samples
-
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-        if len(sample) != 1:
-            raise ValueError(
-                f"OneAtATimeEnsemble expects exactly one ParameterSample per member "
-                f"but got {len(sample)}."
-            )
-
-        param_sample = sample.parameter_samples[0]
-        ds = self.default_ds.copy()
-        for param in param_sample.group.params:
-            value = param.sample(param_sample.normalized_value, self.default_ds)
-            param.set_value(
-                ds, self.default_ds, value, fixed_indices=self.fixed_indices
-            )
-
-        return ds
 
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
@@ -826,25 +789,6 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             samples.append(ensemble_member)
 
         return samples
-
-    def create_ensemble_member(self, sample: EnsembleMemberSample) -> ParameterDataset:
-        """Create one member of the ensemble
-
-        Args:
-            sample (EnsembleMemberSample): Parameter samples for this member.
-                Contains one ParameterSample per parameter.
-        Returns:
-            ParameterDataset: one member of the ensemble with updated values from default
-        """
-
-        ds = self.default_ds.copy()
-        for param_sample in sample:
-            for param in param_sample.group.params:
-                value = param.sample(param_sample.normalized_value, self.default_ds)
-                param.set_value(
-                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
-                )
-        return ds
 
     def create_ensemble_key(self, samples: list[EnsembleMemberSample]) -> pd.DataFrame:
         """Create the ensemble key that goes with this ensemble
