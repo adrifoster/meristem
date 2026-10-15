@@ -1,11 +1,15 @@
 """Tests for ParamEnsemble"""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import numpy as np
 import pandas as pd
 import xarray as xr
+import yaml
+
+import meristem
 
 from meristem.paramgen.param_ensemble import (
     ParamEnsemble,
@@ -923,3 +927,92 @@ def test_lh_seed_none_generates_seed(
     np.testing.assert_array_equal(
         ensemble.build_lh(), _lh_with_seed(*args, seed=ensemble.seed).build_lh()
     )
+
+
+# =============================================================================
+# written config
+# =============================================================================
+
+
+def _read_written_config(ensemble) -> dict:
+    with open(ensemble.ensemble_dir / "test_config.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def test_create_ensemble_writes_config(lh_ensemble):
+    """create_ensemble writes the version, type, resolved seed, and absolute paths."""
+    lh_ensemble.create_ensemble()
+    written = _read_written_config(lh_ensemble)
+    assert written["meristem_version"] == meristem.__version__
+    assert written["ensemble_type"] == "LatinHypercube"
+    assert written["seed"] == lh_ensemble.seed
+    assert written["ensemble_members"] == 5
+    assert Path(written["param_dir"]).is_absolute()
+    assert Path(written["default_param_file"]).is_absolute()
+
+
+def test_oat_written_config_has_no_seed(oat_ensemble):
+    """An OAT ensemble's written config has no seed, since it has no randomness."""
+    oat_ensemble.create_ensemble()
+    written = _read_written_config(oat_ensemble)
+    assert written["ensemble_type"] == "OAT"
+    assert "seed" not in written
+
+
+def test_lh_written_config_reproduces_sample(lh_ensemble):
+    """Rebuilding from the written config gives the same LH matrix."""
+    lh_ensemble.create_ensemble()
+    rebuilt = ParamEnsemble.from_dict(_read_written_config(lh_ensemble))
+    np.testing.assert_array_equal(rebuilt.build_lh(), lh_ensemble.build_lh())
+
+
+def test_written_config_round_trips_prebuilt(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """A prebuilt matrix is written so the rebuilt ensemble uses the same one."""
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        posterior_sources=posterior_config_file,
+        ensemble_members=2,
+    )
+    n_units = LatinHypercubeEnsemble(config).num_sampling_units
+    prebuilt = np.random.default_rng(0).random((2, n_units))
+    ensemble = LatinHypercubeEnsemble(replace(config, prebuilt=prebuilt))
+    ensemble.write_config()
+    rebuilt = ParamEnsemble.from_dict(_read_written_config(ensemble))
+    np.testing.assert_array_equal(rebuilt.prebuilt, prebuilt)
+
+
+def test_resolved_seed_does_not_modify_input_config(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Resolving the seed leaves the caller's config object untouched."""
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        posterior_sources=posterior_config_file,
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    assert config.seed is None
+    assert ensemble.config.seed == ensemble.seed
+
+
+def test_from_dict_warns_on_version_mismatch(lh_ensemble):
+    """from_dict warns when the config was written by another meristem version."""
+    lh_ensemble.write_config()
+    written = _read_written_config(lh_ensemble)
+    written["meristem_version"] = "0.0.0-other"
+    with pytest.warns(UserWarning, match="0.0.0-other"):
+        ParamEnsemble.from_dict(written)
+
+
+def test_from_dict_matching_version_does_not_warn(lh_ensemble, recwarn):
+    """from_dict accepts a config written by this version without warning."""
+    lh_ensemble.write_config()
+    ParamEnsemble.from_dict(_read_written_config(lh_ensemble))
+    assert not [w for w in recwarn if "meristem" in str(w.message)]

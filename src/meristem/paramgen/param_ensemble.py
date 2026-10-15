@@ -3,16 +3,19 @@ ParamEnsemble class - responsible for generating the entire ensemble
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from abc import ABC, abstractmethod
+import warnings
 
 from tqdm import tqdm
+import yaml
 import pandas as pd
 import numpy as np
 from scipy.stats import qmc
 from SALib.sample import morris as sample_morris
 
+from .. import __version__
 from .parameter_dataset import ParameterDataset
 from .parameter import Parameter
 from .ensemble_config import (
@@ -104,18 +107,26 @@ class ParamEnsemble(ABC):
         their default values across all ensemble members. For example,
         {'fates_pft': [7, 8, 9]} fixes PFTs 8, 9, and 10 (0-based).
         If None, all indices are free.
+    config: EnsembleConfig
+        The config this ensemble was built from, with any values resolved at
+        construction (e.g. a generated seed) filled in. Written out with the ensemble.
     """
 
     _registry: dict[str, type[ParamEnsemble]] = {}
+    ensemble_type: str
 
     def __init_subclass__(cls, ensemble_type: str, **kwargs):
         super().__init_subclass__(**kwargs)
+        cls.ensemble_type = ensemble_type
         ParamEnsemble._registry[ensemble_type] = cls
 
     def __init__(
         self,
         config: EnsembleConfig,
     ):
+        # the config as resolved for this ensemble; subclasses replace any values
+        # chosen at construction (e.g. a generated seed) so it can be written out
+        self.config = config
 
         # read in the parameter metadata
         main, pft_sheets = read_param_list(config.param_dir)
@@ -222,6 +233,15 @@ class ParamEnsemble(ABC):
         """
         config = config.copy()
 
+        # written by write_config; warn if the ensemble came from another version
+        written_version = config.pop("meristem_version", None)
+        if written_version is not None and str(written_version) != __version__:
+            warnings.warn(
+                f"Config was written by meristem {written_version}, but this is "
+                f"meristem {__version__}. The ensemble may not be reproduced exactly.",
+                stacklevel=2,
+            )
+
         ensemble_type = config.pop("ensemble_type", None)
         if ensemble_type is None:
             raise ValueError(
@@ -243,6 +263,7 @@ class ParamEnsemble(ABC):
         Args:
             ensemble parameter files.
         """
+        self.write_config()
         samples = self.create_samples()
         for i, sample in tqdm(enumerate(samples), total=len(samples), unit="member"):
             ds = self.create_ensemble_member(sample)
@@ -260,6 +281,26 @@ class ParamEnsemble(ABC):
             self.file_prefix,
             list(ensemble_key.ensemble.values),
         )
+
+    def write_config(self) -> Path:
+        """Write the resolved config, ensemble type, and meristem version to
+        '{file_prefix}_config.yaml' in ensemble_dir.
+
+        The file can be passed back to from_dict (or the CLI) to regenerate the
+        ensemble. Paths are written as absolute paths.
+
+        Returns:
+            Path: Path to the written file.
+        """
+        out = {
+            "meristem_version": __version__,
+            "ensemble_type": self.ensemble_type,
+            **{k: _to_yaml_value(v) for k, v in asdict(self.config).items()},
+        }
+        path = self.ensemble_dir / f"{self.file_prefix}_config.yaml"
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(out, f, sort_keys=False)
+        return path
 
     @classmethod
     @abstractmethod
@@ -443,6 +484,7 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
 
         if self.seed is None:
             self.seed = np.random.SeedSequence().entropy
+        self.config = replace(config, seed=self.seed)
 
     @classmethod
     def from_config(cls, config: dict) -> LatinHypercubeEnsemble:
@@ -732,6 +774,7 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
 
         if self.seed is None:
             self.seed = np.random.SeedSequence().entropy
+        self.config = replace(config, seed=self.seed)
 
     @classmethod
     def from_config(cls, config: dict) -> MorrisEnsemble:
@@ -856,6 +899,21 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             optimal_trajectories=self.optimal_trajectories,
             seed=self.seed,
         )
+
+
+def _to_yaml_value(value):
+    """Convert a config value to a plain type that yaml.safe_dump can write."""
+    if isinstance(value, Path):
+        return str(value.resolve())
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _to_yaml_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_yaml_value(v) for v in value]
+    return value
 
 
 def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:

@@ -2,6 +2,7 @@
 
 import pytest
 import numpy as np
+import yaml
 
 from meristem.paramgen.param_ensemble import ParamEnsemble, MorrisEnsemble
 from meristem.paramgen.ensemble_config import MorrisEnsembleConfig
@@ -270,4 +271,18 @@ def test_morris_seed_none_generates_seed(
     np.testing.assert_array_equal(
         ensemble.build_morris_samples(),
         _morris_with_seed(*args, seed=ensemble.seed).build_morris_samples(),
+    )
+
+
+def test_morris_written_config_reproduces_sample(morris_ensemble):
+    """Rebuilding from the written config gives the same Morris sample."""
+    morris_ensemble.write_config()
+    path = morris_ensemble.ensemble_dir / "test_config.yaml"
+    with open(path, encoding="utf-8") as f:
+        written = yaml.safe_load(f)
+    assert written["ensemble_type"] == "Morris"
+    assert written["seed"] == morris_ensemble.seed
+    rebuilt = ParamEnsemble.from_dict(written)
+    np.testing.assert_array_equal(
+        rebuilt.build_morris_samples(), morris_ensemble.build_morris_samples()
     )
