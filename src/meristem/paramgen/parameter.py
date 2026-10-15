@@ -471,10 +471,9 @@ class Parameter(ABC):
         """
         if self.spec.precision is None:
             return value
-        decimals = int(self.spec.precision[1:-1])  # '.4f' means 4 decimals
         if isinstance(value, list):
-            return [np.round(v, decimals) for v in value]
-        return np.round(value, decimals)
+            return [np.round(v, self.spec.precision) for v in value]
+        return np.round(value, self.spec.precision)
 
 
 # ----------------------------------------------------------------------------------------

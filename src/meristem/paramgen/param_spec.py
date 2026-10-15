@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import numbers
+import re
 from dataclasses import dataclass
 from typing import Optional
 import math
@@ -59,8 +61,8 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
     root_param: str | None
         For 'scale_from_root' param_type: the parameter to scale from
         None for all other types.
-    prcision: str | None
-        The precision (i.e., rounding) for the parameter. Defaults to None.
+    precision: int | None
+        The number of decimal places to write out. Defaults to None.
     group_name: str | None
         Optional group name, which is used to scale parameters together. Defaults to None.
     pft_dim: str | None
@@ -82,7 +84,7 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
     slice_index: Optional[int]
     root_param: Optional[str]
     base_params: list[str]
-    precision: Optional[str]
+    precision: Optional[int]
     group_name: Optional[str]
     pft_dim: Optional[str] = None
 
@@ -148,7 +150,7 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
             slice_index=_parse_optional_int(row.get("slice_index")),
             base_params=_parse_list(row.get("base_params", "")),
             root_param=_parse_optional_str(row.get("root_param")),
-            precision=_parse_precision(row.get("precision")),
+            precision=_parse_precision(row.get("precision"), row["parameter_name"]),
             group_name=_parse_optional_str(row.get("group_name")),
             pft_dim=_parse_optional_str(row.get("pft_dim")),
         )
@@ -281,21 +283,34 @@ def _parse_optional_str(value: str | None) -> Optional[str]:
     return s if s else None
 
 
-def _parse_precision(value: str | None) -> Optional[str]:
-    """Parse a precision string like '.2f' or '0.2f' into a normalized '.Nf' string.
+def _parse_precision(value: str | float | None, name: str) -> Optional[int]:
+    """Parse a precision string like '.2f' or '0.2f' or '2' into a number of decimal places.
 
     Args:
-        value (str | None): Raw precision cell value.
+        value (str | float | None): Raw precision cell value.
+        name (str): Parameter name, used in the error message.
+
+    Raises:
+        ValueError: If value isn't one of the accepted forms.
 
     Returns:
-        Optional[str]: Normalized precision string, or None if blank/null.
+        Optional[int]: Number of decimal places, or None if blank/null.
     """
     if value is None or (isinstance(value, float) and _is_nan(value)):
         return None
-    s = str(value).strip()
-    if not s:
-        return None
-    # normalize '0.2f' to '.2f'
-    if s.startswith("0."):
-        s = s[1:]
-    return s
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        # numeric cells, e.g. 4.0 when pandas reads an all-numeric column
+        number = float(value)
+        if number.is_integer() and number >= 0:
+            return int(number)
+    elif isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        match = re.fullmatch(r"0?\.(\d+)f|(\d+)", s)
+        if match:
+            return int(match.group(1) or match.group(2))
+    raise ValueError(
+        f"Parameter '{name}': precision must be a number of decimal places, "
+        f"written '.Nf', '0.Nf' or an integer N, got {value!r}."
+    )

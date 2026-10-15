@@ -396,6 +396,17 @@ def test_set_value_applies_precision(default_row, param_dataset, working_param_d
     assert result[0] == pytest.approx(0.12)
 
 
+def test_set_value_applies_integer_precision(
+    default_row, param_dataset, working_param_dataset
+):
+    """set_value rounds to an integer precision, as from a numeric CSV cell."""
+    default_row["precision"] = 2
+    param = Parameter.from_row(default_row, param_dataset)
+    param.set_value(working_param_dataset, param_dataset, 0.123456)
+    result = working_param_dataset["fates_leaf_slatop"].values
+    assert result[0] == pytest.approx(0.12)
+
+
 def test_set_value_no_precision_unchanged(
     default_row, param_dataset, working_param_dataset
 ):

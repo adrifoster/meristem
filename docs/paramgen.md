@@ -62,7 +62,7 @@ A folder containing CSV files that describe which parameters to vary:
 | `slice_index` | For `sliced` type: which index along `slice_dim` to target |
 | `base_params` | For `sliced`, `scale_from_root`, and `joint` types: the underlying NetCDF variable(s) being modified |
 | `root_param` | For `scale_from_root` type: the parameter to scale from |
-| `precision` | Optional rounding precision for output values, e.g. `.4f` rounds to 4 decimal places |
+| `precision` | Optional number of decimal places to round output values to, written `.4f`, `0.4f` or `4` |
 
 ### 3. (*optional*) Posterior source files and a posterior sources configuration file
 
