@@ -1,6 +1,7 @@
 """End-to-end integration tests for meristem.paramgen."""
 
 from __future__ import annotations
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -260,63 +261,73 @@ def test_grouped_params_move_together(grouped_param_dir, default_param_file, tmp
 # ===========================================================================
 
 
+def _copy_example(name: str, tmp_path: Path) -> Path:
+    """Copy an example into tmp_path, without any earlier outputs, so the CLI
+    runs from a clean directory and doesn't write into the repo."""
+    dest = tmp_path / name
+    shutil.copytree(
+        EXAMPLES_DIR / name, dest, ignore=shutil.ignore_patterns("output_*")
+    )
+    return dest
+
+
 @pytest.mark.slow
-def test_cli_clm_lh_example():
+def test_cli_clm_lh_example(tmp_path):
     """Full CLI run against the CLM Latin Hypercube example."""
+    example = _copy_example("clm_example", tmp_path)
     result = subprocess.run(
         ["meristem", "paramgen", "lh_config.yaml"],
-        cwd=EXAMPLES_DIR / "clm_example",
+        cwd=example,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
-    output_files = list(
-        (EXAMPLES_DIR / "clm_example" / "output_LH").glob("clm_lh_*.nc")
-    )
+    output_files = list((example / "output_LH").glob("clm_lh_*.nc"))
     assert len(output_files) == 20
 
 
 @pytest.mark.slow
-def test_cli_clm_oat_example():
+def test_cli_clm_oat_example(tmp_path):
     """Full CLI run against the CLM OAT example."""
+    example = _copy_example("clm_example", tmp_path)
     result = subprocess.run(
         ["meristem", "paramgen", "oat_config.yaml"],
-        cwd=EXAMPLES_DIR / "clm_example",
+        cwd=example,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
-    key_file = EXAMPLES_DIR / "clm_example" / "output_OAT" / "clm_oat_key.csv"
-    assert key_file.exists()
+    assert (example / "output_OAT" / "clm_oat_key.csv").exists()
 
 
 @pytest.mark.slow
-def test_cli_fates_lh_example():
+def test_cli_fates_lh_example(tmp_path):
     """Full CLI run against the FATES Latin Hypercube example."""
+    example = _copy_example("fates_example", tmp_path)
     result = subprocess.run(
         ["meristem", "paramgen", "lh_config.yaml"],
-        cwd=EXAMPLES_DIR / "fates_example",
+        cwd=example,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
-    output_files = list((EXAMPLES_DIR / "fates_example" / "output_LH").glob("*.json"))
+    output_files = list((example / "output_LH").glob("fates_lh_*.json"))
     assert len(output_files) == 20
 
 
 @pytest.mark.slow
-def test_cli_fates_oat_example():
+def test_cli_fates_oat_example(tmp_path):
     """Full CLI run against the FATES OAT example."""
+    example = _copy_example("fates_example", tmp_path)
     result = subprocess.run(
         ["meristem", "paramgen", "oat_config.yaml"],
-        cwd=EXAMPLES_DIR / "fates_example",
+        cwd=example,
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, f"CLI failed:\n{result.stderr}"
-    key_file = EXAMPLES_DIR / "fates_example" / "output_OAT" / "fates_oat_key.csv"
-    assert key_file.exists()
+    assert (example / "output_OAT" / "fates_oat_key.csv").exists()

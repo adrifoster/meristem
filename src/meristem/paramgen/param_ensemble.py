@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from abc import ABC, abstractmethod
+import re
 import warnings
 
 from tqdm import tqdm
@@ -92,7 +93,8 @@ class ParamEnsemble(ABC):
     Attributes
     ----------
     ensemble_dir : Path
-        Path to where parameter files will be written out
+        Path to where parameter files will be written out. Created by
+        create_ensemble, not on construction.
     file_prefix: str
         Prefix for output filenames, e.g. 'my_ensemble' produces 'my_ensemble_0001.nc', etc.
     default_ds: ParameterDataset
@@ -142,11 +144,8 @@ class ParamEnsemble(ABC):
                 )
             main = main[main.parameter_name.isin(config.param_list)].copy()
 
-        # create output directory if it doesn't exit yet
+        # set attributes; ensemble_dir is created by create_ensemble
         self.ensemble_dir = Path(config.ensemble_dir)
-        self.ensemble_dir.mkdir(parents=True, exist_ok=True)
-
-        # set attributes
         self.file_prefix = config.file_prefix
 
         if not config.default_param_file.exists():
@@ -275,12 +274,34 @@ class ParamEnsemble(ABC):
                 )
         return ds
 
-    def create_ensemble(self):
+    def create_ensemble(self, overwrite: bool = False):
         """Create and write out all ensemble parameter files
 
+        Creates ensemble_dir if needed. Outputs from an earlier ensemble with the
+        same file_prefix (member files, key, list, and config) are only replaced if
+        overwrite is True, in which case they're deleted first.
+
         Args:
-            ensemble parameter files.
+            overwrite (bool, optional): Delete and replace an existing ensemble with
+                this file_prefix in ensemble_dir. Defaults to False.
+
+        Raises:
+            FileExistsError: If outputs for this file_prefix exist and overwrite is
+                False.
         """
+        existing = _existing_outputs(self.ensemble_dir, self.file_prefix)
+        if existing and not overwrite:
+            shown = ", ".join(p.name for p in existing[:5])
+            more = f" and {len(existing) - 5} more" if len(existing) > 5 else ""
+            raise FileExistsError(
+                f"An ensemble with file_prefix '{self.file_prefix}' already exists in "
+                f"{self.ensemble_dir} ({shown}{more}). Pass overwrite=True "
+                "(or --overwrite on the command line) to replace it."
+            )
+        for path in existing:
+            path.unlink()
+        self.ensemble_dir.mkdir(parents=True, exist_ok=True)
+
         self.write_config()
         samples = self.create_samples()
         for i, sample in tqdm(enumerate(samples), total=len(samples), unit="member"):
@@ -315,6 +336,7 @@ class ParamEnsemble(ABC):
             "ensemble_type": self.ensemble_type,
             **{k: _to_yaml_value(v) for k, v in asdict(self.config).items()},
         }
+        self.ensemble_dir.mkdir(parents=True, exist_ok=True)
         path = self.ensemble_dir / f"{self.file_prefix}_config.yaml"
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(out, f, sort_keys=False)
@@ -858,6 +880,35 @@ def _to_yaml_value(value):
     if isinstance(value, (list, tuple)):
         return [_to_yaml_value(v) for v in value]
     return value
+
+
+def _existing_outputs(out_dir: Path, file_prefix: str) -> list[Path]:
+    """Return the files in out_dir written by an ensemble with this file_prefix.
+
+    Matches the member list, key, and config, plus member files named exactly
+    '{file_prefix}_NNNN.nc' or '.json', so files from other prefixes (e.g.
+    '{file_prefix}_2_0000.nc') are never matched.
+
+    Args:
+        out_dir (Path): ensemble output directory
+        file_prefix (str): ensemble file prefix
+
+    Returns:
+        list[Path]: matching files, sorted by name; empty if out_dir doesn't exist
+    """
+    if not out_dir.is_dir():
+        return []
+    fixed = {
+        f"{file_prefix}.txt",
+        f"{file_prefix}_key.csv",
+        f"{file_prefix}_config.yaml",
+    }
+    member = re.compile(re.escape(file_prefix) + r"_\d{4,}\.(nc|json)")
+    return sorted(
+        path
+        for path in out_dir.iterdir()
+        if path.is_file() and (path.name in fixed or member.fullmatch(path.name))
+    )
 
 
 def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:

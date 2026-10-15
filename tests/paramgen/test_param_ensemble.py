@@ -18,6 +18,7 @@ from meristem.paramgen.param_ensemble import (
     EnsembleMemberSample,
     ParameterSample,
     ParamGroup,
+    _existing_outputs,
 )
 
 from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
@@ -129,10 +130,10 @@ def test_from_dict_invalid_oat(
         )
 
 
-def test_from_dict_valid_latin_hypercube_creates_ensemble_dir(
+def test_ensemble_dir_created_by_create_ensemble_not_construction(
     ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
 ):
-    """Test that from_dict creates the ensemble_dir"""
+    """Constructing an ensemble doesn't create ensemble_dir; create_ensemble does"""
     ensemble = ParamEnsemble.from_dict(
         {
             "ensemble_type": "LatinHypercube",
@@ -145,7 +146,27 @@ def test_from_dict_valid_latin_hypercube_creates_ensemble_dir(
         }
     )
     assert isinstance(ensemble.ensemble_dir, Path)
+    assert not ensemble.ensemble_dir.exists()
+    ensemble.create_ensemble()
     assert ensemble.ensemble_dir.exists()
+
+
+def test_failed_construction_leaves_no_ensemble_dir(
+    ensemble_param_dir, default_param_file, tmp_path
+):
+    """An invalid config raises without creating ensemble_dir"""
+    with pytest.raises(ValueError, match="param_list"):
+        ParamEnsemble.from_dict(
+            {
+                "ensemble_type": "LatinHypercube",
+                "param_dir": str(ensemble_param_dir),
+                "ensemble_dir": str(tmp_path / "ensemble"),
+                "file_prefix": "test",
+                "default_param_file": str(default_param_file),
+                "param_list": ["not_a_real_param"],
+            }
+        )
+    assert not (tmp_path / "ensemble").exists()
 
 
 def test_from_dict_valid_latin_hypercube_correctly_sets_attributes(
@@ -1016,3 +1037,104 @@ def test_from_dict_matching_version_does_not_warn(lh_ensemble, recwarn):
     lh_ensemble.write_config()
     ParamEnsemble.from_dict(_read_written_config(lh_ensemble))
     assert not [w for w in recwarn if "meristem" in str(w.message)]
+
+
+# =============================================================================
+# existing outputs and overwrite
+# =============================================================================
+
+
+def _lh_with_members(param_dir, default_file, tmp_path, posterior_file, members):
+    """A LatinHypercube ensemble with prefix 'test' writing to tmp_path / 'ensemble'."""
+    return LatinHypercubeEnsemble(
+        LatinHypercubeConfig(
+            param_dir=param_dir,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_file,
+            posterior_sources=posterior_file,
+            ensemble_members=members,
+        )
+    )
+
+
+def test_existing_outputs_missing_dir_is_empty(tmp_path):
+    """_existing_outputs returns nothing for a directory that doesn't exist."""
+    assert _existing_outputs(tmp_path / "missing", "test") == []
+
+
+def test_existing_outputs_matches_only_this_prefix(tmp_path):
+    """_existing_outputs matches this prefix's list, key, config, and members only."""
+    matched = [
+        "test.txt",
+        "test_key.csv",
+        "test_config.yaml",
+        "test_0000.nc",
+        "test_0001.json",
+        "test_10000.nc",
+    ]
+    not_matched = [
+        "test_2_0000.nc",
+        "test_0000.txt",
+        "test_abc.nc",
+        "other_0000.nc",
+        "test_00.nc",
+        "notes.md",
+    ]
+    for name in matched + not_matched:
+        (tmp_path / name).touch()
+    assert [p.name for p in _existing_outputs(tmp_path, "test")] == sorted(matched)
+
+
+def test_create_ensemble_refuses_existing_without_overwrite(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """A second run with the same prefix raises and leaves the first run's files."""
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    _lh_with_members(*args, members=5).create_ensemble()
+    before = {p.name: p.stat().st_mtime_ns for p in (tmp_path / "ensemble").iterdir()}
+
+    with pytest.raises(FileExistsError, match="--overwrite"):
+        _lh_with_members(*args, members=5).create_ensemble()
+    after = {p.name: p.stat().st_mtime_ns for p in (tmp_path / "ensemble").iterdir()}
+    assert after == before
+
+
+def test_create_ensemble_overwrite_removes_stale_members(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Overwriting with a smaller ensemble leaves no members from the earlier run."""
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    _lh_with_members(*args, members=5).create_ensemble()
+    _lh_with_members(*args, members=3).create_ensemble(overwrite=True)
+
+    ens_dir = tmp_path / "ensemble"
+    assert sorted(p.stem for p in ens_dir.glob("test_0*.*")) == [
+        "test_0000",
+        "test_0001",
+        "test_0002",
+    ]
+    for name in ["test.txt", "test_key.csv", "test_config.yaml"]:
+        assert (ens_dir / name).exists()
+    assert (ens_dir / "test.txt").read_text().split() == [
+        "test_0000",
+        "test_0001",
+        "test_0002",
+    ]
+
+
+def test_create_ensemble_ignores_and_keeps_other_prefixes(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Other prefixes' files neither block a run nor get deleted by an overwrite."""
+    ens_dir = tmp_path / "ensemble"
+    ens_dir.mkdir()
+    others = ["other_0000.nc", "test_2_0000.nc", "notes.md"]
+    for name in others:
+        (ens_dir / name).write_text("keep")
+
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    _lh_with_members(*args, members=3).create_ensemble()
+    _lh_with_members(*args, members=3).create_ensemble(overwrite=True)
+    for name in others:
+        assert (ens_dir / name).read_text() == "keep"
