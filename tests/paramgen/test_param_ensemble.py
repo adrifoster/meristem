@@ -877,3 +877,49 @@ def test_grouped_expanded_params_key_has_per_index_columns(
     key = ensemble.create_ensemble_key(ensemble.create_samples())
     assert {"water_0", "water_1", "water_2"} <= set(key.columns)
     assert "water" not in key.columns
+
+
+# =============================================================================
+# seed
+# =============================================================================
+
+
+def _lh_with_seed(param_dir, default_file, tmp_path, posterior_file, seed):
+    """A small LatinHypercube ensemble with the given seed."""
+    return LatinHypercubeEnsemble(
+        LatinHypercubeConfig(
+            param_dir=param_dir,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_file,
+            posterior_sources=posterior_file,
+            ensemble_members=5,
+            seed=seed,
+        )
+    )
+
+
+def test_lh_same_seed_gives_same_sample(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Two ensembles built with the same seed give identical LH matrices,
+    and a different seed gives a different one
+    """
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    lh_a = _lh_with_seed(*args, seed=42).build_lh()
+    lh_b = _lh_with_seed(*args, seed=42).build_lh()
+    lh_c = _lh_with_seed(*args, seed=43).build_lh()
+    np.testing.assert_array_equal(lh_a, lh_b)
+    assert not np.array_equal(lh_a, lh_c)
+
+
+def test_lh_seed_none_generates_seed(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """With no seed given, the ensemble generates one that reproduces its sample."""
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    ensemble = _lh_with_seed(*args, seed=None)
+    assert isinstance(ensemble.seed, int)
+    np.testing.assert_array_equal(
+        ensemble.build_lh(), _lh_with_seed(*args, seed=ensemble.seed).build_lh()
+    )

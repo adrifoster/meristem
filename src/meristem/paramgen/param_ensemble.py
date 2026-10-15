@@ -428,7 +428,8 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         (n_samples, n_params). If supplied, this matrix is used directly
         instead of generating a new one. Useful for reproducibility or
         when the LH matrix was generated externally.
-
+    seed: int | None
+        Optional seed for reproducibility
     """
 
     def __init__(
@@ -438,6 +439,10 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         super().__init__(config)
         self.n_samples = config.ensemble_members
         self.prebuilt = config.prebuilt
+        self.seed = config.seed
+
+        if self.seed is None:
+            self.seed = np.random.SeedSequence().entropy
 
     @classmethod
     def from_config(cls, config: dict) -> LatinHypercubeEnsemble:
@@ -566,7 +571,9 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
             return prebuilt
 
         # otherwise generate one
-        return qmc.LatinHypercube(d=self.num_sampling_units).random(n=self.n_samples)
+        return qmc.LatinHypercube(d=self.num_sampling_units, rng=self.seed).random(
+            n=self.n_samples
+        )
 
 
 class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
@@ -706,9 +713,11 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         number of grid levels that partition each sampling unit's [0, 1] range.
         Must be an even number.
     optimal_trajectories : int | None
-        If set, select this many trajectories (between 2 and morris_n) from the
+        If set, select this many trajectories (at least 2 and less than morris_n) from the
         morris_n generated, chosen to maximize their spread. If None, all
         morris_n trajectories are used.
+    seed : int | None
+        optional seed for reproducibility
     """
 
     def __init__(
@@ -719,6 +728,10 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         self.morris_n = config.morris_n
         self.levels = config.levels
         self.optimal_trajectories = config.optimal_trajectories
+        self.seed = config.seed
+
+        if self.seed is None:
+            self.seed = np.random.SeedSequence().entropy
 
     @classmethod
     def from_config(cls, config: dict) -> MorrisEnsemble:
@@ -841,6 +854,7 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
             N=self.morris_n,
             num_levels=self.levels,
             optimal_trajectories=self.optimal_trajectories,
+            seed=self.seed,
         )
 
 

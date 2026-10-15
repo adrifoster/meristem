@@ -13,7 +13,7 @@ dependencies = [
 "xarray",
 "numpy",
 "SALib",
-"scipy",
+"scipy>=1.15",
 "pandas",
 "pyyaml",
 "jinja2",

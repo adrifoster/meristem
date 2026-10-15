@@ -12,9 +12,13 @@ from meristem.paramgen.diagnostics import (
     _expand_normalized,
     normalize_defaults,
     plot_param_bounds,
+    read_ensemble_values,
 )
 from meristem.paramgen.parameter import Parameter
-from meristem.paramgen.parameter_dataset import NetCDFParameterDataset
+from meristem.paramgen.parameter_dataset import (
+    NetCDFParameterDataset,
+    ParameterDataset,
+)
 
 
 def test_plot_param_bounds_returns_figure(ensemble_param_dir, default_param_file):
@@ -293,3 +297,49 @@ def test_expand_normalized_pft_index_keeps_non_pft_param_whole():
     param = _two_dim_param(["leafage", "plant_type"])
     rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3), pft_index=0)
     assert len(rows) == 6
+
+
+def test_read_ensemble_values_matches_member_files(lh_ensemble):
+    """read_ensemble_values returns each member's values as written to its file,
+    keeping only the values that vary across members
+    """
+    lh_ensemble.create_ensemble()
+    ens_dir = lh_ensemble.ensemble_dir
+    df = read_ensemble_values(ens_dir, "test")
+
+    assert list(df.index) == [f"test_{i:04d}" for i in range(5)]
+    assert "fates_leaf_slatop_0" in df.columns
+    assert (df.nunique() > 1).all()
+    ext = lh_ensemble.default_ds.file_extension
+    for member in df.index:
+        ds = ParameterDataset.from_path(ens_dir / f"{member}{ext}")
+        np.testing.assert_allclose(
+            df.loc[member, ["fates_leaf_slatop_0", "fates_leaf_slatop_1"]],
+            ds["fates_leaf_slatop"].values[:2],
+        )
+        ds.close()
+
+
+def test_read_ensemble_values_variables_and_keep_constant(lh_ensemble):
+    """read_ensemble_values reads only the listed variables and, with
+    drop_constant=False, keeps every element
+    """
+    lh_ensemble.create_ensemble()
+    df = read_ensemble_values(
+        lh_ensemble.ensemble_dir,
+        "test",
+        variables=["fates_leaf_slatop"],
+        drop_constant=False,
+    )
+    assert list(df.columns) == [
+        "fates_leaf_slatop_0",
+        "fates_leaf_slatop_1",
+        "fates_leaf_slatop_2",
+    ]
+
+
+def test_read_ensemble_values_missing_member_file_raises(tmp_path):
+    """read_ensemble_values raises when a listed member has no parameter file."""
+    (tmp_path / "test.txt").write_text("test_0000\n")
+    with pytest.raises(FileNotFoundError, match="test_0000"):
+        read_ensemble_values(tmp_path, "test")

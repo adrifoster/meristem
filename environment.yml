@@ -3,7 +3,7 @@ channels: [conda-forge]
 dependencies:
   - python=3.12
   - numpy
-  - scipy
+  - scipy>=1.15
   - pandas
   - pyyaml
   - jupyterlab

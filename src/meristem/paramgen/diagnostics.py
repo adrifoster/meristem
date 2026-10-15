@@ -10,18 +10,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 
 from .parameter import Parameter
 from .parameter_dataset import ParameterDataset
 from .utils import read_param_list, read_posterior_sources
-
-try:
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-
-    HAS_MATPLOTLIB = True
-except ImportError:  # pragma: no cover
-    HAS_MATPLOTLIB = False
 
 _CATEGORY_COLORS = {
     "acclimation": "#5BA8A0",
@@ -168,6 +162,73 @@ def normalize_defaults(
     return pd.DataFrame(rows, columns=["parameter", "normalized_value", "category"])
 
 
+def read_ensemble_values(
+    ensemble_dir: Path,
+    file_prefix: str,
+    variables: list[str] | None = None,
+    drop_constant: bool = True,
+) -> pd.DataFrame:
+    """Read each ensemble member's physical parameter values from its file.
+
+    Values come from the generated parameter files, not from the ensemble key, so
+    they don't depend on main.csv, the default file, or posterior files staying
+    unchanged. Array values get one column per element, labelled by their index
+    along each dimension (e.g. 'name_1_2').
+
+    Args:
+        ensemble_dir (Path): Directory the ensemble was written to.
+        file_prefix (str): The ensemble's file prefix. Members are read from
+            '{file_prefix}.txt' in ensemble_dir.
+        variables (list[str] | None, optional): Variables to read. If None, all
+            numeric variables are read. Defaults to None.
+        drop_constant (bool, optional): Drop columns with the same value in every
+            member, leaving only what was perturbed. Defaults to True.
+
+    Raises:
+        FileNotFoundError: If the member list or a member's file is missing.
+
+    Returns:
+        pd.DataFrame: One row per member, indexed by member name, with one column
+            per parameter value.
+    """
+    ensemble_dir = Path(ensemble_dir)
+    members = (ensemble_dir / f"{file_prefix}.txt").read_text().split()
+
+    rows = {}
+    for member in members:
+        path = next(
+            (
+                ensemble_dir / f"{member}{ext}"
+                for ext in (".nc", ".json")
+                if (ensemble_dir / f"{member}{ext}").exists()
+            ),
+            None,
+        )
+        if path is None:
+            raise FileNotFoundError(
+                f"No parameter file (.nc or .json) for member '{member}' "
+                f"in {ensemble_dir}."
+            )
+        ds = ParameterDataset.from_path(path)
+        try:
+            row = {}
+            for var in variables if variables is not None else ds.data_vars:
+                arr = np.asarray(ds[var].values)
+                if variables is None and not np.issubdtype(arr.dtype, np.number):
+                    continue
+                for idx in np.ndindex(arr.shape):
+                    row["_".join([var, *(str(i) for i in idx)])] = arr[idx]
+            rows[member] = row
+        finally:
+            ds.close()
+
+    df = pd.DataFrame.from_dict(rows, orient="index")
+    df.index.name = "ensemble"
+    if drop_constant and len(df) > 1:
+        df = df.loc[:, df.nunique(dropna=False) > 1]
+    return df
+
+
 def _build_legend(present_cats: list[str], category_colors: dict, default_color: str):
     """Build legend elements for plot_param_bounds."""
     elements = [
@@ -230,11 +291,6 @@ def plot_param_bounds(df: pd.DataFrame):
     Returns:
         matplotlib.figure.Figure: The figure object.
     """
-    if not HAS_MATPLOTLIB:
-        raise ImportError(
-            "matplotlib is required for plotting. "
-            "Install it with: conda install matplotlib"
-        )  # pragma: no cover
 
     df = df.sort_values(by="category")
     n_params = len(df)

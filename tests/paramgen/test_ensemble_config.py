@@ -109,3 +109,113 @@ def test_morris_config_paths_coerced(base_paths):
     assert isinstance(config.param_dir, Path)
     assert isinstance(config.ensemble_dir, Path)
     assert isinstance(config.default_param_file, Path)
+
+
+# =============================================================================
+# input validation
+# =============================================================================
+
+
+@pytest.mark.parametrize("file_prefix", ["", "a/b", None, 3])
+def test_ensemble_config_bad_file_prefix_raises(base_paths, file_prefix):
+    """file_prefix must be a non-empty string without '/'."""
+    base_paths["file_prefix"] = file_prefix
+    with pytest.raises(ValueError, match="file_prefix"):
+        EnsembleConfig(**base_paths)
+
+
+@pytest.mark.parametrize("param_list", ["fates_leaf_slatop", [], ["a", 1]])
+def test_ensemble_config_bad_param_list_raises(base_paths, param_list):
+    """param_list must be a non-empty list of names; a bare string is rejected."""
+    with pytest.raises(ValueError, match="param_list"):
+        EnsembleConfig(**base_paths, param_list=param_list)
+
+
+@pytest.mark.parametrize(
+    "fixed_indices",
+    [[0, 1], {"fates_pft": [0, 1.5]}, {"fates_pft": "0"}, {"fates_pft": [True]}],
+)
+def test_ensemble_config_bad_fixed_indices_raises(base_paths, fixed_indices):
+    """fixed_indices must map dimension names to lists of integers."""
+    with pytest.raises(ValueError, match="fixed_indices"):
+        EnsembleConfig(**base_paths, fixed_indices=fixed_indices)
+
+
+@pytest.mark.parametrize("fixed_indices", [{"fates_pft": [0, 2]}, {"fates_pft": 1}])
+def test_ensemble_config_fixed_indices_accepted(base_paths, fixed_indices):
+    """fixed_indices accepts a list of integers or a single integer per dimension."""
+    config = EnsembleConfig(**base_paths, fixed_indices=fixed_indices)
+    assert config.fixed_indices == fixed_indices
+
+
+@pytest.mark.parametrize("config_cls", [LatinHypercubeConfig, MorrisEnsembleConfig])
+@pytest.mark.parametrize("seed", [-1, 1.5, "42", True])
+def test_config_bad_seed_raises(base_paths, config_cls, seed):
+    """seed must be a non-negative integer or None."""
+    with pytest.raises(ValueError, match="seed"):
+        config_cls(**base_paths, seed=seed)
+
+
+@pytest.mark.parametrize("config_cls", [LatinHypercubeConfig, MorrisEnsembleConfig])
+@pytest.mark.parametrize("seed", [None, 0, 42, np.int64(7)])
+def test_config_seed_accepted(base_paths, config_cls, seed):
+    """seed accepts None, zero, and Python or numpy integers."""
+    assert config_cls(**base_paths, seed=seed).seed == seed
+
+
+@pytest.mark.parametrize("ensemble_members", [0, -5, 10.0, "10", True])
+def test_latin_hypercube_config_bad_ensemble_members_raises(
+    base_paths, ensemble_members
+):
+    """ensemble_members must be a positive integer."""
+    with pytest.raises(ValueError, match="ensemble_members"):
+        LatinHypercubeConfig(**base_paths, ensemble_members=ensemble_members)
+
+
+@pytest.mark.parametrize(
+    "prebuilt, match",
+    [
+        (np.full(5, 0.5), "2-D"),
+        (np.full((4, 3), 0.5), "rows"),
+        (np.full((5, 3), 1.5), r"\[0, 1\]"),
+        (np.full((5, 3), np.nan), r"\[0, 1\]"),
+    ],
+)
+def test_latin_hypercube_config_bad_prebuilt_raises(base_paths, prebuilt, match):
+    """prebuilt must be 2-D, have ensemble_members rows, and lie in [0, 1]."""
+    with pytest.raises(ValueError, match=match):
+        LatinHypercubeConfig(**base_paths, ensemble_members=5, prebuilt=prebuilt)
+
+
+def test_latin_hypercube_config_prebuilt_list_converted(base_paths):
+    """A prebuilt nested list is converted to a float array."""
+    config = LatinHypercubeConfig(
+        **base_paths, ensemble_members=2, prebuilt=[[0, 1], [1, 0]]
+    )
+    assert isinstance(config.prebuilt, np.ndarray)
+    assert config.prebuilt.dtype == float
+
+
+@pytest.mark.parametrize("morris_n", [0, -1, 4.0, True])
+def test_morris_config_bad_morris_n_raises(base_paths, morris_n):
+    """morris_n must be a positive integer."""
+    with pytest.raises(ValueError, match="morris_n"):
+        MorrisEnsembleConfig(**base_paths, morris_n=morris_n)
+
+
+@pytest.mark.parametrize("levels", [4.0, "4", True])
+def test_morris_config_non_integer_levels_raises(base_paths, levels):
+    """levels must be an integer."""
+    with pytest.raises(ValueError, match="levels must be a positive even number"):
+        MorrisEnsembleConfig(**base_paths, levels=levels)
+
+
+@pytest.mark.parametrize("optimal_trajectories", [1, 3.0, 10, 11])
+def test_morris_config_bad_optimal_trajectories_raises(
+    base_paths, optimal_trajectories
+):
+    """optimal_trajectories must be an integer, at least 2 and less than morris_n."""
+    with pytest.raises(ValueError, match="optimal_trajectories"):
+        MorrisEnsembleConfig(
+            **base_paths, morris_n=10, optimal_trajectories=optimal_trajectories
+        )
