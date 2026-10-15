@@ -486,6 +486,42 @@ def test_stage_config_roundtrip_full(full_stage_config):
     assert StageConfig.from_dict(full_stage_config.to_dict()) == full_stage_config
 
 
+def test_stage_config_roundtrip_command(command_stage_config_dict):
+    """Test that a command-only StageConfig round trips without gaining a script"""
+    stage_config = StageConfig.from_dict(command_stage_config_dict)
+    roundtrip = StageConfig.from_dict(stage_config.to_dict())
+    assert roundtrip == stage_config
+    assert roundtrip.script is None
+    assert roundtrip.command == command_stage_config_dict["command"]
+
+
+def test_stage_config_to_dict_script_none_for_command(command_stage_config_dict):
+    """Test that to_dict keeps an unset script as None, not the string 'None'"""
+    stage_dict = StageConfig.from_dict(command_stage_config_dict).to_dict()
+    assert stage_dict["script"] is None
+
+
+def test_stage_config_command_without_script_is_valid(command_stage_config_dict):
+    """Test that a StageConfig with only a command constructs and validates"""
+    stage_config = StageConfig.from_dict(command_stage_config_dict)
+    assert stage_config.script is None
+    stage_config.validate()
+
+
+def test_stage_config_neither_script_nor_command_raises(minimal_stage_config_dict):
+    """Test that a StageConfig with neither script nor command raises a ValueError"""
+    config = {k: v for k, v in minimal_stage_config_dict.items() if k != "script"}
+    with pytest.raises(ValueError, match="either script or command"):
+        StageConfig.from_dict(config)
+
+
+def test_stage_config_script_and_command_raises(minimal_stage_config_dict):
+    """Test that a StageConfig with both script and command raises a ValueError"""
+    config = {**minimal_stage_config_dict, "command": "echo hi"}
+    with pytest.raises(ValueError, match="both script and command"):
+        StageConfig.from_dict(config)
+
+
 def test_stage_config_from_dict_defaults_kind_to_custom(minimal_stage_config_dict):
     """Test that StageConfig initiated without a kind defaults to CUSTOM"""
     # kind absent from dict should default to "custom"

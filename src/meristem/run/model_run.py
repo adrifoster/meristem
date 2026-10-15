@@ -24,8 +24,20 @@ _ENV = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
 )
-# quote a value for safe use as a single shell word in job scripts
-_ENV.filters["shquote"] = lambda value: shlex.quote(str(value))
+
+
+def _shquote(value) -> str:
+    """Quote a value for safe use as a single shell word in job scripts
+
+    Raises:
+        ValueError: if value is None, rather than silently rendering 'None'
+    """
+    if value is None:
+        raise ValueError("cannot shell-quote None in a job script template")
+    return shlex.quote(str(value))
+
+
+_ENV.filters["shquote"] = _shquote
 
 # state file name
 _STATE_FILE = "run_state.json"
@@ -564,6 +576,7 @@ class ModelRun:
             cime=not stage.config.no_cime,
             skip_script=skip_script,
             submit_args=stage.config.submit_args,
+            command=stage.config.command,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file

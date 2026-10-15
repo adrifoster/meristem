@@ -27,9 +27,15 @@ echo "=== Run: {{ run_id }} / stage: {{ name }} ==="
 echo "=== Started: $(date) ==="
 
 {% if not skip_script %}
+{% if command %}
+# built-in setup command (e.g. meristem ensemble prepare)
+# strict mode is enforced, matching the setup script path
+bash -c {{ ("set -euo pipefail; " ~ command) | shquote }}
+{% else %}
 # create, configure, and build the CIME case
 # strict mode is enforced even if the user's script doesn't set it
 bash -c 'set -euo pipefail; source "$0" "$@"' {{ script | shquote }} {{ case_root | shquote }}{% if previous_case %} {{ previous_case | shquote }} {{ previous_case_root | shquote }}{% endif +%}
+{% endif %}
 {% endif %}
 
 {% if cime %}
