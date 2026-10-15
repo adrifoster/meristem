@@ -6,8 +6,15 @@ import numpy as np
 import pytest
 import pandas as pd
 import matplotlib.pyplot as plt
+import xarray as xr
 
-from meristem.paramgen.diagnostics import normalize_defaults, plot_param_bounds
+from meristem.paramgen.diagnostics import (
+    _expand_normalized,
+    normalize_defaults,
+    plot_param_bounds,
+)
+from meristem.paramgen.parameter import Parameter
+from meristem.paramgen.parameter_dataset import NetCDFParameterDataset
 
 
 def test_plot_param_bounds_returns_figure(ensemble_param_dir, default_param_file):
@@ -236,3 +243,53 @@ def test_normalize_defaults_filters_nan_values(tmp_path, default_param_file):
     df = normalize_defaults(tmp_path, default_param_file)
     assert len(df) == 3
     assert not df["normalized_value"].isna().any()
+
+
+def _two_dim_param(dims: list[str], pft_dim: str | None = None) -> Parameter:
+    """A (2, 3) default parameter 'v' on the given dimensions."""
+    ds = NetCDFParameterDataset(xr.Dataset({"v": (dims, np.ones((2, 3)))}))
+    row = pd.Series(
+        {
+            "parameter_name": "v",
+            "subcategory": "photosynthesis",
+            "coord": str(dims),
+            "param_type": "default",
+            "strategy": "uniform",
+            "param_min": "0",
+            "param_max": "1",
+            "pft_dim": pft_dim,
+        }
+    )
+    return Parameter.from_row(row, ds)
+
+
+def test_expand_normalized_labels_2d_by_dimension_index():
+    """2-D values are labelled by their index along each dimension."""
+    param = _two_dim_param(["leafage", "fates_pft"])
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3))
+    assert [(name, val) for name, val, _ in rows] == [
+        ("v_0_0", 0.0),
+        ("v_0_1", 1.0),
+        ("v_0_2", 2.0),
+        ("v_1_0", 3.0),
+        ("v_1_1", 4.0),
+        ("v_1_2", 5.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "dims, pft_dim",
+    [(["leafage", "fates_pft"], None), (["leafage", "plant_type"], "plant_type")],
+)
+def test_expand_normalized_pft_index_filters_along_pft_dim(dims, pft_dim):
+    """pft_index selects along the PFT dimension, not by flat position."""
+    param = _two_dim_param(dims, pft_dim=pft_dim)
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3), pft_index=2)
+    assert [(name, val) for name, val, _ in rows] == [("v_0", 2.0), ("v_1", 5.0)]
+
+
+def test_expand_normalized_pft_index_keeps_non_pft_param_whole():
+    """pft_index leaves a parameter without a PFT dimension unfiltered."""
+    param = _two_dim_param(["leafage", "plant_type"])
+    rows = _expand_normalized(param, np.arange(6.0).reshape(2, 3), pft_index=0)
+    assert len(rows) == 6

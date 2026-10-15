@@ -63,6 +63,10 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
         The precision (i.e., rounding) for the parameter. Defaults to None.
     group_name: str | None
         Optional group name, which is used to scale parameters together. Defaults to None.
+    pft_dim: str | None
+        Optional name of the PFT dimension, used to place per-PFT bounds on a
+        multi-dimensional parameter. If None, the one dimension whose name contains
+        'pft' is used. Defaults to None.
     """
 
     name: str
@@ -80,6 +84,7 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
     base_params: list[str]
     precision: Optional[str]
     group_name: Optional[str]
+    pft_dim: Optional[str] = None
 
     def __post_init__(self):
         """Validate field-level invariants that hold regardless of param_type.
@@ -145,6 +150,7 @@ class ParamSpec:  # pylint: disable=too-many-instance-attributes
             root_param=_parse_optional_str(row.get("root_param")),
             precision=_parse_precision(row.get("precision")),
             group_name=_parse_optional_str(row.get("group_name")),
+            pft_dim=_parse_optional_str(row.get("pft_dim")),
         )
 
 

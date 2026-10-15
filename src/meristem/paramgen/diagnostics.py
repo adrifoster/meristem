@@ -56,28 +56,34 @@ def _expand_normalized(
     normalized: float | np.ndarray | list,
     pft_index: int | None = None,
 ) -> list[tuple[str, float, str]]:
-    """Expand a normalized value into (name, value, category) tuples."""
+    """Expand a normalized value into (name, value, category) tuples.
+
+    Array values are labelled by their index along each dimension, e.g.
+    'name_1_2' for a 2-D parameter. If pft_index is set, only values at that index
+    along the PFT dimension are kept, and that index is dropped from the label.
+    Parameters without a PFT dimension are kept whole.
+    """
     param_names = (
         param.spec.base_params if param.spec.base_params else [param.spec.name]
     )
     normalized_list = normalized if isinstance(normalized, list) else [normalized]
     subcategory = param.spec.subcategory
+    pft_axis = param.pft_axis if pft_index is not None else None
 
     rows = []
     for pname, norm_val in zip(param_names, normalized_list):
         arr = np.asarray(norm_val)
         if arr.ndim == 0:
             rows.append((pname, float(arr), subcategory))
-        else:
-            for i, v in enumerate(arr.flat):
-                if pft_index is None or i == pft_index:
-                    rows.append(
-                        (
-                            f"{pname}_{i}" if pft_index is None else pname,
-                            float(v),
-                            subcategory,
-                        )
-                    )
+            continue
+        for idx in np.ndindex(arr.shape):
+            label_idx = idx
+            if pft_axis is not None:
+                if idx[pft_axis] != pft_index:
+                    continue
+                label_idx = idx[:pft_axis] + idx[pft_axis + 1 :]
+            label = "_".join([pname, *(str(i) for i in label_idx)])
+            rows.append((label, float(arr[idx]), subcategory))
     return rows
 
 
@@ -106,8 +112,9 @@ def normalize_defaults(
         param_list (list[str] | None, optional): Subset of parameters to
             normalize. If None, all parameters in main.csv are used.
             Defaults to None.
-        pft_index (int | None, optional): If set, only returns this PFT axis. Defaults to
-        None.
+        pft_index (int | None, optional): If set, only returns values at this
+            0-based index along each parameter's PFT dimension. Parameters without
+            a PFT dimension are returned whole. Defaults to None.
 
     Returns:
         pd.DataFrame: One row per parameter with columns:

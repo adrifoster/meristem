@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import xarray as xr
 
 
 from meristem.paramgen.parameter import (
@@ -14,6 +15,7 @@ from meristem.paramgen.parameter import (
     ScaleFromRootParameter,
     SlicedParameter,
 )
+from meristem.paramgen.parameter_dataset import NetCDFParameterDataset
 from meristem.paramgen.sampler import (
     UniformSampler,
     PosteriorSampler,
@@ -562,6 +564,58 @@ def test_build_context_pft_axis_none_for_non_pft_param(
     assert ctx.pft_axis is None
 
 
+def _two_dim_dataset(dims: tuple[str, str]) -> NetCDFParameterDataset:
+    """A dataset with one (2, 3) variable 'v' on the given dimensions."""
+    return NetCDFParameterDataset(xr.Dataset({"v": (dims, np.ones((2, 3)))}))
+
+
+def test_pft_axis_from_explicit_pft_dim(multi_dim_row, pft_sheet):
+    """pft_axis uses spec.pft_dim when the PFT dimension name has no 'pft' in it."""
+    multi_dim_row["parameter_name"] = "v"
+    multi_dim_row["coord"] = "['leafage', 'plant_type']"
+    multi_dim_row["param_min"] = "pft"
+    multi_dim_row["param_max"] = "pft"
+    multi_dim_row["pft_dim"] = "plant_type"
+    ds = _two_dim_dataset(("leafage", "plant_type"))
+    param = Parameter.from_row(multi_dim_row, ds, pft_sheet=pft_sheet)
+    assert param.pft_axis == 1
+    np.testing.assert_allclose(
+        param.sample(0.0, ds), [[0.005, 0.004, 0.008], [0.005, 0.004, 0.008]]
+    )
+
+
+def test_pft_axis_none_when_ambiguous(multi_dim_row):
+    """pft_axis is None when more than one dimension name contains 'pft'."""
+    multi_dim_row["parameter_name"] = "v"
+    multi_dim_row["coord"] = "['pft_a', 'pft_b']"
+    param = Parameter.from_row(multi_dim_row, _two_dim_dataset(("pft_a", "pft_b")))
+    assert param.pft_axis is None
+
+
+def test_pft_dim_not_a_dimension_raises(multi_dim_row):
+    """A pft_dim that isn't one of the parameter's free dimensions raises."""
+    multi_dim_row["parameter_name"] = "v"
+    multi_dim_row["coord"] = "['leafage', 'fates_pft']"
+    multi_dim_row["pft_dim"] = "not_a_dim"
+    with pytest.raises(ValueError, match="pft_dim 'not_a_dim'"):
+        Parameter.from_row(multi_dim_row, _two_dim_dataset(("leafage", "fates_pft")))
+
+
+@pytest.mark.parametrize(
+    "dims", [("pft_a", "pft_b"), ("leafage", "plant_type")], ids=["ambiguous", "none"]
+)
+def test_pft_bounds_without_identifiable_pft_dim_raises(multi_dim_row, pft_sheet, dims):
+    """Per-PFT bounds on a multi-dimensional parameter raise at construction when
+    the PFT dimension can't be identified and pft_dim isn't set
+    """
+    multi_dim_row["parameter_name"] = "v"
+    multi_dim_row["coord"] = str(list(dims))
+    multi_dim_row["param_min"] = "pft"
+    multi_dim_row["param_max"] = "pft"
+    with pytest.raises(ValueError, match="Set 'pft_dim'"):
+        Parameter.from_row(multi_dim_row, _two_dim_dataset(dims), pft_sheet=pft_sheet)
+
+
 # =============================================================================
 # Normalize
 # =============================================================================
@@ -637,3 +691,16 @@ def test_normalize_clips_to_bounds(default_row, param_dataset, mocker):
         mock_normalize.call_args[1].get("clip_to_bounds")
         or mock_normalize.call_args[0][2] is True
     )
+
+
+def test_pft_bounds_on_1d_non_pft_dim_raises(default_row, pft_sheet):
+    """Per-PFT bounds on a 1-D parameter whose dimension isn't identifiable as PFT
+    raise at construction, rather than being placed along that dimension
+    """
+    default_row["parameter_name"] = "v"
+    default_row["coord"] = "['leafage']"
+    default_row["param_min"] = "pft"
+    default_row["param_max"] = "pft"
+    ds = NetCDFParameterDataset(xr.Dataset({"v": (("leafage",), np.ones(3))}))
+    with pytest.raises(ValueError, match="Set 'pft_dim'"):
+        Parameter.from_row(default_row, ds, pft_sheet=pft_sheet)

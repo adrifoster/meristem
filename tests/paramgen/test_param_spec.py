@@ -299,3 +299,18 @@ def test_root_param_on_non_scale_raises(default_row):
     row["root_param"] = "fates_nonhydro_smpso"
     with pytest.raises(ValueError, match="root_param set but param_type"):
         ParamSpec.from_row(row)
+
+
+def test_from_row_pft_dim_parsed(default_row):
+    """from_row correctly parses a pft_dim string."""
+    default_row["pft_dim"] = "fates_pft"
+    spec = ParamSpec.from_row(default_row)
+    assert spec.pft_dim == "fates_pft"
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), ""])
+def test_from_row_pft_dim_none_for_blank(default_row, value):
+    """from_row sets pft_dim to None for blank/null values."""
+    default_row["pft_dim"] = value
+    spec = ParamSpec.from_row(default_row)
+    assert spec.pft_dim is None

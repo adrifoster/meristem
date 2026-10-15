@@ -10,7 +10,8 @@ import pandas as pd
 import numpy as np
 
 from .param_spec import ParamSpec
-from .sampler import Sampler, SampleContext, PosteriorSampler
+from .distribution_stat import PFTStat
+from .sampler import Sampler, SampleContext, PosteriorSampler, UniformSampler
 from .parameter_dataset import ParameterDataset, ParameterVariable
 
 
@@ -69,6 +70,7 @@ class Parameter(ABC):
         self._validate_specs()
         self._validate_params(default_ds)
         self._validate_posterior()
+        self._validate_pft_dim()
 
     @classmethod
     def from_row(
@@ -129,6 +131,19 @@ class Parameter(ABC):
             else [1]
         )
 
+    @property
+    def pft_axis(self) -> int | None:
+        """Axis of the PFT dimension within free_dims, or None if there isn't one.
+
+        Uses spec.pft_dim if set. Otherwise uses the one free dimension whose name
+        contains 'pft'; if none or several do, returns None.
+        """
+        dims = self.free_dims or []
+        if self.spec.pft_dim is not None:
+            return dims.index(self.spec.pft_dim)
+        candidates = [i for i, dim in enumerate(dims) if "pft" in dim.lower()]
+        return candidates[0] if len(candidates) == 1 else None
+
     def _validate_specs(self) -> None:
         """Validate type-specific required fields on self.spec.
 
@@ -166,6 +181,31 @@ class Parameter(ABC):
                     f"{actual_dims} in default dataset but spec.dims is "
                     f"{self.spec.dims}. Dimensions must match exactly."
                 )
+
+    def _validate_pft_dim(self) -> None:
+        """Check that the PFT dimension can be identified where it's needed.
+
+        Raises:
+            ValueError: If spec.pft_dim is not a free dimension, or if a
+                non-scalar parameter has per-PFT bounds but no single PFT
+                dimension can be identified.
+        """
+        dims = self.free_dims or []
+        if self.spec.pft_dim is not None and self.spec.pft_dim not in dims:
+            raise ValueError(
+                f"Parameter '{self.spec.name}': pft_dim '{self.spec.pft_dim}' is not "
+                f"one of its free dimensions {dims}."
+            )
+        has_pft_bounds = isinstance(self.sampler, UniformSampler) and (
+            isinstance(self.sampler.min_stat, PFTStat)
+            or isinstance(self.sampler.max_stat, PFTStat)
+        )
+        if has_pft_bounds and dims and self.pft_axis is None:
+            raise ValueError(
+                f"Parameter '{self.spec.name}': has per-PFT bounds but the PFT "
+                f"dimension can't be identified from its dimensions {dims}. "
+                "Set 'pft_dim' in main.csv to name it."
+            )
 
     def _validate_posterior(self):
         if not isinstance(self.sampler, PosteriorSampler):
@@ -276,10 +316,6 @@ class Parameter(ABC):
             SampleContext populated for this parameter.
         """
         dims = self.free_dims or []
-        pft_axis = next(
-            (i for i, dim in enumerate(dims) if "pft" in dim.lower()),
-            None,
-        )
         index_axis = None
         if self.active_index is not None:
             if self.active_index.dim not in dims:
@@ -295,7 +331,7 @@ class Parameter(ABC):
             ),
             index_axis=index_axis,
             n_indices=self.n_indices,
-            pft_axis=pft_axis,
+            pft_axis=self.pft_axis,
         )
 
     def get_default(
