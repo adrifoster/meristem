@@ -1,5 +1,6 @@
 """Tests for meristem.paramgen.param_spec: ParamSpec and its parsing helpers."""
 
+import numpy as np
 import pytest
 
 from meristem.paramgen.param_spec import ParamSpec, _REQUIRED_COLUMNS, _parse_dims
@@ -214,11 +215,37 @@ def test_parse_list_bad_type_raises(sliced_row, value):
         ParamSpec.from_row(row)
 
 
-def test_from_row_precision_parsed(default_row):
-    """from_row correctly parses a precision string."""
-    default_row["precision"] = ".4f"
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (".4f", 4),
+        ("0.2f", 2),
+        (".12f", 12),
+        ("2", 2),
+        ("0", 0),
+        (" .3f ", 3),
+        (2, 2),
+        (2.0, 2),
+        (np.int64(3), 3),
+        (np.float64(3.0), 3),
+    ],
+)
+def test_from_row_precision_parsed(default_row, value, expected):
+    """from_row parses '.Nf', '0.Nf', and integer precision into decimal places."""
+    default_row["precision"] = value
     spec = ParamSpec.from_row(default_row)
-    assert spec.precision == ".4f"
+    assert spec.precision == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [".3g", ".2e", "2f", "%.2f", "{:.2f}", "-1", "abc", 2.5, -1, True],
+)
+def test_from_row_precision_invalid_raises(default_row, value):
+    """from_row rejects precision that isn't a number of decimal places."""
+    default_row["precision"] = value
+    with pytest.raises(ValueError, match="fates_leaf_slatop': precision"):
+        ParamSpec.from_row(default_row)
 
 
 def test_from_row_precision_none_when_missing(default_row):
@@ -233,13 +260,6 @@ def test_from_row_precision_none_for_blank(default_row, value):
     default_row["precision"] = value
     spec = ParamSpec.from_row(default_row)
     assert spec.precision is None
-
-
-def test_from_row_precision_normalizes_leading_zero(default_row):
-    """from_row normalizes '0.2f' to '.2f'."""
-    default_row["precision"] = "0.2f"
-    spec = ParamSpec.from_row(default_row)
-    assert spec.precision == ".2f"
 
 
 def test_from_row_group_name_parsed(default_row):
