@@ -19,6 +19,8 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
     {
         "status",
         "job_id",
+        "advance_job_id",
+        "fail_job_id",
         "submit_time",
         "end_time",
         "attempts",
@@ -147,7 +149,11 @@ class StageState:
     status: StageStatus
         Current status of the stage
     job_id: str or None
-        PBS job ID assigned after submission
+        PBS job ID of actual job assigned after submission
+    advance_job_id: str or None
+        PBS job ID of advance job assigned after submission
+    fail_job_id: str or None
+        PBS job ID of fail job assigned after submission
     submit_time: float or None
         Unix timestamp of the most recent submission
     end_time: float or None
@@ -160,12 +166,16 @@ class StageState:
         self,
         status: StageStatus = StageStatus.PENDING,
         job_id: str | None = None,
+        advance_job_id: str | None = None,
+        fail_job_id: str | None = None,
         submit_time: float | None = None,
         end_time: float | None = None,
         attempts: int = 0,
     ):
         self._status = status
         self.job_id = job_id
+        self.advance_job_id = advance_job_id
+        self.fail_job_id = fail_job_id
         self._submit_time = submit_time
         self._end_time = end_time
         self._attempts = attempts
@@ -267,6 +277,8 @@ class StageState:
         return (
             self.status == other.status
             and self.job_id == other.job_id
+            and self.advance_job_id == other.advance_job_id
+            and self.fail_job_id == other.fail_job_id
             and self._submit_time == other._submit_time
             and self._end_time == other._end_time
             and self._attempts == other._attempts
@@ -275,6 +287,7 @@ class StageState:
     def __repr__(self) -> str:
         return (
             f"StageState(status={self.status!r}, job_id={self.job_id!r}, "
+            f"advance_job_id={self.advance_job_id!r}, fail_job_id={self.fail_job_id!r}, "
             f"submit_time={self._submit_time!r}, end_time={self._end_time!r}, "
             f"attempts={self._attempts!r})"
         )
@@ -291,6 +304,8 @@ class StageState:
         return {
             "status": self.status.to_str(),
             "job_id": self.job_id,
+            "advance_job_id": self.advance_job_id,
+            "fail_job_id": self.fail_job_id,
             "submit_time": self._submit_time,
             "end_time": self._end_time,
             "attempts": self._attempts,
@@ -312,6 +327,8 @@ class StageState:
         return cls(
             status=StageStatus.from_str(input_dict.get("status", "")),
             job_id=input_dict.get("job_id"),
+            advance_job_id=input_dict.get("advance_job_id"),
+            fail_job_id=input_dict.get("fail_job_id"),
             submit_time=input_dict.get("submit_time"),
             end_time=input_dict.get("end_time"),
             attempts=input_dict.get("attempts", 0),
@@ -333,7 +350,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     Attributes
     -----------
     name: unique identifier, e.g., "spinup_ad"
-    script: path to setup script; called as bash <script> <case_root> <run_id>
     walltime: PBS walltime string, e.g., "06:00:00"
     queue: PBS queue name
     kind: stage kind, really just a name right now
@@ -342,13 +358,15 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
     extra_pbs: additional raw #PBS directives
+    script: path to setup script; must either supply this or command;
+        called as bash <script> <case_root> <run_id>
+    command: command to run (in place of script)
     case_root: absolute path to the CESM case directory. If None, the run uses
         <root>/<name>
     submit_args: extra submission arguments, optional
     """
 
     name: str
-    script: Path
     queue: str
     walltime: str = "01:00:00"
     kind: StageKind = StageKind.CUSTOM
@@ -358,17 +376,26 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     memory: str = "10GB"
     no_cime: bool = False
     extra_pbs: tuple[str, ...] = ()
+    script: Path | None = None
+    command: str | None = None
     case_root: Path | None = None
     submit_args: str | None = None
 
     def __post_init__(self):
         if not self.name:
             raise ValueError("name must not be empty.")
-        if not self.script:
-            raise ValueError("script must not be empty.")
+
+        if not self.script and not self.command:
+            raise ValueError("either script or command must be supplied.")
+
+        if self.script and self.command:
+            raise ValueError(
+                "both script and command cannot be supplied together; choose one"
+            )
 
         # __setattr__ is required because the dataclass is frozen
-        object.__setattr__(self, "script", Path(self.script))
+        if self.script is not None:
+            object.__setattr__(self, "script", Path(self.script))
 
         if self.case_root is not None:
             object.__setattr__(self, "case_root", Path(self.case_root))
@@ -397,7 +424,7 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         Raises:
             ValueError: if the script path does not exist
         """
-        if not self.script.exists():
+        if self.script and not self.script.exists():
             raise ValueError(f"cannot open script {self.script!r}.")
 
     def to_dict(self) -> dict:
@@ -406,7 +433,8 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             "name": self.name,
             "case_root": str(self.case_root) if self.case_root is not None else None,
             "submit_args": self.submit_args if self.submit_args is not None else None,
-            "script": str(self.script),
+            "script": str(self.script) if self.script is not None else None,
+            "command": self.command,
             "walltime": self.walltime,
             "queue": self.queue,
             "kind": self.kind.to_str(),

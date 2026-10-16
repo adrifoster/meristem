@@ -32,6 +32,16 @@ def minimal_stage_config(minimal_stage_config_dict) -> StageConfig:
 
 
 @pytest.fixture
+def command_stage_config_dict() -> dict:
+    """Minimal StageConfig dict that runs a command instead of a script."""
+    return {
+        "name": "spinup_ad",
+        "command": "meristem ensemble prepare --member 1",
+        "queue": "regular",
+    }
+
+
+@pytest.fixture
 def no_cime_stage_config_dict(minimal_stage_config_dict) -> dict:
     """Minimal StageConfig dict with no_cime set to True."""
     return {

@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from meristem.commands import meristem_cmd
+from meristem.run import model_run
 from meristem.run.model_run import ModelRun
 from meristem.run.stages import StageStatus
 from jinja2 import TemplateNotFound
@@ -110,6 +112,152 @@ def test_submit_script_uses_configured_case_root(
     job_file = (run.root / f"{run.run_id}_spinup_ad.pbs").read_text()
     assert f"{run.stages[0].config.script} {case_root}" in job_file
     assert f"cd {case_root}" in job_file
+
+
+def test_shquote_filter_rejects_none():
+    """Test that the shquote template filter raises on None instead of
+    rendering the literal word 'None'
+    """
+    # pylint: disable=protected-access
+    with pytest.raises(ValueError, match="None"):
+        model_run._ENV.filters["shquote"](None)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("plain", "plain"), ("has space", "'has space'"), (Path("/a b"), "'/a b'")],
+)
+def test_shquote_filter_quotes_values(value, expected):
+    """Test that the shquote template filter quotes strings and paths"""
+    # pylint: disable=protected-access
+    assert model_run._ENV.filters["shquote"](value) == expected
+
+
+@pytest.fixture
+def command_run(run_config_dict, command_stage_config_dict, fake_scheduler) -> ModelRun:
+    """A ModelRun whose single stage runs a command instead of a script"""
+    run_config_dict["stages"] = [command_stage_config_dict]
+    return ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+
+
+def _command_call(job_file: Path) -> list[str]:
+    """The bash -c invocation of a stage's command in a generated job script"""
+    for line in job_file.read_text().splitlines():
+        if line.startswith("bash -c"):
+            return shlex.split(line)
+    raise AssertionError(f"no command call in {job_file}")
+
+
+def test_submit_command_stage_runs_command_in_strict_mode(command_run):
+    """Test that a command stage runs its command under bash strict mode as a
+    single bash -c argument
+    """
+    command_run.submit()
+    job_file = command_run.root / f"{command_run.run_id}_spinup_ad.pbs"
+    assert _command_call(job_file) == [
+        "bash",
+        "-c",
+        "set -euo pipefail; meristem ensemble prepare --member 1",
+    ]
+
+
+def test_submit_command_stage_has_no_setup_script_call(command_run):
+    """Test that a command stage neither sources a setup script nor renders 'None'"""
+    command_run.submit()
+    job_file = (command_run.root / f"{command_run.run_id}_spinup_ad.pbs").read_text()
+    assert 'source "$0"' not in job_file
+    assert "None" not in job_file
+
+
+def test_submit_command_stage_survives_reload(command_run, fake_scheduler):
+    """Test that a command stage still renders its command after state is
+    saved to disk and reloaded (e.g. when a later stage is advanced)
+    """
+    reloaded = ModelRun.load(command_run.root, scheduler=fake_scheduler)
+    assert reloaded.stages[0].config.script is None
+    reloaded.submit()
+    job_file = reloaded.root / f"{reloaded.run_id}_spinup_ad.pbs"
+    assert _command_call(job_file)[-1].endswith("meristem ensemble prepare --member 1")
+    assert 'source "$0"' not in job_file.read_text()
+
+
+def _job_scripts(run: ModelRun) -> dict[str, str]:
+    """Render the submit, advance, and fail job scripts for a run's first stage"""
+    # pylint: disable=protected-access
+    stage = run.stages[0]
+    return {
+        "submit": run._write_job_script(stage).read_text(),
+        "advance": run._write_advance_script(stage, "5555.fake").read_text(),
+        "fail": run._write_fail_script(stage, "5555.fake").read_text(),
+    }
+
+
+@pytest.mark.parametrize("kind", ["submit", "advance", "fail"])
+def test_job_scripts_call_this_meristem_install(created_run, kind):
+    """Test that every job script calls meristem through the interpreter that
+    wrote it, rather than activating a conda environment
+    """
+    content = _job_scripts(created_run)[kind]
+    assert meristem_cmd() in content
+    assert "conda activate" not in content
+
+
+def test_submit_command_stage_can_call_meristem_without_conda(
+    run_config_dict, command_stage_config_dict, fake_scheduler
+):
+    """Test that a command stage's bash -c child shell can call `meristem` with
+    only system directories on PATH (no activated environment)
+    """
+    run_config_dict["stages"] = [
+        {**command_stage_config_dict, "command": "meristem --version"}
+    ]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    job_file = run.root / f"{run.run_id}_spinup_ad.pbs"
+
+    # the function definition, its export, and the command call, in order
+    snippet = "\n".join(
+        line
+        for line in job_file.read_text().splitlines()
+        if line.startswith(("meristem() {", "export -f meristem", "bash -c"))
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", "set -euo pipefail\n" + snippet],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "meristem" in result.stdout
+
+
+def test_submit_command_stage_strict_mode_stops_on_failure(
+    run_config_dict, command_stage_config_dict, fake_scheduler
+):
+    """Test that the rendered command line really stops at the first failing
+    command and exits non-zero
+    """
+    run_config_dict["stages"] = [
+        {**command_stage_config_dict, "command": "false; echo after"}
+    ]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    job_file = run.root / f"{run.run_id}_spinup_ad.pbs"
+    result = subprocess.run(
+        _command_call(job_file), capture_output=True, text=True, check=False
+    )
+    assert result.returncode != 0
+    assert "after" not in result.stdout
+
+
+def test_submit_skip_script_omits_command(command_run):
+    """Test that skip_script also skips a stage's command"""
+    # pylint: disable=protected-access
+    job_file = command_run._write_job_script(
+        command_run.stages[0], skip_script=True
+    ).read_text()
+    assert "meristem ensemble prepare" not in job_file
 
 
 @pytest.mark.parametrize("command", ["--submit-advance", "--submit-fail"])

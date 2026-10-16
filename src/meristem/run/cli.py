@@ -10,8 +10,9 @@ All other commands (many called automatically by pipeline):
     meristem run --root /path/to/run --submit-fail --stage spinup_ad --cime-job-id 2003.desched1
     meristem run --root /path/to/run --advance --stage spinup_ad
     meristem run --root /path/to/run --fail --stage spinup_ad
-    meristem run --root /path/to/run --retry [--stage spinup_ad] [--skip-script]
+    meristem run --root /path/to/run --retry [--stage spinup_ad] [--skip-script] [--lost]
     meristem run --root /path/to/run --print-status
+    meristem run --root /path/to/run --check
 """
 
 import argparse
@@ -19,6 +20,9 @@ import sys
 from pathlib import Path
 
 from .model_run import ModelRun
+
+# exit code from --check when a stage is lost (1 is a runtime error, 2 an argument error)
+EXIT_LOST = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reset and resubmit a pending or failed stage",
     )
     actions.add_argument("--print-status", action="store_true", help="Print run status")
+    actions.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Query the scheduler and print run status, showing lost stages "
+            f"(changes nothing; exits {EXIT_LOST} if a stage is lost)"
+        ),
+    )
 
     parser.add_argument("--config", help="Path to run.yaml (required with --create)")
     parser.add_argument(
@@ -83,6 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="With --retry: resubmit without re-running the setup script",
     )
     parser.add_argument(
+        "--lost",
+        action="store_true",
+        help=(
+            "With --retry: retry a submitted stage that is lost (none of its jobs "
+            "are still queued or running; see --check)"
+        ),
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Show the full traceback on errors (useful when reporting bugs)",
@@ -90,7 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser):
+def validate_args(  # pylint: disable=too-many-branches
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+):
     """Validate argument combinations.
 
     Calls parser.error() on failure, which prints usage and exits with code 2
@@ -130,6 +152,9 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser):
     if args.skip_script and not args.retry:
         parser.error("--skip-script only to be used with --retry")
 
+    if args.lost and not args.retry:
+        parser.error("--lost only to be used with --retry")
+
 
 def _print_job_id(label: str, job_id: str | None) -> None:
     """Print a submitted job ID, if there is one
@@ -149,7 +174,7 @@ def dispatch(args: argparse.Namespace) -> int:
         args (argparse.Namespace): parsed namespace from argparse
 
     Returns:
-        int: 0 on success, 1 on runtime error
+        int: 0 on success, EXIT_LOST if --check found a lost stage
     """
     if args.create:
         run = ModelRun.create(args.config)
@@ -162,6 +187,17 @@ def dispatch(args: argparse.Namespace) -> int:
 
     if args.print_status:
         print(run.format_status())
+
+    elif args.check:
+        lost = run.lost_stages()
+        print(run.format_status(lost=lost))
+        for name in lost:
+            print(
+                f"Stage {name!r} is lost. Retry with: "
+                f"meristem run --root {run.root} --retry --stage {name} --lost"
+            )
+        if lost:
+            return EXIT_LOST
 
     elif args.submit:
         _print_job_id("Submitted", run.submit(dry_run=args.dry_run))
@@ -189,7 +225,12 @@ def dispatch(args: argparse.Namespace) -> int:
     elif args.retry:
         _print_job_id(
             "Resubmitted",
-            run.retry(args.stage, dry_run=args.dry_run, skip_script=args.skip_script),
+            run.retry(
+                args.stage,
+                dry_run=args.dry_run,
+                skip_script=args.skip_script,
+                lost=args.lost,
+            ),
         )
 
     else:
@@ -204,7 +245,8 @@ def main(argv: list[str] | None = None) -> int:
         argv (list[str] | None): argument list (defaults to sys.argv if None). Defaults to None.
 
     Returns:
-        int: exit code, 0 on success, 1 on runtime error, 2 on argument error
+        int: exit code, 0 on success, 1 on runtime error, 2 on argument error,
+            EXIT_LOST (3) if --check found a lost stage
     """
     parser = build_parser()
     args = parser.parse_args(argv)

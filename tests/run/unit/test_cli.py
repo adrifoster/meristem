@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from meristem.run.cli import build_parser, validate_args, dispatch, main
+from meristem.run.cli import EXIT_LOST, build_parser, validate_args, dispatch, main
 
 
 @pytest.fixture
@@ -447,7 +447,7 @@ def test_dispatch_retry_calls_retry_with_stage(mock_run):
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
     dispatch(args)
     mock_run.retry.assert_called_once_with(
-        "spinup_ad", dry_run=False, skip_script=False
+        "spinup_ad", dry_run=False, skip_script=False, lost=False
     )
 
 
@@ -457,7 +457,9 @@ def test_dispatch_retry_calls_retry_without_stage(mock_run):
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run"])
     dispatch(args)
-    mock_run.retry.assert_called_once_with(None, dry_run=False, skip_script=False)
+    mock_run.retry.assert_called_once_with(
+        None, dry_run=False, skip_script=False, lost=False
+    )
 
 
 @pytest.mark.usefixtures("mock_load")
@@ -466,7 +468,9 @@ def test_dispatch_retry_dry_run_passed_through(mock_run):
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--dry-run"])
     dispatch(args)
-    mock_run.retry.assert_called_once_with(None, dry_run=True, skip_script=False)
+    mock_run.retry.assert_called_once_with(
+        None, dry_run=True, skip_script=False, lost=False
+    )
 
 
 @pytest.mark.usefixtures("mock_load")
@@ -475,7 +479,83 @@ def test_dispatch_retry_skip_script_passed_through(mock_run):
     parser = build_parser()
     args = parser.parse_args(["--retry", "--root", "/tmp/run", "--skip-script"])
     dispatch(args)
-    mock_run.retry.assert_called_once_with(None, dry_run=False, skip_script=True)
+    mock_run.retry.assert_called_once_with(
+        None, dry_run=False, skip_script=True, lost=False
+    )
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_retry_lost_passed_through(mock_run):
+    """Test that retry with --lost is passed through"""
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--retry", "--root", "/tmp/run", "--stage", "spinup_ad", "--lost"]
+    )
+    dispatch(args)
+    mock_run.retry.assert_called_once_with(
+        "spinup_ad", dry_run=False, skip_script=False, lost=True
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--submit", "--root", "my_run"],
+        ["--check", "--root", "/tmp/run"],
+        ["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
+    ],
+)
+def test_validate_args_lost_without_retry_raises(argv):
+    """Test that using --lost for anything other than --retry fails"""
+    with pytest.raises(SystemExit) as exc:
+        main(argv + ["--lost"])
+    assert exc.value.code == 2
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_check_nothing_lost_returns_zero(mock_run, capsys):
+    """Test that --check prints the status and returns 0 when nothing is lost"""
+    mock_run.lost_stages.return_value = []
+    parser = build_parser()
+    args = parser.parse_args(["--check", "--root", "/tmp/run"])
+    assert dispatch(args) == 0
+    mock_run.format_status.assert_called_once_with(lost=[])
+    out = capsys.readouterr().out
+    assert "Run: member_0001" in out
+    assert "--lost" not in out
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_check_lost_returns_exit_lost(mock_run, capsys):
+    """Test that --check returns EXIT_LOST, shows the lost stage, and prints
+    the retry command
+    """
+    mock_run.lost_stages.return_value = ["spinup_ad"]
+    parser = build_parser()
+    args = parser.parse_args(["--check", "--root", "/tmp/run"])
+    assert dispatch(args) == EXIT_LOST
+    mock_run.format_status.assert_called_once_with(lost=["spinup_ad"])
+    assert (
+        "meristem run --root /tmp/run --retry --stage spinup_ad --lost"
+        in capsys.readouterr().out
+    )
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_check_does_not_retry(mock_run):
+    """Test that --check never resubmits anything"""
+    mock_run.lost_stages.return_value = ["spinup_ad"]
+    parser = build_parser()
+    dispatch(parser.parse_args(["--check", "--root", "/tmp/run"]))
+    mock_run.retry.assert_not_called()
+    mock_run.submit.assert_not_called()
+
+
+def test_main_check_exit_code_reaches_caller(mocker, mock_run):
+    """Test that main() returns EXIT_LOST from --check, not just dispatch()"""
+    mocker.patch("meristem.run.cli.ModelRun.load", return_value=mock_run)
+    mock_run.lost_stages.return_value = ["spinup_ad"]
+    assert main(["--check", "--root", "/tmp/run"]) == EXIT_LOST
 
 
 @pytest.mark.usefixtures("mock_load")
