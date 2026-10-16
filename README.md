@@ -51,9 +51,18 @@ This installs meristem in editable mode, along with its dependencies and the dev
 To install into an existing environment instead, run `pip install -e .` from the repository root
 (or `pip install -e ".[dev]"` to include the development tools).
 
+## Documentation
+
+- [docs/paramgen.md](docs/paramgen.md): parameter ensembles in detail: the `main.csv` format,
+  Latin Hypercube, one-at-a-time and Morris designs, parameter types, grouping, fixed indices
+  and posterior sampling.
+- [docs/run.md](docs/run.md): runs in detail: how the tethered PBS jobs fit together,
+  the config reference, writing setup scripts, and the `meristem run` command reference.
+- [examples/paramgen](examples/paramgen): worked CLM and FATES examples, including posterior sampling.
+
 ## Quick start
 
-### Generate a parameter ensemble
+### Generate a parameter file ensemble
 
 The repository includes a small CLM example. From the repository root:
 
@@ -92,10 +101,9 @@ ensemble = ParamEnsemble.from_dict({
 ensemble.create_ensemble()
 ```
 
-### Chain the stages of a run
+### Chain the stages of a model run
 
-Write a `run.yaml` listing your stages and the setup script for each one (a script that creates,
-configures and builds the case, but does not submit it):
+Write a `run.yaml` listing your simulation stages (e.g., spinup, historical, transient) and the setup script for each one (a script that creates, configures and builds the case, but does not submit it):
 
 ```yaml
 root: /glade/derecho/scratch/user/my_spinup
@@ -120,16 +128,7 @@ meristem run --root /glade/derecho/scratch/user/my_spinup --submit
 meristem run --root /glade/derecho/scratch/user/my_spinup --print-status
 ```
 
-Each stage submits the next one when its model run finishes successfully.
-
-## Documentation
-
-- [docs/paramgen.md](docs/paramgen.md): parameter ensembles in detail: the `main.csv` format,
-  Latin Hypercube, one-at-a-time and Morris designs, parameter types, grouping, fixed indices
-  and posterior sampling.
-- [docs/run.md](docs/run.md): runs in detail: how the tethered PBS jobs fit together,
-  the config reference, writing setup scripts, and the `meristem run` command reference.
-- [examples/paramgen](examples/paramgen): worked CLM and FATES examples, including posterior sampling.
+Once each stage of a model run finishes successfully, the next stage is automatically submitted.
 
 ## Contributing
 
