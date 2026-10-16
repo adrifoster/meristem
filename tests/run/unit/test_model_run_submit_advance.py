@@ -6,6 +6,7 @@ import subprocess
 import time
 import pytest
 
+from meristem.run.model_run import ModelRun
 from meristem.run.stages import StageStatus
 
 
@@ -140,9 +141,9 @@ def test_submit_advance_qsub_failure_raises(created_run, mocker):
         created_run.submit_advance("spinup_ad", "55555.pbs")
 
 
-def test_submit_advance_does_not_update_stage_state(created_run):
-    """submit_advance() does not update stage status or job_id
-    The advance job ID belongs to the *next* stage, not the current one.
+def test_submit_advance_does_not_update_stage_status_or_job_id(created_run):
+    """submit_advance() does not update stage status or the setup job_id
+    (it only records advance_job_id)
     """
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
@@ -150,3 +151,25 @@ def test_submit_advance_does_not_update_stage_state(created_run):
     created_run.submit_advance("spinup_ad", "55555.pbs")
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
     assert created_run.stages[0].state.job_id is None
+
+
+def test_submit_advance_records_advance_job_id(created_run):
+    """Test that submit_advance() saves the advance job ID on the stage and to disk"""
+    stage = created_run.stages[0]
+    stage.state.status = StageStatus.SUBMITTED
+    stage.state.submit_time = time.time() - 100
+    job_id = created_run.submit_advance("spinup_ad", "55555.pbs")
+    assert created_run.stages[0].state.advance_job_id == job_id
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state.advance_job_id == job_id
+
+
+def test_submit_advance_dry_run_records_advance_job_id(created_run):
+    """Test that submit_advance(dry_run=True) saves the synthetic DRY_ job ID"""
+    stage = created_run.stages[0]
+    stage.state.status = StageStatus.SUBMITTED
+    stage.state.submit_time = time.time() - 100
+    job_id = created_run.submit_advance("spinup_ad", "55555.pbs", dry_run=True)
+    assert job_id.startswith("DRY_")
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state.advance_job_id == job_id

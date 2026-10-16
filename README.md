@@ -48,10 +48,6 @@ conda activate meristem
 This installs meristem in editable mode, along with its dependencies and the development tools
 (pytest, pylint, black).
 
-> [!IMPORTANT]
-> If you use `meristem.run`, keep the environment name `meristem`: the generated PBS job scripts run
-> `conda activate meristem`.
-
 To install into an existing environment instead, run `pip install -e .` from the repository root
 (or `pip install -e ".[dev]"` to include the development tools).
 

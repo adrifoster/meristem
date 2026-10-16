@@ -76,3 +76,23 @@ def test_format_status_multiple_stages(two_stage_run):
 def test_format_status_returns_string(created_run):
     """Test that format_status() returns a string"""
     assert isinstance(created_run.format_status(), str)
+
+
+def test_format_status_shows_lost_stage(two_stage_run):
+    """Test that a stage passed in lost is shown as lost, and others are not"""
+    two_stage_run.submit()
+    lines = two_stage_run.format_status(lost=["spinup_ad"]).splitlines()
+    ad_line = next(line for line in lines if "spinup_ad" in line)
+    sasu_line = next(line for line in lines if "spinup_sasu" in line)
+    assert ad_line.lstrip().startswith("?")
+    assert "lost" in ad_line
+    assert "submitted" not in ad_line
+    assert "lost" not in sasu_line
+    assert "pending" in sasu_line
+
+
+def test_format_status_lost_still_shows_job_id(created_run):
+    """Test that a lost stage still shows its job ID"""
+    created_run.submit()
+    job_id = created_run.stages[0].state.job_id
+    assert f"[{job_id}]" in created_run.format_status(lost=["spinup_ad"])

@@ -6,7 +6,27 @@ import subprocess
 
 import pytest
 
-from meristem.run.scheduler import PbsScheduler, get_scheduler
+from meristem.run.scheduler import JobState, PbsScheduler, get_scheduler
+
+
+def _qstat_block(job_id: str, letter: str) -> str:
+    """One job's block of ``qstat -x -f`` output, trimmed to the fields that matter"""
+    return (
+        f"Job Id: {job_id}\n"
+        f"    Job_Name = member_0001_spinup_ad\n"
+        f"    job_state = {letter}\n"
+        f"    queue = cpudev\n"
+        "\n"
+    )
+
+
+def _mock_qstat(mocker, stdout: str, returncode: int = 0, stderr: str = ""):
+    """Patch subprocess.run to return the given qstat result"""
+    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
+    mock_run.return_value.stdout = stdout
+    mock_run.return_value.stderr = stderr
+    mock_run.return_value.returncode = returncode
+    return mock_run
 
 
 def test_pbs_submit_calls_qsub_with_correct_args(tmp_path, mocker):
@@ -40,6 +60,103 @@ def test_pbs_submit_failure_raises(tmp_path, mocker):
     )
     with pytest.raises(subprocess.CalledProcessError):
         PbsScheduler().submit(tmp_path / "job.pbs")
+
+
+def test_pbs_query_calls_qstat_once_with_all_ids(mocker):
+    """Test that PbsScheduler.query() makes a single qstat -x -f call for all IDs"""
+    mock_run = _mock_qstat(
+        mocker, _qstat_block("1.desched1", "Q") + _qstat_block("2.desched1", "R")
+    )
+    PbsScheduler().query(["1.desched1", "2.desched1"])
+    mock_run.assert_called_once_with(
+        ["qstat", "-x", "-f", "1.desched1", "2.desched1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "letter,expected",
+    [
+        ("Q", JobState.QUEUED),
+        ("H", JobState.QUEUED),
+        ("R", JobState.RUNNING),
+        ("F", JobState.FINISHED),
+        # less common states map to the closest of the four
+        ("W", JobState.QUEUED),
+        ("S", JobState.RUNNING),
+        ("E", JobState.RUNNING),
+    ],
+)
+def test_pbs_query_maps_job_state(mocker, letter, expected):
+    """Test that PbsScheduler.query() maps each PBS job_state letter to a JobState"""
+    _mock_qstat(mocker, _qstat_block("1.desched1", letter))
+    assert PbsScheduler().query(["1.desched1"]) == {"1.desched1": expected}
+
+
+def test_pbs_query_unknown_job_is_unknown(mocker):
+    """Test that a job qstat has no record of is UNKNOWN. NCAR's qstat prints the
+    'Unknown Job Id' message on stdout and exits 153
+    """
+    _mock_qstat(mocker, "qstat: Unknown Job Id 9.desched1\n", returncode=153)
+    assert PbsScheduler().query(["9.desched1"]) == {"9.desched1": JobState.UNKNOWN}
+
+
+def test_pbs_query_mixed_known_and_unknown(mocker):
+    """Test that known jobs are still reported when others are unknown (exit 153)"""
+    _mock_qstat(
+        mocker,
+        _qstat_block("1.desched1", "F") + "qstat: Unknown Job Id 9.desched1\n",
+        returncode=153,
+    )
+    assert PbsScheduler().query(["1.desched1", "9.desched1"]) == {
+        "1.desched1": JobState.FINISHED,
+        "9.desched1": JobState.UNKNOWN,
+    }
+
+
+def test_pbs_query_matches_on_job_number(mocker):
+    """Test that a job ID without the server suffix matches qstat's full ID,
+    and results are keyed by the ID passed in
+    """
+    _mock_qstat(mocker, _qstat_block("1.desched1.hsn.de.hpc.ucar.edu", "R"))
+    assert PbsScheduler().query(["1"]) == {"1": JobState.RUNNING}
+
+
+def test_pbs_query_qstat_failure_raises(mocker):
+    """Test that a qstat failure other than unknown IDs raises instead of
+    reporting every job as UNKNOWN
+    """
+    _mock_qstat(mocker, "", returncode=1, stderr="cannot connect to server")
+    with pytest.raises(RuntimeError, match="cannot connect to server"):
+        PbsScheduler().query(["1.desched1"])
+
+
+def test_pbs_query_unrecognized_state_raises(mocker):
+    """Test that an unrecognized job_state raises instead of guessing"""
+    _mock_qstat(mocker, _qstat_block("1.desched1", "Z"))
+    with pytest.raises(RuntimeError, match="'Z'"):
+        PbsScheduler().query(["1.desched1"])
+
+
+def test_pbs_query_empty_list_does_not_call_qstat(mocker):
+    """Test that query([]) returns {} without running qstat"""
+    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
+    assert not PbsScheduler().query([])
+    mock_run.assert_not_called()
+
+
+def test_fake_scheduler_query_returns_set_states(fake_scheduler):
+    """Test that FakeScheduler.query() returns the states a test sets, and
+    UNKNOWN for anything else
+    """
+    fake_scheduler.job_states = {"1.fake": JobState.RUNNING}
+    assert fake_scheduler.query(["1.fake", "2.fake"]) == {
+        "1.fake": JobState.RUNNING,
+        "2.fake": JobState.UNKNOWN,
+    }
+    assert fake_scheduler.queried == [["1.fake", "2.fake"]]
 
 
 def test_get_scheduler_pbs():

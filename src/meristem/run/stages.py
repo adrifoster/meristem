@@ -19,6 +19,8 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
     {
         "status",
         "job_id",
+        "advance_job_id",
+        "fail_job_id",
         "submit_time",
         "end_time",
         "attempts",
@@ -147,7 +149,11 @@ class StageState:
     status: StageStatus
         Current status of the stage
     job_id: str or None
-        PBS job ID assigned after submission
+        PBS job ID of actual job assigned after submission
+    advance_job_id: str or None
+        PBS job ID of advance job assigned after submission
+    fail_job_id: str or None
+        PBS job ID of fail job assigned after submission
     submit_time: float or None
         Unix timestamp of the most recent submission
     end_time: float or None
@@ -160,12 +166,16 @@ class StageState:
         self,
         status: StageStatus = StageStatus.PENDING,
         job_id: str | None = None,
+        advance_job_id: str | None = None,
+        fail_job_id: str | None = None,
         submit_time: float | None = None,
         end_time: float | None = None,
         attempts: int = 0,
     ):
         self._status = status
         self.job_id = job_id
+        self.advance_job_id = advance_job_id
+        self.fail_job_id = fail_job_id
         self._submit_time = submit_time
         self._end_time = end_time
         self._attempts = attempts
@@ -267,6 +277,8 @@ class StageState:
         return (
             self.status == other.status
             and self.job_id == other.job_id
+            and self.advance_job_id == other.advance_job_id
+            and self.fail_job_id == other.fail_job_id
             and self._submit_time == other._submit_time
             and self._end_time == other._end_time
             and self._attempts == other._attempts
@@ -275,6 +287,7 @@ class StageState:
     def __repr__(self) -> str:
         return (
             f"StageState(status={self.status!r}, job_id={self.job_id!r}, "
+            f"advance_job_id={self.advance_job_id!r}, fail_job_id={self.fail_job_id!r}, "
             f"submit_time={self._submit_time!r}, end_time={self._end_time!r}, "
             f"attempts={self._attempts!r})"
         )
@@ -291,6 +304,8 @@ class StageState:
         return {
             "status": self.status.to_str(),
             "job_id": self.job_id,
+            "advance_job_id": self.advance_job_id,
+            "fail_job_id": self.fail_job_id,
             "submit_time": self._submit_time,
             "end_time": self._end_time,
             "attempts": self._attempts,
@@ -312,6 +327,8 @@ class StageState:
         return cls(
             status=StageStatus.from_str(input_dict.get("status", "")),
             job_id=input_dict.get("job_id"),
+            advance_job_id=input_dict.get("advance_job_id"),
+            fail_job_id=input_dict.get("fail_job_id"),
             submit_time=input_dict.get("submit_time"),
             end_time=input_dict.get("end_time"),
             attempts=input_dict.get("attempts", 0),

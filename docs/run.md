@@ -94,6 +94,9 @@ Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
   ... spinup_postad       submitted   [98765.pbs]
 ```
 
+`--print-status` shows what the state file records. If a stage has been `submitted` for longer than
+you'd expect, use `--check` to ask PBS whether it is still running (see [Lost stages](#lost-stages)).
+
 ----
 
 ## Config reference
@@ -141,15 +144,22 @@ meristem run --create --config run.yaml
   Initialise a new run from a YAML config file.
 
 meristem run --root <path> --print-status
-  Print the current status of all stages.
+  Print the current status of all stages, as recorded in the state file.
+  Doesn't contact PBS.
+
+meristem run --root <path> --check
+  Ask PBS about each submitted stage and print the status, showing any
+  lost stage as "lost" (see Lost stages below). Changes nothing. Exits 3
+  if a stage is lost, 0 otherwise.
 
 meristem run --root <path> --submit [--dry-run]
   Submit the first pending stage.
 
-meristem run --root <path> --retry [--stage <name>] [--dry-run] [--skip-script]
+meristem run --root <path> --retry [--stage <name>] [--dry-run] [--skip-script] [--lost]
   Reset and resubmit a pending or failed stage. If --stage is omitted,
   retries the current (first non-complete) stage. If --skip-script, it
-  resubmits without re-running the setup script.
+  resubmits without re-running the setup script. With --lost, it instead
+  retries a submitted stage that is lost, and refuses if it isn't.
 
 meristem run --root <path> --submit-advance --stage <name> --cime-job-id <id>
   Submit the advance job for a stage. Called automatically
@@ -171,8 +181,57 @@ meristem run --root <path> --fail --stage <name>
 Add `--dry-run` to any submission command to generate job scripts without calling `qsub`.
 Add `--debug` to any command to show the full traceback on errors.
 
-**Retrying a stuck stage.** `--retry` only accepts stages that are pending or failed. If a stage is
-stuck as `submitted` (for example, you deleted its jobs with `qdel`), mark it failed first:
+### Lost stages
+
+A stage is **lost** when the state file says `submitted` but no job in PBS will ever change
+that. Normally the stage's advance job marks it done, or its fail job marks it failed. If
+neither runs, the stage stays `submitted` for good. This happens when:
+
+- the setup job is killed (for example at walltime) before it submits the advance and fail jobs.
+  The setup job's error trap doesn't fire when PBS kills it.
+- the advance or fail job is deleted with `qdel`, or killed, before it updates the stage.
+
+meristem records the setup, advance and fail job IDs for each stage. A stage is lost if it is
+`submitted` and **none** of those jobs is still queued or running. While the model is running, the
+advance and fail jobs sit in the queue waiting on it, so a stage whose model run is still going is
+never lost.
+
+To find lost stages:
+
+```bash
+meristem run --root <path> --check
+```
+
+```text
+Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
+  ✓ spinup_ad             done      [98765.desched1]
+  ? spinup_postad         lost      [98770.desched1]
+Stage 'spinup_postad' is lost. Retry with: meristem run --root <path> --retry --stage spinup_postad --lost
+```
+
+`--check` exits with code 3 when it finds a lost stage, so a script can loop over many runs and
+pick out the ones that need attention. If PBS can't be queried, it exits with code 1 and changes
+nothing.
+
+To retry a lost stage:
+
+```bash
+meristem run --root <path> --retry --stage <name> --lost
+```
+
+This checks PBS again first and refuses if any of the stage's jobs is still queued or running, so it
+can't start a second copy of a stage that is still going.
+
+**Known gaps.** In two cases a stage can be reported lost while its model run is still going.
+Check with `qstat -u $USER` before retrying:
+
+- The setup job was killed in the few seconds between submitting the case and submitting the
+  advance and fail jobs.
+- The run was created with a meristem version from before advance and fail job IDs were recorded,
+  so only the setup job is known.
+
+**Retrying by hand.** If you're sure nothing is still running for a stage, you can also mark it
+failed yourself and retry it, without asking PBS:
 
 ```bash
 meristem run --root <path> --fail --stage <name>
