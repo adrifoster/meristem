@@ -50,6 +50,11 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 # keys that must be present in a config dict.
 _REQUIRED_CONFIG_KEYS = frozenset({"root", "stages"})
 
+# seconds after submission that an UNKNOWN setup job still counts as active.
+# NCAR's qstat wrapper (qstat-cache) serves a snapshot that lags by minutes, so
+# a just-submitted job isn't in it yet
+_UNKNOWN_GRACE_SECONDS = 600
+
 
 class ModelRun:
     """
@@ -63,8 +68,8 @@ class ModelRun:
     root: working directory; all CIME cases live under here
     run_id: short identifier, e.g. "member_0042" or "my_spinup"
     stages: ordered tuple of Stage instances
-    user: username for the machine - used for PBS job submission. can use os.environ variable
-    project: PBS project code to use for job submission. can use os.environ variable
+    email: email for the machine - can be None
+    project: project code to use for job submission. can use os.environ variable
     scheduler: job scheduler used to submit job scripts. defaults to PBS
     """
 
@@ -73,14 +78,14 @@ class ModelRun:
         root: Path | str,
         run_id: str,
         stages: tuple[Stage, ...] | list[Stage],
-        user: str,
         project: str,
+        email: str | None = None,
         scheduler: Scheduler | None = None,
     ):
         self.root = Path(root)
         self.run_id = run_id
         self.stages: tuple[Stage, ...] = tuple(stages)
-        self.user = user if user else os.getenv("USER")
+        self.email = email
         self.project = project if project else os.getenv("PROJECT")
         self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
         self._validate()
@@ -92,10 +97,6 @@ class ModelRun:
             raise ValueError(
                 f"run_id {self.run_id!r} contains invalid characters. "
                 "Only letters, digits, hyphens, and underscores are allowed."
-            )
-        if not self.user:
-            raise ValueError(
-                "user must not be empty and $USER environment variable not set."
             )
         if not self.project:
             raise ValueError(
@@ -150,7 +151,7 @@ class ModelRun:
             root=root,
             run_id=cfg.get("run_id", "run"),
             stages=stages,
-            user=cfg.get("user", ""),
+            email=cfg.get("email"),
             project=cfg.get("project", ""),
             scheduler=scheduler
             or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
@@ -186,7 +187,7 @@ class ModelRun:
         return cls(
             root=root,
             run_id=state["run_id"],
-            user=state.get("user", ""),
+            email=state.get("email"),
             stages=[Stage.from_dict(stage) for stage in state["stages"]],
             project=state.get("project", ""),
             # state files written before the scheduler key existed are PBS runs
@@ -202,7 +203,7 @@ class ModelRun:
         """
         state = {
             "run_id": self.run_id,
-            "user": self.user,
+            "email": self.email,
             "project": self.project,
             "scheduler": self.scheduler.name,
             "stages": [stage.to_dict() for stage in self.stages],
@@ -237,6 +238,9 @@ class ModelRun:
         FAILED. This covers a setup job killed before it submitted the advance
         and fail jobs (including every no_cime stage), and advance/fail jobs
         that ended or were deleted without updating the stage.
+
+        A setup job PBS reports as UNKNOWN within _UNKNOWN_GRACE_SECONDS of
+        submission counts as active, since qstat's cache may not have it yet.
 
         PBS is queried before the state file is re-read: a job saves the state
         before it exits, so any job PBS reports as finished has already written
@@ -281,6 +285,17 @@ class ModelRun:
         states = self.scheduler.query(job_ids)
         active = {JobState.QUEUED, JobState.RUNNING}
         if any(states.get(job_id, JobState.UNKNOWN) in active for job_id in job_ids):
+            return False
+        # a lagging qstat cache may not have the setup job yet. Only the setup
+        # job needs this: it submits the advance and fail jobs before exiting, so
+        # a snapshot that shows it finished also has them
+        setup_job_id, submit_time = stage.state.job_id, stage.state.submit_time
+        if (
+            setup_job_id is not None
+            and states.get(setup_job_id, JobState.UNKNOWN) is JobState.UNKNOWN
+            and submit_time is not None
+            and time.time() - submit_time < _UNKNOWN_GRACE_SECONDS
+        ):
             return False
 
         # re-read the state now that PBS has been queried (see docstring)
@@ -696,7 +711,7 @@ class ModelRun:
             walltime=stage.config.walltime,
             project=self.project,
             log_file=log_file,
-            user=self.user,
+            email=self.email,
             depend_job_id=depend_job_id,
             extra=extra,
             root=self.root,
@@ -734,7 +749,7 @@ class ModelRun:
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,
-            user=self.user,
+            email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,
@@ -766,7 +781,7 @@ class ModelRun:
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,
-            user=self.user,
+            email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,

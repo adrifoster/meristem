@@ -1,6 +1,6 @@
 """
 Module for holding core classes for tethering:
-StageStatus and StageKind Enums, plus StageState, StageConfig, and Stage
+StageStatus Enum, plus StageState, StageConfig, and Stage
 """
 
 from __future__ import annotations
@@ -27,9 +27,6 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# keys that older state files stored for StageState; converted on load
-# (fail_job_id was a single ID before there was one fail job per CIME job)
-_LEGACY_RUNTIME_KEYS: frozenset[str] = frozenset({"fail_job_id"})
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -82,49 +79,6 @@ _ALLOWED_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
     StageStatus.DONE: frozenset({StageStatus.PENDING, StageStatus.FAILED}),
     StageStatus.FAILED: frozenset({StageStatus.PENDING}),
 }
-
-
-class StageKind(Enum):
-    """Stage Kind enum
-
-    Currently informational only; used for logging and checkpointing.
-    Intended to drive stage-specific behavior (walltime defaults, spinup
-    checks, post-processing) as the tethering system matures.
-    """
-
-    AD = "ad"
-    SASU = "sasu"
-    POST_SASU = "post-sasu"
-    HISTORICAL = "historical"
-    CUSTOM = "custom"
-
-    def to_str(self) -> str:
-        """Return value string
-
-        Returns:
-            str: output string
-        """
-        return self.value
-
-    @classmethod
-    def from_str(cls, raw: str) -> StageKind:
-        """Instantiate the class from an input raw string
-
-        Args:
-            raw (str): input string
-
-        Raises:
-            ValueError: invalid kind supplied
-
-        Returns:
-            StageKind: StageKind instance
-        """
-        try:
-            return cls(raw.lower().strip().replace("_", "-"))
-        except ValueError as e:
-            raise ValueError(
-                f"Invalid StageKind {raw!r}. " f"Valid values: {[e.value for e in cls]}"
-            ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -362,14 +316,13 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: unique identifier, e.g., "spinup_ad"
     walltime: PBS walltime string, e.g., "06:00:00"
     queue: PBS queue name
-    kind: stage kind, really just a name right now
     spinup_check: if True, advance() reads runs spinup_stability before proceeding
     ncpus: CPUs per node requested from PBS
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
     extra_pbs: additional raw #PBS directives
     script: path to setup script; must either supply this or command;
-        called as bash <script> <case_root> <run_id>
+        called as bash <script> <case_root> <previous_case_name> <previous_case_root>
     command: command to run (in place of script)
     case_root: absolute path to the CESM case directory. If None, the run uses
         <root>/<name>
@@ -379,7 +332,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: str
     queue: str
     walltime: str = "01:00:00"
-    kind: StageKind = StageKind.CUSTOM
     spinup_check: bool = False
     ncpus: int = 1
     select: int = 1
@@ -447,7 +399,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             "command": self.command,
             "walltime": self.walltime,
             "queue": self.queue,
-            "kind": self.kind.to_str(),
             "spinup_check": self.spinup_check,
             "ncpus": self.ncpus,
             "select": self.select,
@@ -467,7 +418,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             StageConfig: StageConfig instance
         """
         in_dict = dict(input_dict)
-        in_dict["kind"] = StageKind.from_str(in_dict.get("kind", "custom"))
         in_dict["extra_pbs"] = tuple(in_dict.get("extra_pbs", []))
         return cls(**in_dict)
 
@@ -485,7 +435,7 @@ class Stage:
     Attributes
     -----------
     config: StageConfig attributes
-    state: StageState instance; reset with stage.status = StageState()
+    state: StageState instance; reset with stage.state = StageState()
     """
 
     config: StageConfig
@@ -504,7 +454,7 @@ class Stage:
         in_dict = dict(input_dict)
         runtime_dict = {
             k: in_dict.pop(k)
-            for k in _RUNTIME_KEYS | _LEGACY_RUNTIME_KEYS
+            for k in _RUNTIME_KEYS
             if k in in_dict
         }
         return cls(

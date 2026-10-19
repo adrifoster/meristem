@@ -7,7 +7,9 @@
 #PBS -o {{ log_file }}
 #PBS -j oe
 #PBS -k eod
-#PBS -M {{ user }}
+{% if email %}
+#PBS -M {{ email }}
+{% endif %}
 {% if depend_job_id %}
 #PBS -W depend=afterok:{{ depend_job_id }}
 {% endif %}

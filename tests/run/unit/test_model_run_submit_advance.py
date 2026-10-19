@@ -31,7 +31,7 @@ def test_submit_advance_writes_jobscript(created_run):
         ("PBS -N ", "job_name"),
         ("#PBS -q ", "queue"),
         ("#PBS -A ", "project"),
-        ("#PBS -M ", "user"),
+        ("#PBS -M ", "email"),
         ("#PBS -W depend=afterok:", "cime_job_id"),
     ],
 )
@@ -52,7 +52,7 @@ def test_submit_advance_script_contains_pbs_directives(created_run, field, expec
         "job_name": f"{created_run.run_id}_{stage.config.name}",
         "queue": stage.config.queue,
         "project": created_run.project,
-        "user": created_run.user,
+        "email": created_run.email,
         "cime_job_id": cime_job_id,
     }
     assert field + values[expected] in job_file

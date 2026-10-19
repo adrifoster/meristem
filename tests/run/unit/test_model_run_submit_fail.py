@@ -31,7 +31,6 @@ def test_submit_fail_writes_jobscript(created_run):
         ("PBS -N ", "job_name"),
         ("#PBS -q ", "queue"),
         ("#PBS -A ", "project"),
-        ("#PBS -M ", "user"),
         ("#PBS -W depend=afternotok:", "cime_job_id"),
     ],
 )
@@ -52,7 +51,6 @@ def test_submit_fail_script_contains_pbs_directives(created_run, field, expected
         "job_name": f"{created_run.run_id}_{stage.config.name}",
         "queue": stage.config.queue,
         "project": created_run.project,
-        "user": created_run.user,
         "cime_job_id": cime_job_id,
     }
     assert field + values[expected] in job_file

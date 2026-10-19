@@ -6,18 +6,26 @@ import time
 
 import pytest
 
-from meristem.run.model_run import ModelRun
+from meristem.run.model_run import _UNKNOWN_GRACE_SECONDS, ModelRun
 from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
 SETUP, ADVANCE, FAIL, FAIL_2 = "1.fake", "2.fake", "3.fake", "4.fake"
 
 
-def _submit(run: ModelRun, job_id=SETUP, advance_job_id=None, fail_job_ids=()):
-    """Put the first stage in SUBMITTED with the given job IDs, saved to disk"""
+def _submit(
+    run: ModelRun,
+    job_id=SETUP,
+    advance_job_id=None,
+    fail_job_ids=(),
+    age=2 * _UNKNOWN_GRACE_SECONDS,
+):
+    """Put the first stage in SUBMITTED with the given job IDs, saved to disk.
+    By default submitted long enough ago that the UNKNOWN grace period is over
+    """
     state = run.stages[0].state
     state.status = StageStatus.SUBMITTED
-    state.submit_time = time.time() - 100
+    state.submit_time = time.time() - age
     state.job_id = job_id
     state.advance_job_id = advance_job_id
     state.fail_job_ids = list(fail_job_ids)
@@ -57,6 +65,39 @@ def test_is_lost_setup_job_gone_before_follow_up_jobs_is_true(
     """
     _submit(created_run)
     fake_scheduler.job_states = {SETUP: setup_state}
+    assert created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_setup_job_unknown_within_grace_is_false(created_run, fake_scheduler):
+    """Test that a just-submitted setup job missing from a lagging qstat cache
+    (UNKNOWN) doesn't make the stage lost
+    """
+    _submit(created_run, age=60)
+    fake_scheduler.job_states = {SETUP: JobState.UNKNOWN}
+    assert not created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_setup_job_finished_within_grace_is_true(created_run, fake_scheduler):
+    """Test that the grace period only covers UNKNOWN: a setup job PBS reports
+    FINISHED before submitting the follow-up jobs leaves the stage lost
+    """
+    _submit(created_run, age=60)
+    fake_scheduler.job_states = {SETUP: JobState.FINISHED}
+    assert created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_follow_up_jobs_unknown_within_grace_is_true(
+    created_run, fake_scheduler
+):
+    """Test that the grace period only covers the setup job: once the setup job
+    has finished, UNKNOWN advance and fail jobs leave the stage lost
+    """
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL], age=60)
+    fake_scheduler.job_states = {
+        SETUP: JobState.FINISHED,
+        ADVANCE: JobState.UNKNOWN,
+        FAIL: JobState.UNKNOWN,
+    }
     assert created_run.is_lost("spinup_ad")
 
 
@@ -198,6 +239,8 @@ def test_is_lost_stage_retried_on_disk_after_query_is_false(
 def test_lost_stages_lists_lost_stages(two_stage_run, fake_scheduler):
     """Test that lost_stages() returns the lost stages and skips the rest"""
     two_stage_run.submit()  # first stage SUBMITTED; its job is UNKNOWN
+    two_stage_run.stages[0].state.submit_time -= 2 * _UNKNOWN_GRACE_SECONDS
+    two_stage_run.save()
     assert two_stage_run.lost_stages() == ["spinup_ad"]
     fake_scheduler.job_states = {two_stage_run.stages[0].state.job_id: JobState.RUNNING}
     assert not two_stage_run.lost_stages()

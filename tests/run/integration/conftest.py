@@ -32,7 +32,6 @@ def ad_stage_config_dict(script_file) -> dict:
         "script": str(script_file),
         "walltime": "06:00:00",
         "queue": "develop",
-        "kind": "ad",
     }
 
 

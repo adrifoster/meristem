@@ -11,7 +11,6 @@ import pytest
 from meristem.run.stages import (
     Stage,
     StageConfig,
-    StageKind,
     StageState,
     StageStatus,
     _RUNTIME_KEYS,
@@ -53,44 +52,6 @@ def test_stage_status_from_str_invalid_rases():
 def test_stage_status_no_implicit_string_equality():
     """Enum members must not compare equal to raw strings"""
     assert StageStatus.DONE != "done"
-
-
-# ---------------------------------------------------------------------------
-# StageKind
-# ---------------------------------------------------------------------------
-
-
-def test_stage_kind_from_str_valid():
-    """Test that StageKind.from_str works as intended"""
-    assert StageKind.from_str("ad") is StageKind.AD
-    assert StageKind.from_str("sasu") is StageKind.SASU
-    assert StageKind.from_str("SASU") is StageKind.SASU
-    assert StageKind.from_str("sasu ") is StageKind.SASU
-
-
-def test_stage_kind_to_str_valid():
-    """Test that the StageKind.to_str works as intended"""
-    assert StageKind.AD.to_str() == "ad"
-    assert StageKind.SASU.to_str() == "sasu"
-
-
-def test_stage_kind_roundtrip():
-    """Test that all members of StageStatus can be "roundtripped" from the Enum
-    to a string, and back to a member
-    """
-    for member in StageKind:
-        assert StageKind.from_str(member.to_str()) is member
-
-
-def test_stage_kind_from_str_invalid_rases():
-    """Test that StageKind.from_str raises a ValueError with an invalid str"""
-    with pytest.raises(ValueError, match="Invalid StageKind"):
-        StageKind.from_str("not_a_status")
-
-
-def test_stage_kind_no_implicit_string_equality():
-    """Enum members must not compare equal to raw strings"""
-    assert StageKind.AD != "ad"
 
 
 # ---------------------------------------------------------------------------
@@ -231,36 +192,6 @@ def test_stage_state_from_dict_without_advance_and_fail_job_ids():
     assert not stage_state.fail_job_ids
 
 
-@pytest.mark.parametrize("legacy,expected", [("12347.pbs", ["12347.pbs"]), (None, [])])
-def test_stage_state_from_dict_legacy_fail_job_id(legacy, expected):
-    """Test that a state file with the old single fail_job_id still loads"""
-    stage_state = StageState.from_dict(
-        {
-            "status": "submitted",
-            "job_id": "12345.pbs",
-            "submit_time": 1_000_000.0,
-            "fail_job_id": legacy,
-        }
-    )
-    assert stage_state.fail_job_ids == expected
-
-
-def test_stage_from_dict_legacy_fail_job_id(ad_stage_config_dict):
-    """Test that a flat Stage dict with the old fail_job_id loads, rather than
-    the key being passed on to StageConfig
-    """
-    stage = Stage.from_dict(
-        {
-            **ad_stage_config_dict,
-            "status": "submitted",
-            "submit_time": 1_000_000.0,
-            "fail_job_id": "12347.pbs",
-        }
-    )
-    assert stage.state.fail_job_ids == ["12347.pbs"]
-    assert "fail_job_id" not in stage.to_dict()
-
-
 def test_stage_state_from_dict_defaults_optional_fields():
     """Test that a StageState.from_dict correctly instantiates optional fields"""
     stage_state = StageState.from_dict({"status": "pending"})
@@ -393,7 +324,6 @@ def test_stage_state_repr(failed_state):
 def test_stage_config_valid_minimal(minimal_stage_config):
     """Test that StageConfig can be constructed with a minimal dict"""
     assert minimal_stage_config.name == "spinup_ad"
-    assert minimal_stage_config.kind is StageKind.CUSTOM
 
 
 def test_stage_config_empty_name_raises(minimal_stage_config_dict):
@@ -501,13 +431,6 @@ def test_stage_config_select_zero_raises(minimal_stage_config_dict):
         StageConfig.from_dict(config)
 
 
-def test_stage_config_invalid_kind_raises(minimal_stage_config_dict):
-    """Test that StageConfig initialized with a bad StageKind raises a ValueError"""
-    config = {**minimal_stage_config_dict, "kind": "nonsense"}
-    with pytest.raises(ValueError, match="Invalid StageKind"):
-        StageConfig.from_dict(config)
-
-
 def test_stage_config_is_frozen(minimal_stage_config):
     """Test that StageConfig is actually immutable"""
     with pytest.raises(Exception):
@@ -517,11 +440,6 @@ def test_stage_config_is_frozen(minimal_stage_config):
 def test_stage_config_extra_pbs_stored_as_tuple(full_stage_config):
     """Test that StageConfig's extra_pbs attribute is stored as a tuple"""
     assert isinstance(full_stage_config.extra_pbs, tuple)
-
-
-def test_stage_config_to_dict_kind_is_string(full_stage_config):
-    """Test that StageConfig's to_dict correctly sets the kind as a string"""
-    assert full_stage_config.to_dict()["kind"] == "ad"
 
 
 def test_stage_config_to_dict_extra_pbs_is_list(full_stage_config):
@@ -573,13 +491,6 @@ def test_stage_config_script_and_command_raises(minimal_stage_config_dict):
     config = {**minimal_stage_config_dict, "command": "echo hi"}
     with pytest.raises(ValueError, match="both script and command"):
         StageConfig.from_dict(config)
-
-
-def test_stage_config_from_dict_defaults_kind_to_custom(minimal_stage_config_dict):
-    """Test that StageConfig initiated without a kind defaults to CUSTOM"""
-    # kind absent from dict should default to "custom"
-    stage_config = StageConfig.from_dict(minimal_stage_config_dict)
-    assert stage_config.kind is StageKind.CUSTOM
 
 
 def test_stage_config_from_dict_defaults_memory_to_10gb(minimal_stage_config_dict):
@@ -694,16 +605,6 @@ def test_stage_from_dict_does_not_mutate_input(full_stage):
     copy = dict(stage_dict)
     Stage.from_dict(stage_dict)
     assert stage_dict == copy
-
-
-def test_stage_from_dict_legacy_null_case_root(minimal_stage_config_dict):
-    """Test that a stage dict from an older state file, where case_root was a
-    runtime key and always null, loads with the default case_root
-    """
-    stage = Stage.from_dict(
-        {**minimal_stage_config_dict, "status": "pending", "case_root": None}
-    )
-    assert stage.config.case_root is None
 
 
 def test_stage_config_is_frozen_through_stage(full_stage):

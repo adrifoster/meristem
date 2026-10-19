@@ -55,7 +55,6 @@ def full_stage_config_dict(minimal_stage_config_dict) -> dict:
     """Full flat dict for StageConfig with all optional fields set."""
     return {
         **minimal_stage_config_dict,
-        "kind": "ad",
         "walltime": "06:00:00",
         "spinup_check": False,
         "ncpus": 1,
@@ -75,23 +74,21 @@ def full_stage_config(full_stage_config_dict) -> StageConfig:
 
 @pytest.fixture
 def ad_stage_config_dict(script_file) -> dict:
-    """StageConfig dict with kind ad"""
+    """AD StageConfig dict"""
     return {
         "name": "spinup_ad",
         "script": str(script_file),
         "queue": "regular",
-        "kind": "ad",
     }
 
 
 @pytest.fixture
 def sasu_stage_config_dict(script_file) -> dict:
-    """StageConfig dict with kind sasu."""
+    """SASU StageConfig dict."""
     return {
         "name": "spinup_sasu",
         "script": str(script_file),
         "queue": "regular",
-        "kind": "sasu",
     }
 
 
@@ -100,7 +97,7 @@ def run_config_dict(tmp_path, ad_stage_config_dict) -> dict:
     """Run config dict for instantating a ModelRun"""
     return {
         "root": str(tmp_path / "myrun"),
-        "user": "name@ucar.edu",
+        "email": "name@ucar.edu",
         "run_id": "member_0001",
         "project": "PROJ123",
         "stages": [ad_stage_config_dict],
@@ -158,7 +155,7 @@ def two_stage_run(
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
         "project": "PROJ123",
-        "user": "auser",
+        "email": "name@ucar.edu",
         "stages": [ad_stage_config_dict, sasu_stage_config_dict],
     }
     return ModelRun.create(config, scheduler=fake_scheduler)

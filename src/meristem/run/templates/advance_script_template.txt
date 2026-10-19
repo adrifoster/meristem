@@ -6,7 +6,9 @@
 #PBS -A {{ project }}
 #PBS -j oe
 #PBS -k eod
-#PBS -M {{ user }}
+{% if email %}
+#PBS -M {{ email }}
+{% endif %}
 #PBS -m n
 #PBS -W depend=afterok:{{ cime_job_id }}
 set -euo pipefail

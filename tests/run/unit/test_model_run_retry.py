@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from meristem.run.model_run import ModelRun
+from meristem.run.model_run import _UNKNOWN_GRACE_SECONDS, ModelRun
 from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
@@ -136,11 +136,18 @@ def test_retry_unknown_stage_raises(created_run, mocker):
 # ---------------------------------------------------------------------------
 
 
+def _age_submission(run: ModelRun) -> None:
+    """Backdate the first stage's submission past the UNKNOWN grace period"""
+    run.stages[0].state.submit_time -= 2 * _UNKNOWN_GRACE_SECONDS
+    run.save()
+
+
 def _submit_with_jobs(run: ModelRun) -> None:
     """Submit the first stage and record advance/fail jobs, as the setup job would"""
     run.submit()
     run.submit_advance("spinup_ad", "55555.fake")
     run.submit_fail("spinup_ad", "55555.fake")
+    _age_submission(run)
 
 
 def test_retry_lost_resubmits_stage(created_run, fake_scheduler):
@@ -232,6 +239,7 @@ def test_retry_submitted_without_lost_still_raises(created_run, mocker):
 def test_retry_lost_uses_current_stage_when_no_name_given(two_stage_run):
     """Test that retry(None, lost=True) checks and resubmits the current stage"""
     two_stage_run.submit()
+    _age_submission(two_stage_run)
     new_job_id = two_stage_run.retry(None, lost=True)
     assert two_stage_run.stages[0].state.job_id == new_job_id
     assert two_stage_run.stages[0].state.attempts == 2

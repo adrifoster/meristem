@@ -42,7 +42,7 @@ def test_submit_raises_if_template_missing(created_run, mocker):
         ("mem=", "memory"),
         ("#PBS -l walltime=", "walltime"),
         ("#PBS -A ", "project"),
-        ("#PBS -M ", "user"),
+        ("#PBS -M ", "email"),
     ],
 )
 def test_submit_script_contains_pbs_directives(created_run, field, expected):
@@ -58,7 +58,7 @@ def test_submit_script_contains_pbs_directives(created_run, field, expected):
         "memory": str(stage.config.memory),
         "walltime": stage.config.walltime,
         "project": created_run.project,
-        "user": created_run.user,
+        "email": created_run.email,
     }
     assert field + values[expected] in job_file
 
@@ -568,7 +568,7 @@ def test_advance_passes_configured_previous_case_root(
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
         "project": "PROJ123",
-        "user": "auser",
+        "email": "name@ucar.edu",
         "stages": [
             {**ad_stage_config_dict, "case_root": str(ad_case_root)},
             sasu_stage_config_dict,
@@ -599,7 +599,7 @@ def test_submit_script_quotes_awkward_paths(
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
         "project": "PROJ123",
-        "user": "auser",
+        "email": "name@ucar.edu",
         "stages": [
             {**ad_stage_config_dict, "case_root": str(ad_case_root)},
             {

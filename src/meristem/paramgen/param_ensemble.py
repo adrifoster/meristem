@@ -215,8 +215,6 @@ class ParamEnsemble(ABC):
                 'param_dir': 'param_dir/',
                 'ensemble_dir': 'output/',
                 'file_prefix': 'my_run',
-                'default_ds': ds,
-                'n_samples': 200,
                 'fixed_indices': {'fates_pft': [7, 8, 9]},
                 'posterior_sources': 'posteriors.yaml',
 
