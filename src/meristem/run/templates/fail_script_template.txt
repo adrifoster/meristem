@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS -N {{ job_name }}_fail
+#PBS -N {{ job_name }}
 #PBS -q {{ queue }}
 #PBS -l select=1:ncpus=1:mem=1GB
 #PBS -l walltime=0:10:00
@@ -7,6 +7,8 @@
 #PBS -j oe
 #PBS -k eod
 #PBS -M {{ user }}
+{# no mail: PBS aborts this job on every successful run (afternotok unmet) #}
+#PBS -m n
 #PBS -W depend=afternotok:{{ cime_job_id }}
 set -euo pipefail
 

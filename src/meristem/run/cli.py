@@ -7,7 +7,8 @@ First-time setup: meristem run --create --config run.yaml
 All other commands (many called automatically by pipeline):
     meristem run --root /path/to/run --submit [--dry-run]
     meristem run --root /path/to/run --submit-advance --stage spinup_ad --cime-job-id 2003.desched1
-    meristem run --root /path/to/run --submit-fail --stage spinup_ad --cime-job-id 2003.desched1
+    meristem run --root /path/to/run --submit-fail --stage spinup_ad \
+        --cime-job-id 2002.desched1 --cime-job-id 2003.desched1
     meristem run --root /path/to/run --advance --stage spinup_ad
     meristem run --root /path/to/run --fail --stage spinup_ad
     meristem run --root /path/to/run --retry [--stage spinup_ad] [--skip-script] [--lost]
@@ -82,7 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--stage", help="Stage name")
     parser.add_argument(
-        "--cime-job-id", help="CIME PBS job ID (required with --submit-advance)"
+        "--cime-job-id",
+        action="append",
+        help=(
+            "CIME PBS job ID (required with --submit-advance and --submit-fail). "
+            "Repeat with --submit-fail to submit one fail job per CIME job"
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -136,6 +142,8 @@ def validate_args(  # pylint: disable=too-many-branches
             parser.error("--stage is required with --submit-advance")
         if not args.cime_job_id:
             parser.error("--cime-job-id is required with --submit-advance")
+        if len(args.cime_job_id) > 1:
+            parser.error("--cime-job-id can only be given once with --submit-advance")
 
     if args.submit_fail:
         if not args.stage:
@@ -205,14 +213,12 @@ def dispatch(args: argparse.Namespace) -> int:
     elif args.submit_advance:
         _print_job_id(
             "Advance job submitted",
-            run.submit_advance(args.stage, args.cime_job_id, dry_run=args.dry_run),
+            run.submit_advance(args.stage, args.cime_job_id[0], dry_run=args.dry_run),
         )
 
     elif args.submit_fail:
-        _print_job_id(
-            "Fail job submitted",
-            run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run),
-        )
+        job_ids = run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run)
+        print("\n".join(f"Fail job submitted: {job_id}" for job_id in job_ids))
 
     elif args.advance:
         _print_job_id(

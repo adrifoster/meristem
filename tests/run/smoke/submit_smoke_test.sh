@@ -26,8 +26,7 @@ fi
 source "${SETTINGS}"
 
 # variables used in smoke_test.yaml
-export SMOKE_DIR PROJECT
-export SMOKE_ROOT="${OUT_DIR}/run"
+export SMOKE_DIR PROJECT SMOKE_ROOT
 
 CONFIG="${SMOKE_DIR}/smoke_test.yaml"
 

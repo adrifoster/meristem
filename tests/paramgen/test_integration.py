@@ -3,6 +3,7 @@
 from __future__ import annotations
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,10 @@ from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeCo
 from meristem.paramgen.parameter_dataset import ParameterDataset
 
 EXAMPLES_DIR = Path(__file__).parents[2] / "examples" / "paramgen"
+
+# run the CLI through this interpreter (as job scripts do), so the tests don't
+# depend on the meristem console script being on PATH
+MERISTEM = [sys.executable, "-m", "meristem"]
 
 # ===========================================================================
 # Helpers
@@ -276,7 +281,7 @@ def test_cli_clm_lh_example(tmp_path):
     """Full CLI run against the CLM Latin Hypercube example."""
     example = _copy_example("clm_example", tmp_path)
     result = subprocess.run(
-        ["meristem", "paramgen", "lh_config.yaml"],
+        [*MERISTEM, "paramgen", "lh_config.yaml"],
         cwd=example,
         capture_output=True,
         text=True,
@@ -292,7 +297,7 @@ def test_cli_clm_oat_example(tmp_path):
     """Full CLI run against the CLM OAT example."""
     example = _copy_example("clm_example", tmp_path)
     result = subprocess.run(
-        ["meristem", "paramgen", "oat_config.yaml"],
+        [*MERISTEM, "paramgen", "oat_config.yaml"],
         cwd=example,
         capture_output=True,
         text=True,
@@ -307,7 +312,7 @@ def test_cli_fates_lh_example(tmp_path):
     """Full CLI run against the FATES Latin Hypercube example."""
     example = _copy_example("fates_example", tmp_path)
     result = subprocess.run(
-        ["meristem", "paramgen", "lh_config.yaml"],
+        [*MERISTEM, "paramgen", "lh_config.yaml"],
         cwd=example,
         capture_output=True,
         text=True,
@@ -323,7 +328,7 @@ def test_cli_fates_oat_example(tmp_path):
     """Full CLI run against the FATES OAT example."""
     example = _copy_example("fates_example", tmp_path)
     result = subprocess.run(
-        ["meristem", "paramgen", "oat_config.yaml"],
+        [*MERISTEM, "paramgen", "oat_config.yaml"],
         cwd=example,
         capture_output=True,
         text=True,

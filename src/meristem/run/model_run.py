@@ -243,6 +243,11 @@ class ModelRun:
         its result. The stage is only lost if it is still SUBMITTED on disk with
         the same job IDs; this run's stages are updated to match the disk.
 
+        This is also how a crash in an earlier segment of a resubmitting CIME run
+        (RESUBMIT > 0) shows up: CIME's JOB_IDS only holds the last segment's
+        jobs, so the fail jobs can't watch earlier segments, and PBS deletes
+        every later job (including the advance and fail jobs) along with them.
+
         Known gaps (the stage is reported lost while its CIME run is going):
         a setup job killed between case.submit and --submit-advance, and stages
         submitted before advance/fail job IDs were recorded (old state files).
@@ -264,7 +269,7 @@ class ModelRun:
         recorded = (
             stage.state.job_id,
             stage.state.advance_job_id,
-            stage.state.fail_job_id,
+            *stage.state.fail_job_ids,
         )
         job_ids = [
             job_id for job_id in recorded if job_id and not job_id.startswith("DRY_")
@@ -284,7 +289,7 @@ class ModelRun:
         return fresh.status == StageStatus.SUBMITTED and recorded == (
             fresh.job_id,
             fresh.advance_job_id,
-            fresh.fail_job_id,
+            *fresh.fail_job_ids,
         )
 
     def _stage(self, name: str) -> Stage:
@@ -468,35 +473,53 @@ class ModelRun:
         return job_id
 
     def submit_fail(
-        self, stage_name: str, cime_job_id: str, dry_run: bool = False
-    ) -> str:
-        """Write the fail script with the CIME job ID and submit it
+        self, stage_name: str, cime_job_ids: str | list[str], dry_run: bool = False
+    ) -> list[str]:
+        """Write and submit one fail script per CIME job ID
         This is so that if our CIME job crashes we can fail the stage
         Called from the setup job script after case.submit completes
 
+        One fail job per CIME job is needed because PBS deletes (rather than
+        runs) an afternotok job whose dependency was itself deleted: if
+        case.run crashes, st_archive is deleted along with anything waiting on
+        it. At most one of these fail jobs ever runs, since a failed job takes
+        every job after it in the chain down with it.
+
         Args:
             stage_name (str): name of stage
-            cime_job_id (str): CIME job ID
+            cime_job_ids (str | list[str]): CIME job ID(s), e.g. case.run and
+                case.st_archive. Duplicates are submitted once
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
 
         Returns:
-            str: PBS job ID of the fail script
+            list[str]: PBS job IDs of the fail scripts
         """
         stage = self._stage(stage_name)
-        job_file = self._write_fail_script(stage, cime_job_id)
-        job_id = (
-            f"DRY_fail_{self.run_id}_{stage_name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
-        stage.state.fail_job_id = job_id
-        self.save()
-        print(
-            f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
-            f"(afternotok:{cime_job_id})"
-        )
-        return job_id
+        if isinstance(cime_job_ids, str):
+            cime_job_ids = [cime_job_ids]
+        cime_job_ids = list(dict.fromkeys(cime_job_ids))
+        if not cime_job_ids:
+            raise ValueError("submit_fail needs at least one CIME job ID")
+
+        stage.state.fail_job_ids = []
+        for idx, cime_job_id in enumerate(cime_job_ids, start=1):
+            # a single fail job keeps the plain _fail name
+            suffix = f"_fail_{idx}" if len(cime_job_ids) > 1 else "_fail"
+            job_file = self._write_fail_script(stage, cime_job_id, suffix)
+            job_id = (
+                f"DRY{suffix}_{self.run_id}_{stage_name}"
+                if dry_run
+                else self.scheduler.submit(job_file)
+            )
+            # save after each one so a later qsub failure keeps what was submitted
+            stage.state.fail_job_ids.append(job_id)
+            self.save()
+            print(
+                f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
+                f"(afternotok:{cime_job_id})"
+            )
+        return list(stage.state.fail_job_ids)
 
     def advance(self, completed_stage_name: str, dry_run: bool = False) -> str | None:
         """Advance the pipeline and submit the next stage
@@ -577,7 +600,7 @@ class ModelRun:
         stage.state.submit_time = None
         stage.state.job_id = None
         stage.state.advance_job_id = None
-        stage.state.fail_job_id = None
+        stage.state.fail_job_ids = []
         self.save()
         return self._submit_stage(stage, dry_run=dry_run, skip_script=skip_script)
 
@@ -719,18 +742,22 @@ class ModelRun:
         job_file.write_text(template, encoding="utf-8")
         return job_file
 
-    def _write_fail_script(self, stage: Stage, cime_job_id: str) -> Path:
+    def _write_fail_script(
+        self, stage: Stage, cime_job_id: str, suffix: str = "_fail"
+    ) -> Path:
         """Write the fail job script with the real CIME job ID already in
         the afternotok dependency line
 
         Args:
-            stage (Stage): Stage to advance
+            stage (Stage): Stage to fail
             cime_job_id (str): CIME job ID
+            suffix (str, optional): appended to the job and file name, so each
+                fail job of a stage gets its own script. Defaults to "_fail".
 
         Returns:
             Path: path to script
         """
-        job_name = f"{self.run_id}_{stage.config.name}_fail"
+        job_name = f"{self.run_id}_{stage.config.name}{suffix}"
         job_file = self.root / f"{job_name}.pbs"
 
         template = _ENV.get_template("fail_script_template.txt")

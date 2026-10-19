@@ -23,7 +23,7 @@ def test_retry_resets_to_pending_before_submitting(created_run, mocker):
     """Test that retry() resets stage to PENDING before calling _submit_stage"""
     created_run.stages[0].state.status = StageStatus.FAILED
     created_run.stages[0].state.advance_job_id = "111.pbs"
-    created_run.stages[0].state.fail_job_id = "222.pbs"
+    created_run.stages[0].state.fail_job_ids = ["222.pbs", "333.pbs"]
 
     def check_status(stage, dry_run=False, skip_script=False):
         # signature must match _submit_stage, which is called with these as keywords
@@ -33,7 +33,7 @@ def test_retry_resets_to_pending_before_submitting(created_run, mocker):
         assert stage.state.submit_time is None
         assert stage.state.job_id is None
         assert stage.state.advance_job_id is None
-        assert stage.state.fail_job_id is None
+        assert stage.state.fail_job_ids == []
         return "12345.pbs"
 
     mocker.patch.object(created_run, "_submit_stage", side_effect=check_status)
@@ -158,7 +158,7 @@ def test_retry_lost_resubmits_stage(created_run, fake_scheduler):
     assert state.status is StageStatus.SUBMITTED
     assert state.job_id == new_job_id
     assert state.advance_job_id is None
-    assert state.fail_job_id is None
+    assert state.fail_job_ids == []
     assert state.attempts == 2
     reloaded = ModelRun.load(created_run.root, scheduler=fake_scheduler)
     assert reloaded.stages[0].state == state

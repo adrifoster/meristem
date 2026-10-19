@@ -10,17 +10,17 @@ from meristem.run.model_run import ModelRun
 from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
-SETUP, ADVANCE, FAIL = "1.fake", "2.fake", "3.fake"
+SETUP, ADVANCE, FAIL, FAIL_2 = "1.fake", "2.fake", "3.fake", "4.fake"
 
 
-def _submit(run: ModelRun, job_id=SETUP, advance_job_id=None, fail_job_id=None):
+def _submit(run: ModelRun, job_id=SETUP, advance_job_id=None, fail_job_ids=()):
     """Put the first stage in SUBMITTED with the given job IDs, saved to disk"""
     state = run.stages[0].state
     state.status = StageStatus.SUBMITTED
     state.submit_time = time.time() - 100
     state.job_id = job_id
     state.advance_job_id = advance_job_id
-    state.fail_job_id = fail_job_id
+    state.fail_job_ids = list(fail_job_ids)
     run.save()
 
 
@@ -77,7 +77,7 @@ def test_is_lost_cime_running_is_false(created_run, fake_scheduler):
     """Test that a stage whose advance and fail jobs are waiting on the CIME run
     isn't lost, even though the setup job has finished
     """
-    _submit(created_run, advance_job_id=ADVANCE, fail_job_id=FAIL)
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL])
     fake_scheduler.job_states = {
         SETUP: JobState.FINISHED,
         ADVANCE: JobState.QUEUED,
@@ -91,9 +91,30 @@ def test_is_lost_all_jobs_gone_is_true(created_run, fake_scheduler, gone):
     """Test that a stage is lost once its setup, advance, and fail jobs are all
     finished or unknown to PBS
     """
-    _submit(created_run, advance_job_id=ADVANCE, fail_job_id=FAIL)
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL])
     fake_scheduler.job_states = {SETUP: gone, ADVANCE: gone, FAIL: gone}
     assert created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_one_of_two_fail_jobs_queued_is_false(created_run, fake_scheduler):
+    """Test that a stage isn't lost while any of its fail jobs is still waiting"""
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL, FAIL_2])
+    fake_scheduler.job_states = {
+        SETUP: JobState.FINISHED,
+        ADVANCE: JobState.UNKNOWN,
+        FAIL: JobState.UNKNOWN,
+        FAIL_2: JobState.QUEUED,
+    }
+    assert not created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_two_fail_jobs_all_gone_is_true(created_run, fake_scheduler):
+    """Test that a stage is lost once every job, including both fail jobs, is gone
+    (e.g. an earlier segment of a resubmitting CIME run crashed)
+    """
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL, FAIL_2])
+    assert created_run.is_lost("spinup_ad")
+    assert fake_scheduler.queried == [[SETUP, ADVANCE, FAIL, FAIL_2]]
 
 
 def test_is_lost_only_advance_recorded_and_queued_is_false(created_run, fake_scheduler):
@@ -107,7 +128,7 @@ def test_is_lost_only_advance_recorded_and_queued_is_false(created_run, fake_sch
 
 def test_is_lost_queries_all_recorded_jobs_once(created_run, fake_scheduler):
     """Test that is_lost makes a single query for all recorded job IDs"""
-    _submit(created_run, advance_job_id=ADVANCE, fail_job_id=FAIL)
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL])
     created_run.is_lost("spinup_ad")
     assert fake_scheduler.queried == [[SETUP, ADVANCE, FAIL]]
 
@@ -118,7 +139,7 @@ def test_is_lost_dry_run_is_false(created_run, fake_scheduler):
         created_run,
         job_id="DRY_member_0001_spinup_ad",
         advance_job_id="DRY_advance_member_0001_spinup_ad",
-        fail_job_id="DRY_fail_member_0001_spinup_ad",
+        fail_job_ids=["DRY_fail_member_0001_spinup_ad"],
     )
     assert not created_run.is_lost("spinup_ad")
     assert not fake_scheduler.queried
@@ -140,7 +161,7 @@ def test_is_lost_stage_done_on_disk_after_query_is_false(
     """Test that a stage the advance job marked DONE on disk after this run was
     loaded isn't lost, and the run picks up the DONE state
     """
-    _submit(created_run, advance_job_id=ADVANCE, fail_job_id=FAIL)
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL])
 
     def advance_finishes(job_ids):
         # the advance job marks the stage DONE and exits before qstat runs
@@ -161,12 +182,12 @@ def test_is_lost_stage_retried_on_disk_after_query_is_false(
     """Test that a stage retried elsewhere after this run was loaded (SUBMITTED
     again, with new job IDs) isn't reported lost on the old jobs' states
     """
-    _submit(created_run, advance_job_id=ADVANCE, fail_job_id=FAIL)
+    _submit(created_run, advance_job_id=ADVANCE, fail_job_ids=[FAIL])
 
     def retried_elsewhere(job_ids):
         other = ModelRun.load(created_run.root, scheduler=fake_scheduler)
         state = other.stages[0].state
-        state.job_id, state.advance_job_id, state.fail_job_id = "9.fake", None, None
+        state.job_id, state.advance_job_id, state.fail_job_ids = "9.fake", None, []
         other.save()
         return {job_id: JobState.FINISHED for job_id in job_ids}
 

@@ -271,6 +271,116 @@ def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     assert f'meristem run --root "$RUN_ROOT" {command} --stage "$STAGE"' in job_file
 
 
+def _run_cime_block(
+    run: ModelRun, job_ids: str
+) -> tuple[subprocess.CompletedProcess, Path]:
+    """Run the setup script's CIME block (cd case root through the meristem
+    calls) against stub case.submit and xmlquery, with meristem recording its
+    arguments instead of running
+
+    Returns:
+        tuple: the finished process, and the stub case root
+    """
+    case_root = run.root / run.stages[0].config.name
+    case_root.mkdir(parents=True, exist_ok=True)
+    (case_root / "case.submit").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$@" > submit_args.txt\n'
+    )
+    (case_root / "xmlquery").write_text(
+        '#!/bin/bash\n[[ "$*" == "--value JOB_IDS" ]] && printf "%s" "$FAKE_JOB_IDS"\n'
+    )
+    for stub in ("case.submit", "xmlquery"):
+        (case_root / stub).chmod(0o755)
+
+    lines = (run.root / f"{run.run_id}_{run.stages[0].config.name}.pbs").read_text()
+    lines = lines.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("cd "))
+    end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
+    calls = run.root / "meristem_calls.txt"
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            "RUN_ROOT=root STAGE=stage",
+            f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; }}',
+            *lines[start:end],
+        ]
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env={"PATH": "/usr/bin:/bin", "FAKE_JOB_IDS": job_ids},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, case_root
+
+
+@pytest.mark.parametrize(
+    "job_ids,advance_on,fail_on",
+    [
+        (
+            "case.run:100.desched1, case.st_archive:101.desched1",
+            "101.desched1",
+            "100.desched1 --cime-job-id 101.desched1",
+        ),
+        # DOUT_S=FALSE: no archiver, so everything waits on case.run
+        (
+            "case.run:100.desched1",
+            "100.desched1",
+            "100.desched1 --cime-job-id 100.desched1",
+        ),
+    ],
+)
+def test_submit_script_cime_block_uses_case_run_and_archive_ids(
+    created_run, job_ids, advance_on, fail_on
+):
+    """Test that the setup script calls case.submit with only its own arguments,
+    advances after the final (archive) job, and watches case.run and the final
+    job with fail jobs
+    """
+    created_run.submit()
+    result, case_root = _run_cime_block(created_run, job_ids)
+    assert result.returncode == 0, result.stderr
+
+    # case.submit and JOB_IDS= on separate lines (trim_blocks once joined them)
+    submit_args = (case_root / "submit_args.txt").read_text().splitlines()
+    assert submit_args == ["--resubmit-immediate"]
+
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls == [
+        f"run --root root --submit-advance --stage stage --cime-job-id {advance_on}",
+        f"run --root root --submit-fail --stage stage --cime-job-id {fail_on}",
+    ]
+
+
+def test_submit_script_cime_block_passes_submit_args(
+    run_config_dict, ad_stage_config_dict, fake_scheduler
+):
+    """Test that submit_args reach case.submit as one -a argument, on its own line"""
+    run_config_dict["stages"] = [
+        {**ad_stage_config_dict, "submit_args": "-l job_priority=premium"}
+    ]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    result, case_root = _run_cime_block(
+        run, "case.run:100.desched1, case.st_archive:101.desched1"
+    )
+    assert result.returncode == 0, result.stderr
+    submit_args = (case_root / "submit_args.txt").read_text().splitlines()
+    assert submit_args == ["--resubmit-immediate", "-a", "-l job_priority=premium"]
+
+
+def test_submit_script_cime_block_without_case_run_id_fails(created_run):
+    """Test that the setup script stops before submitting advance/fail jobs when
+    JOB_IDS has no case.run ID
+    """
+    created_run.submit()
+    result, _ = _run_cime_block(created_run, "")
+    assert result.returncode != 0
+    assert "No case.run job ID" in result.stderr
+    assert not (created_run.root / "meristem_calls.txt").exists()
+
+
 def test_submit_stage_status_set_to_submitted(created_run):
     """Test that ModelRun.submit() sets the first stage status to SUBMITTED"""
     created_run.submit()

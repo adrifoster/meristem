@@ -213,13 +213,13 @@ def test_stage_state_from_dict_roundtrip(submitted_state):
 
 
 def test_stage_state_from_dict_roundtrip_with_advance_and_fail_job_ids(submitted_state):
-    """Test that advance_job_id and fail_job_id survive a to_dict/from_dict round trip"""
+    """Test that advance_job_id and fail_job_ids survive a to_dict/from_dict round trip"""
     submitted_state.advance_job_id = "12346.pbs"
-    submitted_state.fail_job_id = "12347.pbs"
+    submitted_state.fail_job_ids = ["12347.pbs", "12348.pbs"]
     roundtrip = StageState.from_dict(submitted_state.to_dict())
     assert roundtrip == submitted_state
     assert roundtrip.advance_job_id == "12346.pbs"
-    assert roundtrip.fail_job_id == "12347.pbs"
+    assert roundtrip.fail_job_ids == ["12347.pbs", "12348.pbs"]
 
 
 def test_stage_state_from_dict_without_advance_and_fail_job_ids():
@@ -228,7 +228,37 @@ def test_stage_state_from_dict_without_advance_and_fail_job_ids():
         {"status": "submitted", "job_id": "12345.pbs", "submit_time": 1_000_000.0}
     )
     assert stage_state.advance_job_id is None
-    assert stage_state.fail_job_id is None
+    assert not stage_state.fail_job_ids
+
+
+@pytest.mark.parametrize("legacy,expected", [("12347.pbs", ["12347.pbs"]), (None, [])])
+def test_stage_state_from_dict_legacy_fail_job_id(legacy, expected):
+    """Test that a state file with the old single fail_job_id still loads"""
+    stage_state = StageState.from_dict(
+        {
+            "status": "submitted",
+            "job_id": "12345.pbs",
+            "submit_time": 1_000_000.0,
+            "fail_job_id": legacy,
+        }
+    )
+    assert stage_state.fail_job_ids == expected
+
+
+def test_stage_from_dict_legacy_fail_job_id(ad_stage_config_dict):
+    """Test that a flat Stage dict with the old fail_job_id loads, rather than
+    the key being passed on to StageConfig
+    """
+    stage = Stage.from_dict(
+        {
+            **ad_stage_config_dict,
+            "status": "submitted",
+            "submit_time": 1_000_000.0,
+            "fail_job_id": "12347.pbs",
+        }
+    )
+    assert stage.state.fail_job_ids == ["12347.pbs"]
+    assert "fail_job_id" not in stage.to_dict()
 
 
 def test_stage_state_from_dict_defaults_optional_fields():
@@ -279,7 +309,7 @@ def test_stage_state_equality_with_non_stage_state_returns_not_implemented():
         ("_status", StageStatus.DONE),
         ("job_id", "99999.pbs"),  # no underscore
         ("advance_job_id", "99998.pbs"),
-        ("fail_job_id", "99997.pbs"),
+        ("fail_job_ids", ["99997.pbs"]),
         ("_submit_time", 2_000_000.0),
         ("_end_time", 2_003_600.0),
         ("_attempts", 5),
@@ -349,7 +379,7 @@ def test_stage_state_repr(failed_state):
     assert result == (
         f"StageState(status={failed_state.status!r}, job_id={failed_state.job_id!r}, "
         f"advance_job_id={failed_state.advance_job_id!r}, "
-        f"fail_job_id={failed_state.fail_job_id!r}, "
+        f"fail_job_ids={failed_state.fail_job_ids!r}, "
         f"submit_time={failed_state.submit_time!r}, "
         f"end_time={failed_state.end_time!r}, attempts={failed_state.attempts!r})"
     )
