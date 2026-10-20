@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
 import yaml
 
+from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
 from meristem.ensemble.model_ensemble import Ensemble
+from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
+from meristem.run.stages import StageStatus
 
 from .conftest import MEMBERS
 
@@ -44,6 +48,18 @@ def created_ensemble(ready_config_dict) -> Ensemble:
 # ---------------------------------------------------------------------------
 # properties
 # ---------------------------------------------------------------------------
+
+
+def test_param_files_default_empty(ensemble_config_dict):
+    """Test that param_files defaults to an empty dict"""
+    assert _ensemble(ensemble_config_dict).param_files == {}
+
+
+def test_param_files_from_init(ensemble_config_dict):
+    """Test that param_files passed to __init__ are stored"""
+    param_files = {"ens_0000": Path("/p/ens_0000.nc")}
+    ensemble = Ensemble(EnsembleConfig.from_dict(ensemble_config_dict), param_files)
+    assert ensemble.param_files == param_files
 
 
 def test_root_property(ensemble_config_dict):
@@ -156,6 +172,177 @@ def test_create_unbuilt_base_case_raises(
     assert not Path(ensemble_config_dict["root"]).exists()
 
 
+def test_create_sets_param_files(ready_config_dict):
+    """Test that create finds and stores every member's parameter file"""
+    directory = Path(ready_config_dict["paramgen"]["dir"])
+    ensemble = Ensemble.create(ready_config_dict)
+    assert ensemble.param_files == {m: directory / f"{m}.nc" for m in MEMBERS}
+
+
+def test_create_with_existing_stage_script(ready_config_dict, tmp_path):
+    """Test that create passes when a member stage's script exists"""
+    script = tmp_path / "setup.sh"
+    script.touch()
+    ready_config_dict["member_stages"] = [
+        {"name": "setup", "script": str(script), "queue": "regular"}
+    ]
+    Ensemble.create(ready_config_dict)
+
+
+def test_create_missing_stage_script_raises(ready_config_dict, tmp_path):
+    """Test that create checks member stage scripts and writes nothing if one
+    is missing
+    """
+    ready_config_dict["member_stages"] = [
+        {"name": "setup", "script": str(tmp_path / "nope.sh"), "queue": "regular"}
+    ]
+    with pytest.raises(FileNotFoundError, match=r"setup: .*nope\.sh"):
+        Ensemble.create(ready_config_dict)
+    assert not Path(ready_config_dict["root"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# create: member runs
+# ---------------------------------------------------------------------------
+
+
+def _member_run(ensemble: Ensemble, member: str) -> ModelRun:
+    """Load a member's ModelRun from disk"""
+    return ModelRun.load(ensemble.root / "members" / member)
+
+
+def test_create_writes_member_runs(created_ensemble):
+    """Test that create writes a loadable ModelRun for every member, and no others"""
+    members_dir = created_ensemble.root / "members"
+    assert sorted(p.name for p in members_dir.iterdir()) == MEMBERS
+    for member in MEMBERS:
+        assert (members_dir / member / _RUN_STATE_FILE).is_file()
+        run = _member_run(created_ensemble, member)
+        assert run.run_id == f"my_ens-1_{member}"
+
+
+def test_create_member_runs_only_requested_members(ready_config_dict):
+    """Test that only requested members get a run"""
+    ready_config_dict["paramgen"]["members"] = [MEMBERS[1]]
+    ensemble = Ensemble.create(ready_config_dict)
+    assert [p.name for p in (ensemble.root / "members").iterdir()] == [MEMBERS[1]]
+
+
+def test_create_member_run_project_and_email(ready_config_dict):
+    """Test that the config's project and email are passed to member runs"""
+    ready_config_dict["email"] = "me@x.org"
+    run = _member_run(Ensemble.create(ready_config_dict), MEMBERS[0])
+    assert run.project == "PROJ123"
+    assert run.email == "me@x.org"
+
+
+def test_create_member_run_project_from_env(ready_config_dict, monkeypatch):
+    """Test that member runs fall back to $PROJECT when the config has none"""
+    monkeypatch.setenv("PROJECT", "ENVPROJ")
+    ready_config_dict["project"] = ""
+    run = _member_run(Ensemble.create(ready_config_dict), MEMBERS[0])
+    assert run.project == "ENVPROJ"
+
+
+def test_create_no_project_raises(ready_config_dict, monkeypatch):
+    """Test that create raises, writing nothing, with no project or $PROJECT"""
+    monkeypatch.delenv("PROJECT", raising=False)
+    ready_config_dict["project"] = ""
+    with pytest.raises(ValueError, match="project"):
+        Ensemble.create(ready_config_dict)
+    assert not Path(ready_config_dict["root"]).exists()
+
+
+def test_create_member_stages_run_prepare(ready_config_dict, tmp_path):
+    """Test that each member stage, in order, runs meristem ensemble prepare in
+    its own case under case_dir, keeping the stage's other settings
+    """
+    ready_config_dict["member_stages"] = [
+        {"name": "ad", "queue": "regular"},
+        {"name": "post", "queue": "develop", "ncpus": 4},
+    ]
+    ensemble = Ensemble.create(ready_config_dict)
+    member = MEMBERS[1]
+    run = _member_run(ensemble, member)
+    assert run.stage_names == ["ad", "post"]
+    for stage in run.stages:
+        name = stage.config.name
+        assert stage.config.script is None
+        assert shlex.split(stage.config.command) == [
+            *shlex.split(meristem_cmd()),
+            "ensemble",
+            "prepare",
+            "--root",
+            str(ensemble.root),
+            "--member",
+            member,
+            "--stage",
+            name,
+        ]
+        assert (
+            stage.config.case_root == tmp_path / "cases" / f"base_case_{member}_{name}"
+        )
+        assert stage.state.status == StageStatus.PENDING
+    assert run.stages[1].config.queue == "develop"
+    assert run.stages[1].config.ncpus == 4
+
+
+def test_create_member_stage_keeps_script(ready_config_dict, tmp_path):
+    """Test that a member stage with a script keeps it and gets the prepare
+    command too (the job runs prepare, then the script)
+    """
+    script = tmp_path / "setup.sh"
+    script.touch()
+    ready_config_dict["member_stages"] = [
+        {"name": "setup", "script": str(script), "queue": "regular"}
+    ]
+    stage = _member_run(Ensemble.create(ready_config_dict), MEMBERS[0]).stages[0]
+    assert stage.config.script == script
+    assert "prepare" in shlex.split(stage.config.command)
+
+
+def test_create_member_stage_without_script_runs_only_prepare(created_ensemble):
+    """Test that a member stage with no script runs only prepare"""
+    stage = _member_run(created_ensemble, MEMBERS[0]).stages[0]
+    assert stage.config.script is None
+    assert "prepare" in shlex.split(stage.config.command)
+
+
+def test_create_member_stage_command_quotes_root(ready_config_dict, tmp_path):
+    """Test that a root with shell special characters stays one argument in the
+    command
+    """
+    root = tmp_path / "it's_root"
+    ready_config_dict["root"] = str(root)
+    stage = _member_run(Ensemble.create(ready_config_dict), MEMBERS[0]).stages[0]
+    args = shlex.split(stage.config.command)
+    assert args[args.index("--root") + 1] == str(root)
+
+
+def test_create_invalid_member_run_id_raises(
+    ensemble_config_dict, write_paramgen, write_base_case
+):
+    """Test that a member name ModelRun can't use as a run_id raises before
+    anything is written (not after some members' runs are)
+    """
+    write_paramgen(members=["ens_0000", "ens.0001"])
+    write_base_case()
+    ensemble_config_dict["project"] = "PROJ123"
+    with pytest.raises(ValueError, match=r"run_id 'my_ens-1_ens\.0001'"):
+        Ensemble.create(ensemble_config_dict)
+    assert not Path(ensemble_config_dict["root"]).exists()
+
+
+def test_create_relative_case_dir_raises(ready_config_dict):
+    """Test that a relative case_dir (which would give relative member
+    case_roots) raises before anything is written
+    """
+    ready_config_dict["case_dir"] = "cases"
+    with pytest.raises(ValueError, match="case_dir 'cases' must be an absolute path"):
+        Ensemble.create(ready_config_dict)
+    assert not Path(ready_config_dict["root"]).exists()
+
+
 # ---------------------------------------------------------------------------
 # load / save
 # ---------------------------------------------------------------------------
@@ -188,16 +375,53 @@ def test_load_does_not_recheck_inputs(created_ensemble, ready_config_dict):
     assert Ensemble.load(created_ensemble.root).config == created_ensemble.config
 
 
+def test_load_restores_param_files(created_ensemble):
+    """Test that load restores param_files as Paths, in member order"""
+    loaded = Ensemble.load(created_ensemble.root)
+    assert loaded.param_files == created_ensemble.param_files
+    assert list(loaded.param_files) == MEMBERS
+    assert all(isinstance(path, Path) for path in loaded.param_files.values())
+
+
+def test_load_restores_member_subset(ready_config_dict):
+    """Test that load restores only the requested members' parameter files"""
+    ready_config_dict["paramgen"]["members"] = [MEMBERS[2], MEMBERS[0]]
+    created = Ensemble.create(ready_config_dict)
+    assert list(Ensemble.load(created.root).param_files) == [MEMBERS[0], MEMBERS[2]]
+
+
 def test_load_missing_state_file_raises(tmp_path):
     """Test that load raises FileNotFoundError when there's no state file"""
     with pytest.raises(FileNotFoundError, match="Ensemble.create"):
         Ensemble.load(tmp_path)
 
 
-def test_save_writes_config_under_config_key(created_ensemble):
-    """Test that the state file holds the config's to_dict under "config" """
+def test_save_writes_config_and_members(created_ensemble):
+    """Test that the state file holds the config's to_dict under "config" and
+    the member -> parameter file paths (as str) under "members"
+    """
     state = json.loads((created_ensemble.root / _STATE_FILE).read_text("utf-8"))
-    assert state == {"config": created_ensemble.config.to_dict()}
+    assert state == {
+        "config": created_ensemble.config.to_dict(),
+        "members": {m: str(p) for m, p in created_ensemble.param_files.items()},
+    }
+
+
+def test_save_without_param_files_writes_empty_members(ensemble_config_dict):
+    """Test that an in-memory Ensemble with no param_files saves empty members"""
+    ensemble = _ensemble(ensemble_config_dict)
+    ensemble.root.mkdir(parents=True)
+    ensemble.save()
+    state = json.loads((ensemble.root / _STATE_FILE).read_text("utf-8"))
+    assert state["members"] == {}
+
+
+def test_save_writes_current_param_files(created_ensemble):
+    """Test that save writes param_files as they are now, not as at create"""
+    created_ensemble.param_files = {"ens_0001": Path("/new/ens_0001.nc")}
+    created_ensemble.save()
+    loaded = Ensemble.load(created_ensemble.root)
+    assert loaded.param_files == {"ens_0001": Path("/new/ens_0001.nc")}
 
 
 def test_save_leaves_no_tmp_file(created_ensemble):
@@ -493,3 +717,59 @@ def test_check_base_case_runs_in_base_case_dir(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     _ensemble(ensemble_config_dict).check_base_case()
+
+
+# ---------------------------------------------------------------------------
+# check_stage_scripts
+# ---------------------------------------------------------------------------
+
+
+def _stage(name: str, script: Path | None = None) -> dict:
+    """A member stage dict running script, or no script if None"""
+    if script is None:
+        return {"name": name, "queue": "regular"}
+    return {"name": name, "script": str(script), "queue": "regular"}
+
+
+def test_check_stage_scripts_no_script_stages_pass(ensemble_config_dict):
+    """Test that stages without a script need no file"""
+    _ensemble(ensemble_config_dict).check_stage_scripts()
+
+
+def test_check_stage_scripts_existing_scripts_pass(ensemble_config_dict, tmp_path):
+    """Test that stages whose scripts exist pass, alongside stages without one"""
+    script = tmp_path / "setup.sh"
+    script.touch()
+    ensemble_config_dict["member_stages"] = [_stage("setup", script), _stage("run")]
+    _ensemble(ensemble_config_dict).check_stage_scripts()
+
+
+def test_check_stage_scripts_directory_raises(ensemble_config_dict, tmp_path):
+    """Test that a script path that's a directory, not a file, raises"""
+    script = tmp_path / "scripts"
+    script.mkdir()
+    ensemble_config_dict["member_stages"] = [_stage("setup", script)]
+    with pytest.raises(FileNotFoundError, match="setup"):
+        _ensemble(ensemble_config_dict).check_stage_scripts()
+
+
+def test_check_stage_scripts_reports_all_missing(ensemble_config_dict, tmp_path):
+    """Test that every missing script is reported in one error, in stage order,
+    and stages with existing scripts or no script aren't
+    """
+    present = tmp_path / "present.sh"
+    present.touch()
+    ensemble_config_dict["member_stages"] = [
+        _stage("first", tmp_path / "a.sh"),
+        _stage("ok", present),
+        _stage("no_script"),
+        _stage("last", tmp_path / "b.sh"),
+    ]
+    with pytest.raises(FileNotFoundError) as excinfo:
+        _ensemble(ensemble_config_dict).check_stage_scripts()
+    lines = str(excinfo.value).splitlines()
+    assert lines[0] == "member stage script(s) not found:"
+    assert lines[1:] == [
+        f"  first: {tmp_path / 'a.sh'}",
+        f"  last: {tmp_path / 'b.sh'}",
+    ]

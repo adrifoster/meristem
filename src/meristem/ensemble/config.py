@@ -34,6 +34,49 @@ _OPTIONAL_PARAMGEN_KEYS = frozenset({"members"})
 _PARAMFILE_KEYS = frozenset({"paramfile", "fates_paramfile"})
 
 
+def _to_absolute_path(name: str, path: Path | str | None) -> Path | None:
+    """Convert a path field to a Path, checking it's absolute
+
+    Args:
+        name (str): field name, for the error message
+        path (Path | str | None): path; None (an unset optional field) passes
+
+    Raises:
+        ValueError: if path is relative, hinting at an unset environment
+        variable if it still contains a $
+
+    Returns:
+        Path | None: path as a Path, or None
+    """
+    if path is None:
+        return None
+    path = Path(path)
+    if not path.is_absolute():
+        hint = " (is an environment variable unset?)" if "$" in str(path) else ""
+        raise ValueError(f"{name} {str(path)!r} must be an absolute path{hint}.")
+    return path
+
+
+def _validate_member_stage(stage: StageConfig) -> None:
+    """Check a member stage can be run by the ensemble
+
+    Raises:
+        ValueError: if the stage sets no_cime (every member stage runs a CIME
+        case) or command (the ensemble sets it to meristem ensemble prepare)
+    """
+    if stage.no_cime:
+        raise ValueError(
+            f"member stage {stage.name!r}: no_cime is not allowed; "
+            "every member stage runs a CIME case."
+        )
+    if stage.command:
+        raise ValueError(
+            f"member stage {stage.name!r}: command is not allowed; the ensemble "
+            "runs meristem ensemble prepare for each stage, then the stage's "
+            "script (if any)."
+        )
+
+
 def _validate_members(members) -> None:
     """Check that a members list is non-empty, all non-empty strings, and unique
 
@@ -111,21 +154,17 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
         if len(names) != len(set(names)):
             raise ValueError(f"member stage names must be unique, got {names}.")
         for stage in self.member_stages:
-            if stage.no_cime:
-                raise ValueError(
-                    f"member stage {stage.name!r}: no_cime is not allowed; "
-                    "every member stage runs a CIME case."
-                )
+            _validate_member_stage(stage)
 
         if self.members is not None:
             _validate_members(self.members)
 
-        # __setattr__ is required because the dataclass is frozen
-        for name in ("root", "base_case", "case_dir", "paramgen_dir"):
-            object.__setattr__(self, name, Path(getattr(self, name)))
-
-        if self.output_root is not None:
-            object.__setattr__(self, "output_root", Path(self.output_root))
+        # paths must be absolute: they end up in PBS jobs (member commands, case
+        # roots, saved parameter file paths), which don't run from the current
+        # directory. __setattr__ is required because the dataclass is frozen
+        for name in ("root", "base_case", "case_dir", "paramgen_dir", "output_root"):
+            path = _to_absolute_path(name, getattr(self, name))
+            object.__setattr__(self, name, path)
 
         object.__setattr__(self, "member_stages", tuple(self.member_stages))
 

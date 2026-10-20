@@ -321,9 +321,12 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
     extra_pbs: additional raw #PBS directives
-    script: path to setup script; must either supply this or command;
-        called as bash <script> <case_root> <previous_case_name> <previous_case_root>
-    command: command to run (in place of script)
+    script: path to the user's setup script; called as
+        bash <script> <case_root> <previous_case_name> <previous_case_root>
+    command: built-in setup command run before the script (e.g. meristem
+        ensemble prepare). Set by meristem, not by users: run and ensemble
+        configs reject it. A stage needs a script, a command, or both by the
+        time it's validated
     case_root: absolute path to the CESM case directory. If None, the run uses
         <root>/<name>
     submit_args: extra submission arguments, optional
@@ -347,13 +350,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         if not self.name:
             raise ValueError("name must not be empty.")
 
-        if not self.script and not self.command:
-            raise ValueError("either script or command must be supplied.")
-
-        if self.script and self.command:
-            raise ValueError(
-                "both script and command cannot be supplied together; choose one"
-            )
+        # checked before the Path conversion below, which would turn "" into "."
+        if self.script is not None and not self.script:
+            raise ValueError(f"stage {self.name!r}: script must not be empty.")
 
         # __setattr__ is required because the dataclass is frozen
         if self.script is not None:
@@ -381,13 +380,24 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         """Validate that this config is ready for submission.
 
         Separated from __post_init__ so StageConfig can be constructed and
-        deserialized without requiring filesystem access
+        deserialized without requiring filesystem access, and so an ensemble
+        member stage can be defined without a script and have its command
+        filled in later
 
         Raises:
+            ValueError: if there's neither a script nor a command to run
             ValueError: if the script path does not exist
+            ValueError: if case_root is not an absolute path
         """
+        if not self.script and not self.command:
+            raise ValueError(f"stage {self.name!r} has no setup script.")
         if self.script and not self.script.exists():
             raise ValueError(f"cannot open script {self.script!r}.")
+        if self.case_root is not None and not self.case_root.is_absolute():
+            raise ValueError(
+                f"case_root {str(self.case_root)!r} for stage {self.name!r} "
+                "must be an absolute path."
+            )
 
     def to_dict(self) -> dict:
         """Serialize configuration fields to a plain dictionary"""
@@ -452,11 +462,7 @@ class Stage:
             Stage: Stage instance
         """
         in_dict = dict(input_dict)
-        runtime_dict = {
-            k: in_dict.pop(k)
-            for k in _RUNTIME_KEYS
-            if k in in_dict
-        }
+        runtime_dict = {k: in_dict.pop(k) for k in _RUNTIME_KEYS if k in in_dict}
         return cls(
             config=StageConfig.from_dict(in_dict),
             state=StageState.from_dict(runtime_dict) if runtime_dict else StageState(),

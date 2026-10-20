@@ -15,9 +15,7 @@ from meristem.run.stages import StageConfig
 
 def _stage(name: str = "spinup_ad", **kwargs) -> StageConfig:
     """A minimal member StageConfig"""
-    return StageConfig.from_dict(
-        {"name": name, "command": "echo hi", "queue": "regular", **kwargs}
-    )
+    return StageConfig.from_dict({"name": name, "queue": "regular", **kwargs})
 
 
 def _config(tmp_path, **overrides) -> EnsembleConfig:
@@ -67,6 +65,22 @@ def test_init_converts_paths(tmp_path):
     assert config.output_root == tmp_path / "out"
     for name in ("root", "base_case", "case_dir", "paramgen_dir", "output_root"):
         assert isinstance(getattr(config, name), Path)
+
+
+@pytest.mark.parametrize(
+    "name", ["root", "base_case", "case_dir", "paramgen_dir", "output_root"]
+)
+def test_init_relative_path_raises(tmp_path, name):
+    """Test that every path field must be absolute (they're used in PBS jobs)"""
+    with pytest.raises(
+        ValueError, match=rf"^{name} 'relative/dir' must be an absolute path\.$"
+    ):
+        _config(tmp_path, **{name: "relative/dir"})
+
+
+def test_init_output_root_none_allowed(tmp_path):
+    """Test that an unset output_root isn't checked for being absolute"""
+    assert _config(tmp_path, output_root=None).output_root is None
 
 
 def test_init_converts_sequences_to_tuples(tmp_path):
@@ -139,6 +153,16 @@ def test_init_multiple_stages_keep_order(tmp_path):
     """Test that multiple uniquely named member stages are kept in order"""
     config = _config(tmp_path, member_stages=[_stage("ad"), _stage("postad")])
     assert [stage.name for stage in config.member_stages] == ["ad", "postad"]
+
+
+@pytest.mark.parametrize("script", [None, "/path/to/setup.sh"])
+def test_init_command_stage_raises(tmp_path, script):
+    """Test that a member stage can't set a command (with or without a script),
+    since the ensemble sets it
+    """
+    stage = _stage("ad", command="echo hi", script=script)
+    with pytest.raises(ValueError, match="member stage 'ad': command is not allowed"):
+        _config(tmp_path, member_stages=(stage,))
 
 
 def test_init_no_cime_stage_raises(tmp_path):
@@ -368,9 +392,16 @@ def test_from_dict_builds_stage_configs(ensemble_config_dict, member_stage_dict)
 
 def test_from_dict_invalid_stage_raises(ensemble_config_dict, member_stage_dict):
     """Test that a StageConfig validation error propagates"""
-    del member_stage_dict["command"]
-    with pytest.raises(ValueError, match="either script or command"):
+    member_stage_dict["ncpus"] = 0
+    with pytest.raises(ValueError, match="ncpus must be >=1"):
         EnsembleConfig.from_dict(ensemble_config_dict)
+
+
+def test_from_dict_stage_with_script(ensemble_config_dict, member_stage_dict):
+    """Test that a member stage can have a script (it runs after prepare)"""
+    member_stage_dict["script"] = "/path/to/setup.sh"
+    config = EnsembleConfig.from_dict(ensemble_config_dict)
+    assert config.member_stages[0].script == Path("/path/to/setup.sh")
 
 
 def test_from_dict_runs_post_init_validation(ensemble_config_dict):
@@ -450,12 +481,19 @@ def test_from_yaml_expands_env_vars(tmp_path, ensemble_config_dict, monkeypatch)
     assert config.project == "P12345678"
 
 
-def test_from_yaml_leaves_unset_env_vars(tmp_path, ensemble_config_dict, monkeypatch):
-    """Test that an unset $VAR is left as written (os.path.expandvars behavior)"""
+def test_from_yaml_unset_env_var_raises(tmp_path, ensemble_config_dict, monkeypatch):
+    """Test that an unset $VAR is left as written (os.path.expandvars behavior),
+    so the path is relative and raises, hinting at the unset variable
+    """
     monkeypatch.delenv("ENS_UNSET_VAR", raising=False)
     ensemble_config_dict["root"] = "$ENS_UNSET_VAR/root"
     path = _write_yaml(tmp_path / "ensemble.yaml", ensemble_config_dict)
-    assert EnsembleConfig.from_yaml(path).root == Path("$ENS_UNSET_VAR/root")
+    with pytest.raises(
+        ValueError,
+        match=r"root '\$ENS_UNSET_VAR/root' must be an absolute path "
+        r"\(is an environment variable unset\?\)",
+    ):
+        EnsembleConfig.from_yaml(path)
 
 
 def test_from_yaml_validation_error_propagates(tmp_path, ensemble_config_dict):

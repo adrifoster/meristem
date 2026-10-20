@@ -12,12 +12,10 @@ MEMBERS = ["ens_0000", "ens_0001", "ens_0002"]
 
 @pytest.fixture
 def member_stage_dict() -> dict:
-    """Minimal member stage dict (a command, so no script file is needed)"""
-    return {
-        "name": "spinup_ad",
-        "command": "meristem ensemble prepare --member 1",
-        "queue": "regular",
-    }
+    """Minimal member stage dict (no script, so the member stage only runs
+    meristem ensemble prepare, and no script file is needed)
+    """
+    return {"name": "spinup_ad", "queue": "regular"}
 
 
 @pytest.fixture
@@ -95,7 +93,10 @@ def write_base_case(ensemble_config_dict):
 def ready_config_dict(ensemble_config_dict, write_paramgen, write_base_case) -> dict:
     """ensemble_config_dict with paramgen output and a built base case on disk,
     so Ensemble.create succeeds
+
+    Sets project, since the member ModelRuns need one and $PROJECT may be unset
     """
     write_paramgen()
     write_base_case()
+    ensemble_config_dict["project"] = "PROJ123"
     return ensemble_config_dict

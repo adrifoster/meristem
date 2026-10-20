@@ -256,3 +256,60 @@ def test_retry_lost_query_error_propagates(created_run, fake_scheduler, mocker):
         created_run.retry("spinup_ad", lost=True)
     mock.assert_not_called()
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
+
+
+@pytest.fixture
+def two_script_run(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+) -> ModelRun:
+    """A two-stage ModelRun whose stages have separate scripts (ad.sh, sasu.sh)"""
+    stages = []
+    for stage_dict in (ad_stage_config_dict, sasu_stage_config_dict):
+        script = tmp_path / f"{stage_dict['name'].split('_')[-1]}.sh"
+        script.touch()
+        stages.append({**stage_dict, "script": str(script)})
+    return ModelRun.create(
+        {"root": str(tmp_path / "run"), "project": "PROJ123", "stages": stages},
+        scheduler=fake_scheduler,
+    )
+
+
+def test_retry_missing_later_script_raises(two_script_run, tmp_path, fake_scheduler):
+    """Test that retry checks later stages' scripts up front, so a bad later
+    stage fails now rather than inside an advance job
+    """
+    two_script_run.stages[0].state.status = StageStatus.FAILED
+    two_script_run.save()
+    (tmp_path / "sasu.sh").unlink()
+    with pytest.raises(ValueError, match=r"cannot open script.*sasu\.sh"):
+        two_script_run.retry("spinup_ad")
+    assert fake_scheduler.submitted == []
+
+
+def test_retry_invalid_config_leaves_state_unchanged(two_script_run, tmp_path):
+    """Test that a failed check doesn't reset or save the stage"""
+    stage = two_script_run.stages[0]
+    stage.state.status = StageStatus.FAILED
+    stage.state.job_id = "999.pbs"
+    two_script_run.save()
+    (tmp_path / "sasu.sh").unlink()
+    with pytest.raises(ValueError):
+        two_script_run.retry("spinup_ad")
+    assert stage.state.status == StageStatus.FAILED
+    assert stage.state.job_id == "999.pbs"
+    loaded = ModelRun.load(two_script_run.root, scheduler=two_script_run.scheduler)
+    assert loaded.stages[0].state.status == StageStatus.FAILED
+    assert loaded.stages[0].state.job_id == "999.pbs"
+
+
+def test_retry_ignores_earlier_stage_scripts(two_script_run, tmp_path, mocker):
+    """Test that retry doesn't check stages before the retried one (they won't
+    rerun), so a cleaned-up earlier script doesn't block it
+    """
+    two_script_run.stages[0].state.status = StageStatus.SUBMITTED
+    two_script_run.stages[0].state.status = StageStatus.DONE
+    two_script_run.stages[1].state.status = StageStatus.FAILED
+    (tmp_path / "ad.sh").unlink()
+    mock = mocker.patch.object(two_script_run, "_submit_stage", return_value="1.pbs")
+    two_script_run.retry("spinup_sasu")
+    mock.assert_called_once()

@@ -479,18 +479,34 @@ def test_stage_config_command_without_script_is_valid(command_stage_config_dict)
     stage_config.validate()
 
 
-def test_stage_config_neither_script_nor_command_raises(minimal_stage_config_dict):
-    """Test that a StageConfig with neither script nor command raises a ValueError"""
+def test_stage_config_neither_script_nor_command_raises_on_validate(
+    minimal_stage_config_dict,
+):
+    """Test that a StageConfig with neither script nor command constructs (so
+    an ensemble member stage can have its command filled in later) but raises
+    on validate
+    """
     config = {k: v for k, v in minimal_stage_config_dict.items() if k != "script"}
-    with pytest.raises(ValueError, match="either script or command"):
-        StageConfig.from_dict(config)
+    stage_config = StageConfig.from_dict(config)
+    with pytest.raises(ValueError, match="stage 'spinup_ad' has no setup script"):
+        stage_config.validate()
 
 
-def test_stage_config_script_and_command_raises(minimal_stage_config_dict):
-    """Test that a StageConfig with both script and command raises a ValueError"""
+def test_stage_config_script_and_command_is_valid(minimal_stage_config_dict):
+    """Test that a StageConfig can have both a script and a command"""
     config = {**minimal_stage_config_dict, "command": "echo hi"}
-    with pytest.raises(ValueError, match="both script and command"):
-        StageConfig.from_dict(config)
+    stage_config = StageConfig.from_dict(config)
+    stage_config.validate()
+    assert stage_config.script == Path(minimal_stage_config_dict["script"])
+    assert stage_config.command == "echo hi"
+
+
+def test_stage_config_roundtrip_script_and_command(minimal_stage_config_dict):
+    """Test that a StageConfig with both a script and a command round trips"""
+    stage_config = StageConfig.from_dict(
+        {**minimal_stage_config_dict, "command": "echo hi"}
+    )
+    assert StageConfig.from_dict(stage_config.to_dict()) == stage_config
 
 
 def test_stage_config_from_dict_defaults_memory_to_10gb(minimal_stage_config_dict):
@@ -634,3 +650,16 @@ def test_stage_from_dict_partial_state(minimal_stage_config_dict, partial_state)
     assert stage.state.attempts == partial_state.get("attempts", 0)
     assert stage.state.submit_time == partial_state.get("submit_time")
     assert stage.state.end_time is None
+
+
+def test_stage_config_relative_case_root_raises_on_validate(minimal_stage_config_dict):
+    """Test that a relative case_root constructs but raises on validate"""
+    config = {**minimal_stage_config_dict, "case_root": "cases/spinup_ad"}
+    stage = StageConfig.from_dict(config)
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        stage.validate()
+
+
+def test_stage_config_absolute_case_root_validates(full_stage_config):
+    """Test that an absolute case_root passes validate"""
+    full_stage_config.validate()

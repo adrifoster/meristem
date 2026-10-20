@@ -31,11 +31,13 @@ echo "=== Started: $(date) ==="
 
 {% if not skip_script %}
 {% if command %}
-# built-in setup command (e.g. meristem ensemble prepare)
-# strict mode is enforced, matching the setup script path
+# built-in setup command (e.g. meristem ensemble prepare), run before any
+# setup script; strict mode is enforced, matching the setup script
 bash -c {{ ("set -euo pipefail; " ~ command) | shquote }}
-{% else %}
-# create, configure, and build the CIME case
+{% endif %}
+{% if script %}
+# create, configure, and build the CIME case (or, after a setup command,
+# customize the case it made)
 # strict mode is enforced even if the user's script doesn't set it
 bash -c 'set -euo pipefail; source "$0" "$@"' {{ script | shquote }} {{ case_root | shquote }}{% if previous_case %} {{ previous_case | shquote }} {{ previous_case_root | shquote }}{% endif +%}
 {% endif %}

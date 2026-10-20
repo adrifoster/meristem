@@ -1,14 +1,19 @@
-"""Class for managing parameter ensembles"""
+"""Class for managing model ensembles"""
 
 from __future__ import annotations
 
 import os
 import subprocess
 import json
+import shlex
 from pathlib import Path
+from dataclasses import replace
 import pandas as pd
 
+from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
+from meristem.run.stages import Stage
+from meristem.run.model_run import ModelRun
 
 # state file name
 _STATE_FILE = "ensemble_state.json"
@@ -27,10 +32,15 @@ class Ensemble:
     ===========
     config: EnsembleConfig
         Ensemble config with all attributes
+    param_files: dict[str, Path]
+        dictionary mapping of member string to full path to parameter file
     """
 
-    def __init__(self, config: EnsembleConfig):
+    def __init__(
+        self, config: EnsembleConfig, param_files: dict[str, Path] | None = None
+    ):
         self.config = config
+        self.param_files: dict[str, Path] = param_files or {}
 
     @property
     def root(self) -> Path:
@@ -71,10 +81,15 @@ class Ensemble:
                 "Use Ensemble.load() to resume an existing ensemble."
             )
 
-        param_files = ensemble.find_param_files()
+        ensemble.param_files = ensemble.find_param_files()
         ensemble.check_base_case()
+        ensemble.check_stage_scripts()
+        member_runs = ensemble._member_runs()
 
         ensemble.root.mkdir(parents=True, exist_ok=True)
+        for run in member_runs:
+            run.root.mkdir(parents=True, exist_ok=True)
+            run.save()
         ensemble.save()
         return ensemble
 
@@ -97,7 +112,8 @@ class Ensemble:
                 "Use Ensemble.create() to initialise a new ensemble."
             )
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        return cls(EnsembleConfig.from_dict(state["config"]))
+        param_files = {member: Path(path) for member, path in state["members"].items()}
+        return cls(EnsembleConfig.from_dict(state["config"]), param_files)
 
     def save(self):
         """Atomically write current state to ``<root>/ensemble_state.json``.
@@ -105,7 +121,10 @@ class Ensemble:
         Uses a write-to-temp-then-rename pattern so the state file is
         never left in a partially written state if the process is killed.
         """
-        state = {"config": self.config.to_dict()}
+        state = {
+            "config": self.config.to_dict(),
+            "members": {member: str(path) for member, path in self.param_files.items()},
+        }
         tmp = self.root / f"{_STATE_FILE}.tmp"
         tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
         tmp.rename(self.root / _STATE_FILE)
@@ -250,6 +269,83 @@ class Ensemble:
                 f"base case {self.base_case} is not built (BUILD_COMPLETE="
                 f"{result.stdout.strip()!r}); run ./case.build first."
             )
+
+    def check_stage_scripts(self):
+        """Check that every member stage's script exists
+
+        Raises:
+            FileNotFoundError: if any stage's script is missing
+        """
+        missing = [
+            f"  {stage.name}: {stage.script}"
+            for stage in self.config.member_stages
+            if stage.script is not None and not stage.script.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "member stage script(s) not found:\n" + "\n".join(missing)
+            )
+
+    def _member_stages(self, member: str) -> list[Stage]:
+        """Build a member's stages: each member stage, in its own case under
+        case_dir, running ``meristem ensemble prepare`` then its script (if any)
+
+        Args:
+            member (str): member name
+
+        Returns:
+            list[Stage]: the member's stages, in member_stages order
+        """
+        stages = []
+        for stage_config in self.config.member_stages:
+            command = shlex.join(
+                [
+                    *shlex.split(meristem_cmd()),
+                    "ensemble",
+                    "prepare",
+                    "--root",
+                    str(self.root),
+                    "--member",
+                    member,
+                    "--stage",
+                    stage_config.name,
+                ]
+            )
+            case_root = (
+                self.config.case_dir
+                / f"{self.config.base_case.name}_{member}_{stage_config.name}"
+            )
+            # the job runs prepare (clone the base case, set the parameter
+            # file), then the stage's own script, if any, on the clone
+            stages.append(
+                Stage(
+                    config=replace(stage_config, command=command, case_root=case_root)
+                )
+            )
+        return stages
+
+    def _member_runs(self) -> list[ModelRun]:
+        """Build and validate (without writing) a ModelRun for every member
+
+        Raises:
+            ValueError: if a member's run is invalid (e.g. its run_id has
+            characters ModelRun doesn't allow, or case_dir is relative)
+
+        Returns:
+            list[ModelRun]: one run per member, in param_files order
+        """
+        runs = []
+        for member in self.param_files:
+            run = ModelRun(
+                root=self.root / "members" / member,
+                run_id=f"{self.config.ensemble_id}_{member}",
+                stages=self._member_stages(member),
+                email=self.config.email or None,
+                project=self.config.project,
+            )
+            run._validate_stages()  # pylint: disable=protected-access
+            runs.append(run)
+        return runs
 
 
 def _to_config(config: EnsembleConfig | dict | Path | str) -> EnsembleConfig:

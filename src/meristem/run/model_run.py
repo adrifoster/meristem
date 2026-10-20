@@ -112,6 +112,21 @@ class ModelRun:
                 "(PBS can't write job logs to such paths)."
             )
 
+    def _validate_stages(self, start: str | None = None):
+        """Validate stage configs (script exists, case_root absolute)
+
+        Not part of _validate so that load still works (e.g. for status) if a
+        script has since moved; called at create, submit, and retry instead, so
+        a bad later stage fails up front rather than inside an advance job.
+
+        Args:
+            start (str | None, optional): validate only this stage and those
+            after it (the ones still to run). Defaults to None (all stages).
+        """
+        idx = self.stage_names.index(start) if start else 0
+        for stage in self.stages[idx:]:
+            stage.config.validate()
+
     @classmethod
     def create(
         cls,
@@ -156,6 +171,7 @@ class ModelRun:
             scheduler=scheduler
             or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
         )
+        run._validate_stages()
         run.root.mkdir(parents=True, exist_ok=True)
         run.save()
         return run
@@ -438,6 +454,7 @@ class ModelRun:
                 f"  {self.run_id}: skipping submit (first stage is {first.state.status.value})"
             )
             return first.state.job_id or None
+        self._validate_stages()
         return self._submit_stage(first, dry_run=dry_run)
 
     def fail(self, stage_name: str):
@@ -585,6 +602,8 @@ class ModelRun:
         Raises:
             ValueError: if the stage can't be retried, or lost is True and the
             stage isn't lost (so a running stage is never resubmitted)
+            ValueError: if this or a later stage's config is invalid (e.g. its
+            script is missing); the stage is left as it was
 
         Returns:
             str | None: PBS job ID of the advance script, or None if all stages complete
@@ -610,6 +629,7 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only retry PENDING or FAILED stages."
             )
+        self._validate_stages(start=stage.config.name)
         stage.state.status = StageStatus.PENDING
         stage.state.end_time = None
         stage.state.submit_time = None
@@ -811,6 +831,18 @@ def _validate_config(config: dict) -> None:
         )
     if len(config["stages"]) == 0:
         raise ValueError("Config key 'stages' must not be empty.")
+    # command is for meristem's own setup steps (e.g. ensemble prepare); a
+    # user's setup belongs in a script
+    with_command = [
+        stage.get("name", idx)
+        for idx, stage in enumerate(config["stages"])
+        if isinstance(stage, dict) and "command" in stage
+    ]
+    if with_command:
+        raise ValueError(
+            f"stage(s) {with_command} set 'command', which is reserved for "
+            "meristem's own setup steps; use a setup script instead."
+        )
 
 
 def _load_config(config: Path | str | dict) -> dict:

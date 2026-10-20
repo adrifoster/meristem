@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from meristem.run.model_run import ModelRun
+from meristem.run.stages import Stage
 
 
 def test_model_run_empty_run_id_raises(tmp_path, ad_stage):
@@ -78,8 +79,26 @@ def test_model_run_empty_stages_raises(tmp_path):
     """Test that ModelRun initialized with an empty stages list raises a ValueError"""
     with pytest.raises(ValueError, match="stages"):
         ModelRun(
-            root=tmp_path, run_id="run", email="name@ucar.edu", stages=[], project="PROJ"
+            root=tmp_path,
+            run_id="run",
+            email="name@ucar.edu",
+            stages=[],
+            project="PROJ",
         )
+
+
+def test_model_run_missing_script_does_not_raise(tmp_path, ad_stage_config_dict):
+    """Test that ModelRun.__init__ doesn't check scripts exist (that's done at
+    create and submit), so a run can still be loaded after a script moves
+    """
+    ad_stage_config_dict["script"] = str(tmp_path / "nope.sh")
+    ModelRun(
+        root=tmp_path,
+        run_id="run",
+        stages=[Stage.from_dict(ad_stage_config_dict)],
+        email="name@ucar.edu",
+        project="PROJ",
+    )
 
 
 def test_model_run_stages_stored_as_tuple(tmp_path, ad_stage):

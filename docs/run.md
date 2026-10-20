@@ -38,8 +38,8 @@ Only the first stage needs to be submitted manually. The rest of the pipeline ru
   `/glade/work`). Generated job scripts call meristem through the absolute path of the Python
   that created the run (`/path/to/python -m meristem`), so no environment needs to be activated
   inside the jobs. Don't move, delete, or rebuild that environment while a run is in progress.
-- Setup scripts and stage `command`s can call `meristem` directly. They do not get an
-  activated conda environment, so a setup script that needs one must activate it itself.
+- Setup scripts can call `meristem` directly. They do not get an activated conda environment,
+  so a setup script that needs one must activate it itself.
 
 ----
 

@@ -33,7 +33,11 @@ def minimal_stage_config(minimal_stage_config_dict) -> StageConfig:
 
 @pytest.fixture
 def command_stage_config_dict() -> dict:
-    """Minimal StageConfig dict that runs a command instead of a script."""
+    """Minimal StageConfig dict that runs a command instead of a script.
+
+    Commands are set by meristem (e.g. Ensemble), not in a run config, so build
+    a ModelRun from this directly rather than with ModelRun.create
+    """
     return {
         "name": "spinup_ad",
         "command": "meristem ensemble prepare --member 1",
