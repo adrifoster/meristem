@@ -2,13 +2,55 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
+import yaml
 
 from meristem.run.stages import StageConfig
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+_REQUIRED_KEYS = frozenset(
+    {
+        "ensemble_id",
+        "root",
+        "paramgen",
+        "base_case",
+        "case_dir",
+        "paramfile_key",
+        "member_stages",
+    }
+)
+_OPTIONAL_KEYS = frozenset(
+    {
+        "output_root",
+        "project",
+        "email",
+    }
+)
+_REQUIRED_PARAMGEN_KEYS = frozenset({"dir", "prefix"})
+_OPTIONAL_PARAMGEN_KEYS = frozenset({"members"})
 _PARAMFILE_KEYS = frozenset({"paramfile", "fates_paramfile"})
+
+
+def _validate_members(members) -> None:
+    """Check that a members list is non-empty, all non-empty strings, and unique
+
+    Raises:
+        ValueError: if any check fails
+    """
+    if not members:
+        raise ValueError("members must be 'all' or a non-empty list.")
+    bad = [m for m in members if not isinstance(m, str) or not m]
+    if bad:
+        raise ValueError(
+            f"members must be non-empty strings, got {bad}; "
+            "quote numeric member names in the YAML."
+        )
+    duplicates = sorted({m for m in members if members.count(m) > 1})
+    if duplicates:
+        raise ValueError(f"members must be unique, got duplicates {duplicates}.")
 
 
 @dataclass(frozen=True)
@@ -28,7 +70,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     members: member names to run, or None for all
     output_root: passed to create_clone --cime-output-root (None = CIME default)
     project: PBS project code (falls back to $PROJECT)
-    email: email for job scheduler emails 
+    email: email for job scheduler emails
     """
 
     ensemble_id: str
@@ -42,9 +84,14 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     members: tuple[str, ...] | None = None
     output_root: Path | None = None
     project: str = ""
-    user: str | None = None
+    email: str | None = None
 
     def __post_init__(self):
+        if not isinstance(self.ensemble_id, str):
+            raise ValueError(
+                f"ensemble_id must be a string, got {type(self.ensemble_id).__name__} "
+                f"{self.ensemble_id!r}; quote it in the YAML."
+            )
         if not _ID_RE.match(self.ensemble_id):
             raise ValueError(
                 f"ensemble_id {self.ensemble_id!r} contains invalid characters. "
@@ -70,17 +117,128 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                     "every member stage runs a CIME case."
                 )
 
-        if self.members is not None and not self.members:
-            raise ValueError("members must be 'all' or a non-empty list.")
+        if self.members is not None:
+            _validate_members(self.members)
 
         # __setattr__ is required because the dataclass is frozen
         for name in ("root", "base_case", "case_dir", "paramgen_dir"):
             object.__setattr__(self, name, Path(getattr(self, name)))
 
         if self.output_root is not None:
-            object.__setattr__(self, name, Path(self.output_root))
+            object.__setattr__(self, "output_root", Path(self.output_root))
 
         object.__setattr__(self, "member_stages", tuple(self.member_stages))
 
         if self.members is not None:
             object.__setattr__(self, "members", tuple(self.members))
+
+    def to_dict(self) -> dict:
+        """Serialize to a plain dictionary in the schema from_dict reads, so
+        from_dict(config.to_dict()) == config
+
+        Returns:
+            dict: JSON/YAML-serializable ensemble config
+        """
+        return {
+            "ensemble_id": self.ensemble_id,
+            "root": str(self.root),
+            "paramgen": {
+                "dir": str(self.paramgen_dir),
+                "prefix": self.paramgen_prefix,
+                # from_dict reads None as invalid, so "all members" is written "all"
+                "members": "all" if self.members is None else list(self.members),
+            },
+            "base_case": str(self.base_case),
+            "case_dir": str(self.case_dir),
+            "paramfile_key": self.paramfile_key,
+            "member_stages": [stage.to_dict() for stage in self.member_stages],
+            "output_root": (
+                str(self.output_root) if self.output_root is not None else None
+            ),
+            "project": self.project,
+            "email": self.email,
+        }
+
+    @classmethod
+    def from_dict(cls, config: dict) -> EnsembleConfig:
+        """Construct an EnsembleConfig from a config dictionary
+
+        Args:
+            config (dict): parsed ensemble YAML
+
+        Returns:
+            EnsembleConfig: EnsembleConfig instance
+        Raises:
+            ValueError: if keys are missing, unknown, or malformed
+        """
+        input_dict = dict(config)
+        for key in _REQUIRED_KEYS:
+            if not input_dict.get(key):
+                raise ValueError(f"missing required key {key} in ensemble config.")
+        unknown = set(config) - _REQUIRED_KEYS - _OPTIONAL_KEYS
+        if unknown:
+            raise ValueError(f"unknown key(s) {sorted(unknown)} in ensemble config.")
+
+        paramgen = config["paramgen"]
+        if not isinstance(paramgen, dict):
+            raise ValueError(
+                "paramgen must be a mapping with keys "
+                f"{sorted(_REQUIRED_PARAMGEN_KEYS)}, got {paramgen!r}."
+            )
+        for key in _REQUIRED_PARAMGEN_KEYS:
+            if not paramgen.get(key):
+                raise ValueError(
+                    f"missing required key {key} in ensemble config subdict paramgen"
+                )
+
+        unknown = set(paramgen) - _REQUIRED_PARAMGEN_KEYS - _OPTIONAL_PARAMGEN_KEYS
+        if unknown:
+            raise ValueError(
+                f"unknown key(s) {sorted(unknown)} in paramgen ensemble config."
+            )
+
+        members = paramgen.get("members", "all")
+        if members != "all" and not isinstance(members, list):
+            raise ValueError(
+                "paramgen members must be 'all' or a list of member names."
+            )
+
+        if not isinstance(config["member_stages"], list):
+            raise ValueError("member_stages must be a list.")
+        for idx, stage in enumerate(config["member_stages"]):
+            if not isinstance(stage, dict):
+                raise ValueError(
+                    f"member_stages[{idx}] must be a mapping of stage settings, "
+                    f"got {stage!r}."
+                )
+
+        return cls(
+            ensemble_id=config["ensemble_id"],
+            root=config["root"],
+            base_case=config["base_case"],
+            case_dir=config["case_dir"],
+            paramgen_dir=paramgen["dir"],
+            paramgen_prefix=paramgen["prefix"],
+            paramfile_key=config["paramfile_key"],
+            member_stages=tuple(
+                StageConfig.from_dict(s) for s in config["member_stages"]
+            ),
+            members=None if members == "all" else tuple(members),
+            output_root=config.get("output_root"),
+            # a blank "project:" in the YAML is None
+            project=config.get("project") or "",
+            email=config.get("email"),
+        )
+
+    @classmethod
+    def from_yaml(cls, path: Path | str) -> EnsembleConfig:
+        """Read an ensemble YAML file, expanding $VARS from the environment
+
+        Args:
+            path (Path | str): path to the ensemble YAML
+
+        Returns:
+            EnsembleConfig: EnsembleConfig instance
+        """
+        with open(path, encoding="utf-8") as f:
+            return cls.from_dict(yaml.safe_load(os.path.expandvars(f.read())))
