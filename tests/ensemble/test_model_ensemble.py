@@ -11,7 +11,7 @@ import yaml
 
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
-from meristem.ensemble.model_ensemble import Ensemble
+from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
 
@@ -109,8 +109,8 @@ def test_create_bad_type_raises(config):
 
 def test_create_invalid_config_raises(ready_config_dict):
     """Test that create raises the config's ValueError and writes nothing"""
-    del ready_config_dict["case_dir"]
-    with pytest.raises(ValueError, match="missing required key case_dir"):
+    del ready_config_dict["base_case"]
+    with pytest.raises(ValueError, match="missing required key base_case"):
         Ensemble.create(ready_config_dict)
     assert not Path(ready_config_dict["root"]).exists()
 
@@ -219,6 +219,21 @@ def test_create_writes_member_runs(created_ensemble):
         assert (members_dir / member / _RUN_STATE_FILE).is_file()
         run = _member_run(created_ensemble, member)
         assert run.run_id == f"my_ens-1_{member}"
+
+
+def test_case_root_matches_member_run(created_ensemble):
+    """Test that _case_root gives the case_root stored on each member stage"""
+    for member in MEMBERS:
+        for stage in _member_run(created_ensemble, member).stages:
+            assert stage.config.case_root == created_ensemble._case_root(
+                member, stage.config.name
+            )
+
+
+def test_prepare_unknown_stage_raises(created_ensemble):
+    """Test that prepare raises for a stage that isn't a member stage"""
+    with pytest.raises(ValueError, match="unknown member stage 'nope'"):
+        created_ensemble.prepare(MEMBERS[0], "nope")
 
 
 def test_create_member_runs_only_requested_members(ready_config_dict):
@@ -773,3 +788,290 @@ def test_check_stage_scripts_reports_all_missing(ensemble_config_dict, tmp_path)
         f"  first: {tmp_path / 'a.sh'}",
         f"  last: {tmp_path / 'b.sh'}",
     ]
+
+
+# ---------------------------------------------------------------------------
+# _is_existing_case
+# ---------------------------------------------------------------------------
+
+
+def _write_case(case_root: Path, case: str | None = None, exit_code: int = 0) -> Path:
+    """Make a fake CIME case dir whose xmlquery prints case (default: its name)"""
+    case_root.mkdir(parents=True)
+    (case_root / "env_case.xml").touch()
+    xmlquery = case_root / "xmlquery"
+    xmlquery.write_text(
+        f"#!/bin/sh\necho {case or case_root.name}\nexit {exit_code}\n",
+        encoding="utf-8",
+    )
+    xmlquery.chmod(0o755)
+    return case_root
+
+
+def test_is_existing_case_missing(tmp_path):
+    """Test that a case_root that doesn't exist isn't reused"""
+    assert _is_existing_case(tmp_path / "base_ens_0000_spinup") is False
+
+
+def test_is_existing_case_complete(tmp_path):
+    """Test that a complete case with the right name is reused"""
+    assert _is_existing_case(_write_case(tmp_path / "base_ens_0000_spinup")) is True
+
+
+def test_is_existing_case_partial_raises(tmp_path):
+    """Test that a directory that isn't a complete case raises and is kept"""
+    case_root = tmp_path / "base_ens_0000_spinup"
+    case_root.mkdir()
+    with pytest.raises(FileExistsError, match="not a complete CIME case"):
+        _is_existing_case(case_root)
+    assert case_root.is_dir()
+
+
+def test_is_existing_case_xmlquery_fails_raises(tmp_path):
+    """Test that a case whose xmlquery fails raises"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup", exit_code=1)
+    with pytest.raises(FileExistsError, match="xmlquery CASE failed"):
+        _is_existing_case(case_root)
+
+
+def test_is_existing_case_wrong_case_raises(tmp_path):
+    """Test that a case holding a different case name raises"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup", case="other")
+    with pytest.raises(FileExistsError, match="holds case 'other'"):
+        _is_existing_case(case_root)
+
+
+def test_prepare_partial_case_root_raises(created_ensemble):
+    """Test that prepare raises if the stage's case_root is a partial case"""
+    stage = created_ensemble.config.member_stages[0].name
+    created_ensemble._case_root(MEMBERS[0], stage).mkdir(parents=True)
+    with pytest.raises(FileExistsError, match="not a complete CIME case"):
+        created_ensemble.prepare(MEMBERS[0], stage)
+
+
+# ---------------------------------------------------------------------------
+# _clone
+# ---------------------------------------------------------------------------
+
+# project passed to _clone directly (matches ready_config_dict's project)
+_PROJECT = "PROJ123"
+
+# what the fake create_clone does once it has parsed --case into $case_root
+_CREATE_CLONE_BODIES = {
+    # a complete clone: what _is_existing_case accepts, plus a case.setup
+    # that logs each run to case.setup.log
+    "ok": (
+        'mkdir "$case_root"\n'
+        'touch "$case_root/env_case.xml"\n'
+        'printf \'#!/bin/sh\\necho %s\\n\' "$(basename "$case_root")" '
+        '> "$case_root/xmlquery"\n'
+        'chmod 755 "$case_root/xmlquery"\n'
+        "printf '#!/bin/sh\\necho ran >> case.setup.log\\n' "
+        '> "$case_root/case.setup"\n'
+        'chmod 755 "$case_root/case.setup"\n'
+    ),
+    "fail": "echo 'clone exploded' >&2\nexit 1\n",
+    "fail_partial": "mkdir \"$case_root\"\necho 'clone exploded' >&2\nexit 1\n",
+    "noop": "exit 0\n",
+}
+
+
+@pytest.fixture
+def fake_cime(ensemble_config_dict, tmp_path):
+    """Factory that points the base case's CIMEROOT at a fake CIME whose
+    scripts/create_clone logs its arguments (one per line) and behaves
+    as mode (a _CREATE_CLONE_BODIES key)
+
+    Args (of the returned function):
+        mode: create_clone behavior
+        executable: whether create_clone is executable
+        present: whether create_clone exists at all
+
+    Returns (of the returned function):
+        Path: the create_clone argument log
+    """
+    base_case = Path(ensemble_config_dict["base_case"])
+    cimeroot = tmp_path / "cime"
+    log = tmp_path / "create_clone.log"
+
+    def _write(mode="ok", executable=True, present=True) -> Path:
+        base_case.mkdir(parents=True, exist_ok=True)
+        xmlquery = base_case / "xmlquery"
+        xmlquery.write_text(
+            "#!/bin/sh\n"
+            f'case "$1" in\n  CIMEROOT) echo {cimeroot} ;;\n  *) echo TRUE ;;\nesac\n',
+            encoding="utf-8",
+        )
+        xmlquery.chmod(0o755)
+        if present:
+            create_clone = cimeroot / "scripts" / "create_clone"
+            create_clone.parent.mkdir(parents=True, exist_ok=True)
+            create_clone.write_text(
+                "#!/bin/sh\n"
+                f'printf "%s\\n" "$@" >> {log}\n'
+                "while [ $# -gt 0 ]; do\n"
+                '  [ "$1" = "--case" ] && case_root=$2\n'
+                "  shift\n"
+                "done\n" + _CREATE_CLONE_BODIES[mode],
+                encoding="utf-8",
+            )
+            create_clone.chmod(0o755 if executable else 0o644)
+        return log
+
+    return _write
+
+
+def _case_root(ensemble: Ensemble) -> Path:
+    """The first member's first stage case_root"""
+    return ensemble._case_root(MEMBERS[0], ensemble.config.member_stages[0].name)
+
+
+def test_clone_creates_case(ensemble_config_dict, fake_cime):
+    """Test that _clone runs create_clone --keepexe from the base case"""
+    log = fake_cime()
+    ensemble = _ensemble(ensemble_config_dict)
+    case_root = _case_root(ensemble)
+    ensemble._clone(case_root, _PROJECT)
+    assert _is_existing_case(case_root)
+    args = log.read_text(encoding="utf-8").splitlines()
+    assert args[args.index("--case") + 1] == str(case_root)
+    assert args[args.index("--clone") + 1] == str(ensemble.base_case)
+    assert "--keepexe" in args
+    assert args[args.index("--project") + 1] == _PROJECT
+    assert "--cime-output-root" not in args
+
+
+def test_clone_creates_case_dir(ensemble_config_dict, fake_cime):
+    """Test that _clone makes case_dir if it doesn't exist yet"""
+    fake_cime()
+    ensemble = _ensemble(ensemble_config_dict)
+    assert not ensemble.case_dir.exists()
+    ensemble._clone(_case_root(ensemble), _PROJECT)
+    assert ensemble.case_dir.is_dir()
+
+
+def test_clone_passes_output_root(ensemble_config_dict, fake_cime, tmp_path):
+    """Test that output_root is passed as --cime-output-root (two arguments)"""
+    ensemble_config_dict["output_root"] = str(tmp_path / "output")
+    log = fake_cime()
+    ensemble = _ensemble(ensemble_config_dict)
+    ensemble._clone(_case_root(ensemble), _PROJECT)
+    args = log.read_text(encoding="utf-8").splitlines()
+    assert args[args.index("--cime-output-root") + 1] == str(tmp_path / "output")
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"present": False}, {"executable": False}], ids=["missing", "not_exec"]
+)
+def test_clone_no_create_clone_raises(ensemble_config_dict, fake_cime, kwargs):
+    """Test that a missing or non-executable create_clone raises, naming it"""
+    fake_cime(**kwargs)
+    ensemble = _ensemble(ensemble_config_dict)
+    with pytest.raises(FileNotFoundError, match="no executable create_clone at"):
+        ensemble._clone(_case_root(ensemble), _PROJECT)
+
+
+def test_clone_failure_raises(ensemble_config_dict, fake_cime):
+    """Test that a failed create_clone raises with its stderr, and no
+    leftover hint when it left nothing behind
+    """
+    fake_cime(mode="fail")
+    ensemble = _ensemble(ensemble_config_dict)
+    case_root = _case_root(ensemble)
+    with pytest.raises(RuntimeError, match="clone exploded") as excinfo:
+        ensemble._clone(case_root, _PROJECT)
+    assert f"cloning {ensemble.base_case} failed" in str(excinfo.value)
+    assert str(case_root) in str(excinfo.value)
+    assert "partial" not in str(excinfo.value)
+
+
+def test_clone_failure_partial_raises(ensemble_config_dict, fake_cime):
+    """Test that a failed create_clone that left a partial case says to remove
+    it, and leaves it in place
+    """
+    fake_cime(mode="fail_partial")
+    ensemble = _ensemble(ensemble_config_dict)
+    case_root = _case_root(ensemble)
+    with pytest.raises(RuntimeError, match="remove it before retrying"):
+        ensemble._clone(case_root, _PROJECT)
+    assert case_root.is_dir()
+
+
+def test_clone_success_without_case_raises(ensemble_config_dict, fake_cime):
+    """Test that create_clone exiting 0 without making the case raises"""
+    fake_cime(mode="noop")
+    ensemble = _ensemble(ensemble_config_dict)
+    with pytest.raises(RuntimeError, match="was not created"):
+        ensemble._clone(_case_root(ensemble), _PROJECT)
+
+
+def test_prepare_clones_then_reuses_case(created_ensemble, fake_cime):
+    """Test that prepare clones the stage's case, and a re-run reuses it"""
+    log = fake_cime()
+    stage = created_ensemble.config.member_stages[0].name
+    created_ensemble.prepare(MEMBERS[0], stage)
+    created_ensemble.prepare(MEMBERS[0], stage)
+    assert _is_existing_case(created_ensemble._case_root(MEMBERS[0], stage))
+    assert log.read_text(encoding="utf-8").splitlines().count("--keepexe") == 1
+
+
+def test_prepare_clones_with_member_project(created_ensemble, fake_cime):
+    """Test that prepare passes the member run's project to create_clone"""
+    log = fake_cime()
+    created_ensemble.prepare(MEMBERS[0], created_ensemble.config.member_stages[0].name)
+    args = log.read_text(encoding="utf-8").splitlines()
+    assert args[args.index("--project") + 1] == "PROJ123"
+
+
+def test_prepare_runs_case_setup_every_time(created_ensemble, fake_cime):
+    """Test that prepare runs case.setup on a new clone, and again on a re-run"""
+    fake_cime()
+    stage = created_ensemble.config.member_stages[0].name
+    created_ensemble.prepare(MEMBERS[0], stage)
+    created_ensemble.prepare(MEMBERS[0], stage)
+    setup_log = created_ensemble._case_root(MEMBERS[0], stage) / "case.setup.log"
+    assert setup_log.read_text(encoding="utf-8").splitlines() == ["ran", "ran"]
+
+
+# ---------------------------------------------------------------------------
+# _case_setup
+# ---------------------------------------------------------------------------
+
+
+def _write_case_setup(case_root: Path, body: str, mode: int = 0o755) -> Path:
+    """Write a fake case.setup into case_root"""
+    case_setup = case_root / "case.setup"
+    case_setup.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    case_setup.chmod(mode)
+    return case_setup
+
+
+def test_case_setup_runs(ensemble_config_dict, tmp_path):
+    """Test that _case_setup runs case.setup from the case directory"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
+    _write_case_setup(case_root, "pwd > ran_in\n")
+    _ensemble(ensemble_config_dict)._case_setup(case_root)
+    assert (case_root / "ran_in").read_text(encoding="utf-8").strip() == str(case_root)
+
+
+def test_case_setup_missing_raises(ensemble_config_dict, tmp_path):
+    """Test that a case with no case.setup raises"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
+    with pytest.raises(FileNotFoundError, match="has no case.setup"):
+        _ensemble(ensemble_config_dict)._case_setup(case_root)
+
+
+def test_case_setup_not_executable_raises(ensemble_config_dict, tmp_path):
+    """Test that a non-executable case.setup raises"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
+    _write_case_setup(case_root, "exit 0\n", mode=0o644)
+    with pytest.raises(PermissionError, match="case.setup is not executable"):
+        _ensemble(ensemble_config_dict)._case_setup(case_root)
+
+
+def test_case_setup_failure_raises(ensemble_config_dict, tmp_path):
+    """Test that a failed case.setup raises with its stderr"""
+    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
+    _write_case_setup(case_root, "echo 'setup exploded' >&2\nexit 1\n")
+    with pytest.raises(RuntimeError, match="case.setup failed: .*setup exploded"):
+        _ensemble(ensemble_config_dict)._case_setup(case_root)

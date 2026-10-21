@@ -48,6 +48,20 @@ def test_init_defaults(tmp_path):
     assert config.email is None
 
 
+def test_from_dict_case_dir_optional(ensemble_config_dict):
+    """Test that case_dir may be omitted from the config"""
+    del ensemble_config_dict["case_dir"]
+    config = EnsembleConfig.from_dict(ensemble_config_dict)
+    assert config.case_dir == Path(ensemble_config_dict["root"]) / "cases"
+
+
+def test_from_dict_blank_case_dir_defaults_to_root_cases(ensemble_config_dict):
+    """Test that a blank "case_dir:" in the YAML (None) defaults to <root>/cases"""
+    ensemble_config_dict["case_dir"] = None
+    config = EnsembleConfig.from_dict(ensemble_config_dict)
+    assert config.case_dir == Path(ensemble_config_dict["root"]) / "cases"
+
+
 def test_init_converts_paths(tmp_path):
     """Test that path fields given as strings are converted to Path"""
     config = _config(
@@ -252,7 +266,6 @@ def test_from_dict_does_not_modify_input(ensemble_config_dict):
         "root",
         "paramgen",
         "base_case",
-        "case_dir",
         "paramfile_key",
         "member_stages",
     ],
@@ -498,9 +511,9 @@ def test_from_yaml_unset_env_var_raises(tmp_path, ensemble_config_dict, monkeypa
 
 def test_from_yaml_validation_error_propagates(tmp_path, ensemble_config_dict):
     """Test that an invalid YAML config raises the from_dict error"""
-    del ensemble_config_dict["case_dir"]
+    del ensemble_config_dict["base_case"]
     path = _write_yaml(tmp_path / "ensemble.yaml", ensemble_config_dict)
-    with pytest.raises(ValueError, match="missing required key case_dir"):
+    with pytest.raises(ValueError, match="missing required key base_case"):
         EnsembleConfig.from_yaml(path)
 
 

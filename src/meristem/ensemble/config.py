@@ -17,7 +17,6 @@ _REQUIRED_KEYS = frozenset(
         "root",
         "paramgen",
         "base_case",
-        "case_dir",
         "paramfile_key",
         "member_stages",
     }
@@ -25,6 +24,7 @@ _REQUIRED_KEYS = frozenset(
 _OPTIONAL_KEYS = frozenset(
     {
         "output_root",
+        "case_dir",
         "project",
         "email",
     }
@@ -105,7 +105,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     ensemble_id: short identifier, used in case and job names
     root: directory for ensemble and member state, PBS scripts and logs
     base_case: built CIME case that every member is cloned from
-    case_dir: directory where member clones are created
+    case_dir: directory where member clones are created (default <root>/cases)
     paramgen_dir: meristem paramgen output directory
     paramgen_prefix: paramgen prefix (reads <prefix>.txt and <prefix>_key.csv)
     paramfile_key: user_nl_clm variable to set, "paramfile" or "fates_paramfile"
@@ -119,11 +119,11 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     ensemble_id: str
     root: Path
     base_case: Path
-    case_dir: Path
     paramgen_dir: Path
     paramgen_prefix: str
     paramfile_key: str
     member_stages: tuple[StageConfig, ...]
+    case_dir: Path
     members: tuple[str, ...] | None = None
     output_root: Path | None = None
     project: str = ""
@@ -255,7 +255,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
             ensemble_id=config["ensemble_id"],
             root=config["root"],
             base_case=config["base_case"],
-            case_dir=config["case_dir"],
+            case_dir=config.get("case_dir") or Path(config["root"]) / "cases",
             paramgen_dir=paramgen["dir"],
             paramgen_prefix=paramgen["prefix"],
             paramfile_key=config["paramfile_key"],

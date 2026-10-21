@@ -52,6 +52,11 @@ class Ensemble:
         """Directory with built CIME case that every member is cloned from"""
         return self.config.base_case
 
+    @property
+    def case_dir(self) -> Path:
+        """Directory where member clones are created"""
+        return self.config.case_dir
+
     @classmethod
     def create(cls, config: EnsembleConfig | dict | Path | str) -> Ensemble:
         """Initialize a brand-new ensemble from a YAML file, config dict, or
@@ -114,6 +119,49 @@ class Ensemble:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         param_files = {member: Path(path) for member, path in state["members"].items()}
         return cls(EnsembleConfig.from_dict(state["config"]), param_files)
+
+    def submit(self, limit: int | None = None, dry_run: bool = False) -> dict[str, str]:
+        """Submit the first stage of every pending member"""
+        runs = {member: self.member_run(member) for member in self.param_files}
+
+    def prepare(self, member: str, stage: str):
+        """Clone and configure one member's case
+
+        Args:
+            member (str): member string
+            stage (str): stage string name
+
+        Raises:
+            ValueError: unknown member stage, or base case not built
+            FileNotFoundError: missing base case, parameter file, member run,
+                or CIME script (xmlquery, create_clone, case.setup)
+            PermissionError: a CIME script isn't executable
+            FileExistsError: the stage's case_root exists but isn't its complete clone
+            RuntimeError: a CIME command (create_clone, case.setup) failed
+        """
+
+        if stage not in [s.name for s in self.config.member_stages]:
+            raise ValueError(
+                f"unknown member stage {stage!r}; member stages are "
+                f"{[s.name for s in self.config.member_stages]}."
+            )
+
+        self.check_base_case()
+        self.check_param_files([member])
+        run = self.member_run(member)
+        case_root = self._case_root(member, stage)
+
+        # a stage that's re-run (e.g. retried after a crash) reuses its clone,
+        # which already has its PROJECT from create_clone
+        if not _is_existing_case(case_root):
+            self._clone(case_root, run.project)
+
+        # safe to re-run: CIME skips setup that's already been done
+        self._case_setup(case_root)
+
+    def member_run(self, member: str) -> ModelRun:
+        """Load one member's ModelRun"""
+        return ModelRun.load(self.root / "members" / member)
 
     def save(self):
         """Atomically write current state to ``<root>/ensemble_state.json``.
@@ -243,31 +291,35 @@ class Ensemble:
         if not self.base_case.is_dir():
             raise FileNotFoundError(f"cannot find base case {self.base_case}")
 
-        xmlquery = self.base_case / "xmlquery"
-        if not xmlquery.is_file():
-            raise FileNotFoundError(
-                f"{self.base_case} has no xmlquery; is it a CIME case directory?"
-            )
-        if not os.access(xmlquery, os.X_OK):
-            raise PermissionError(f"{xmlquery} is not executable.")
+        _check_case_script("xmlquery", self.base_case)
 
-        result = subprocess.run(
-            ["./xmlquery", "BUILD_COMPLETE", "--value"],
-            cwd=self.base_case,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"xmlquery BUILD_COMPLETE failed in {self.base_case} "
-                f"(exit {result.returncode}): "
-                f"{result.stderr.strip() or result.stdout.strip()}"
-            )
-        if result.stdout.strip().upper() != "TRUE":
+        result = _run(["./xmlquery", "BUILD_COMPLETE", "--value"], self.base_case)
+
+        if result.upper() != "TRUE":
             raise ValueError(
                 f"base case {self.base_case} is not built (BUILD_COMPLETE="
-                f"{result.stdout.strip()!r}); run ./case.build first."
+                f"{result!r}); run ./case.build first."
+            )
+
+    def check_param_files(self, members: list[str] | None = None):
+        """Check that the stored parameter files still exist
+
+        Args:
+            members (list[str] | None, optional): members to check, or None for all.
+                Defaults to None.
+
+        Raises:
+            FileNotFoundError: if any of the checked members' parameter files is missing
+        """
+        to_check = (
+            self.param_files
+            if members is None
+            else {m: self.param_files[m] for m in members}
+        )
+        missing = [f"  {m}: {p}" for m, p in to_check.items() if not p.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "parameter file(s) no longer exist:\n" + "\n".join(missing)
             )
 
     def check_stage_scripts(self):
@@ -311,10 +363,7 @@ class Ensemble:
                     stage_config.name,
                 ]
             )
-            case_root = (
-                self.config.case_dir
-                / f"{self.config.base_case.name}_{member}_{stage_config.name}"
-            )
+            case_root = self._case_root(member, stage_config.name)
             # the job runs prepare (clone the base case, set the parameter
             # file), then the stage's own script, if any, on the clone
             stages.append(
@@ -323,6 +372,88 @@ class Ensemble:
                 )
             )
         return stages
+
+    def _case_root(self, member: str, stage: str) -> Path:
+        """Case directory for one member stage's clone
+
+        Args:
+            member (str): member name string
+            stage (str): stage string
+
+        Returns:
+            Path: path to case directory for member stage's clone
+        """
+        return self.config.case_dir / f"{self.config.base_case.name}_{member}_{stage}"
+
+    def _case_setup(self, case_root: Path):
+        """Run case.setup in a member case
+
+        Args:
+            case_root (Path): path to member's case root
+
+        Raises:
+            FileNotFoundError: case_root has no case.setup
+            PermissionError: case.setup isn't executable
+            RuntimeError: case.setup failed
+        """
+        _check_case_script("case.setup", case_root)
+        try:
+            _run(["./case.setup"], case_root)
+        except RuntimeError as exc:
+            raise RuntimeError(f"case.setup failed: {exc}") from exc
+
+    def _clone(self, case_root: Path, project: str):
+        """Clone a single case at case_root from base_case
+
+        Args:
+            case_root (Path): path to the member's case_root
+            project (str): PROJECT to set on the clone (create_clone --project)
+
+        Raises:
+            FileNotFoundError: no executable create_clone found
+            RuntimeError: case_root failed
+            RuntimeError: case_root passed but something else went wrong and the case
+            was not successfully created
+        """
+
+        cimeroot = Path(_run(["./xmlquery", "CIMEROOT", "--value"], self.base_case))
+        create_clone = cimeroot / "scripts" / "create_clone"
+        if not create_clone.is_file() or not os.access(create_clone, os.X_OK):
+            raise FileNotFoundError(
+                f"no executable create_clone at {create_clone} (CIMEROOT of base "
+                f"case {self.base_case}); has CIME moved since the base case was built?"
+            )
+
+        cmd = [
+            str(create_clone),
+            "--case",
+            str(case_root),
+            "--clone",
+            str(self.base_case),
+            "--keepexe",
+            "--project",
+            project,
+        ]
+        if self.config.output_root:
+            cmd.extend(["--cime-output-root", str(self.config.output_root)])
+
+        self.case_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _run(cmd, self.base_case)
+        except RuntimeError as exc:
+            leftover = (
+                f" It left a partial {case_root}; remove it before retrying."
+                if case_root.exists()
+                else ""
+            )
+            raise RuntimeError(
+                f"cloning {self.base_case} failed: {exc}.{leftover}"
+            ) from exc
+
+        if not _is_existing_case(case_root):
+            raise RuntimeError(
+                f"create_clone exited successfully but {case_root} was not created."
+            )
 
     def _member_runs(self) -> list[ModelRun]:
         """Build and validate (without writing) a ModelRun for every member
@@ -370,3 +501,96 @@ def _to_config(config: EnsembleConfig | dict | Path | str) -> EnsembleConfig:
         "config must be an EnsembleConfig, dict, str, or Path, "
         f"got {type(config).__name__!r}."
     )
+
+
+def _check_case_script(script: str, case_dir: Path) -> Path:
+    """Check that a CIME case script (e.g. xmlquery, case.setup) exists in a
+    case directory and is executable
+
+    Args:
+        script (str): script name
+        case_dir (Path): path to case dir
+
+    Raises:
+        FileNotFoundError: can't find script
+        PermissionError: isn't executable
+
+    Returns:
+        Path: path to the script
+    """
+    path = case_dir / script
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{case_dir} has no {script}; is it a CIME case directory?"
+        )
+    if not os.access(path, os.X_OK):
+        raise PermissionError(f"{path} is not executable.")
+
+    return path
+
+
+def _is_existing_case(case_root: Path) -> bool:
+    """Check whether a member stage's case directory already holds its clone
+
+    Args:
+        case_root (Path): member stage case directory
+
+    Raises:
+        FileExistsError: if case_root exists but isn't a complete CIME case
+        (e.g. a clone that died partway); it's never removed automatically
+
+    Returns:
+        bool: True if case_root is a complete CIME case, False if it doesn't exist
+    """
+    if not case_root.exists():
+        return False
+
+    hint = "remove it and retry the stage to re-clone it."
+    xmlquery = case_root / "xmlquery"
+    if not (case_root / "env_case.xml").is_file() or not os.access(xmlquery, os.X_OK):
+        raise FileExistsError(
+            f"{case_root} exists but is not a complete CIME case; {hint}"
+        )
+    try:
+        case = _run(["./xmlquery", "CASE", "--value"], case_root)
+    except RuntimeError as exc:
+        raise FileExistsError(
+            f"{case_root} exists but xmlquery CASE failed ({exc}); {hint}"
+        ) from exc
+    if case != case_root.name:
+        raise FileExistsError(
+            f"{case_root} exists but holds case {case!r}, not {case_root.name!r}; "
+            f"{hint}"
+        )
+    return True
+
+
+def _run(cmd: list[str] | str, cwd: Path) -> str:
+    """Wrapper for subprocess calls
+
+    Args:
+        cmd (list[str] | str): input command
+        cwd (Path): working directory for command
+
+    Raises:
+        RuntimeError: Command gave non-zero exit status
+
+    Returns:
+        str: output from command
+    """
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"command {cmd} failed in {cwd} "
+            f"(exit {result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result.stdout.strip()

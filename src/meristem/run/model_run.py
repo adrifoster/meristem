@@ -86,7 +86,7 @@ class ModelRun:
         self.run_id = run_id
         self.stages: tuple[Stage, ...] = tuple(stages)
         self.email = email
-        self.project = project if project else os.getenv("PROJECT")
+        self.project = project if project else os.getenv("PROJECT", "")
         self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
         self._validate()
 
