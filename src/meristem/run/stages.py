@@ -327,6 +327,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         ensemble prepare). Set by meristem, not by users: run and ensemble
         configs reject it. A stage needs a script, a command, or both by the
         time it's validated
+    post_command: built-in finalize command run after the script (e.g. meristem
+        ensemble finalize). Set by meristem, not by users: run and ensemble
+        configs reject it.
     case_root: absolute path to the CESM case directory. If None, the run uses
         <root>/<name>
     submit_args: extra submission arguments, optional
@@ -343,6 +346,7 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     extra_pbs: tuple[str, ...] = ()
     script: Path | None = None
     command: str | None = None
+    post_command: str | None = None
     case_root: Path | None = None
     submit_args: str | None = None
 
@@ -407,6 +411,7 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             "submit_args": self.submit_args if self.submit_args is not None else None,
             "script": str(self.script) if self.script is not None else None,
             "command": self.command,
+            "post_command": self.post_command,
             "walltime": self.walltime,
             "queue": self.queue,
             "spinup_check": self.spinup_check,

@@ -76,6 +76,9 @@ def _validate_member_stage(stage: StageConfig) -> None:
             "script (if any)."
         )
 
+    if stage.post_command:
+        raise ValueError(f"member stage {stage.name!r}: post_command is not allowed")
+
 
 def _validate_members(members) -> None:
     """Check that a members list is non-empty, all non-empty strings, and unique

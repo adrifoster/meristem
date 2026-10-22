@@ -745,6 +745,7 @@ class ModelRun:
             skip_script=skip_script,
             submit_args=stage.config.submit_args,
             command=stage.config.command,
+            post_command=stage.config.post_command,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
@@ -842,6 +843,17 @@ def _validate_config(config: dict) -> None:
         raise ValueError(
             f"stage(s) {with_command} set 'command', which is reserved for "
             "meristem's own setup steps; use a setup script instead."
+        )
+
+    with_post_command = [
+        stage.get("name", idx)
+        for idx, stage in enumerate(config["stages"])
+        if isinstance(stage, dict) and "post_command" in stage
+    ]
+    if with_post_command:
+        raise ValueError(
+            f"stage(s) {with_post_command} set 'post_command', which is reserved for "
+            "meristem's own finalize scripts."
         )
 
 

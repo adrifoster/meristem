@@ -340,7 +340,8 @@ class Ensemble:
 
     def _member_stages(self, member: str) -> list[Stage]:
         """Build a member's stages: each member stage, in its own case under
-        case_dir, running ``meristem ensemble prepare`` then its script (if any)
+        case_dir, running ``meristem ensemble prepare`` then its script (if any),
+        then ``meristem ensemble finalize``
 
         Args:
             member (str): member name
@@ -350,28 +351,49 @@ class Ensemble:
         """
         stages = []
         for stage_config in self.config.member_stages:
-            command = shlex.join(
-                [
-                    *shlex.split(meristem_cmd()),
-                    "ensemble",
-                    "prepare",
-                    "--root",
-                    str(self.root),
-                    "--member",
-                    member,
-                    "--stage",
-                    stage_config.name,
-                ]
-            )
+            command = self._member_command("prepare", member, stage_config.name)
+            post_command = self._member_command("finalize", member, stage_config.name)
+
             case_root = self._case_root(member, stage_config.name)
             # the job runs prepare (clone the base case, set the parameter
-            # file), then the stage's own script, if any, on the clone
+            # file), then the stage's own script, if any, on the clone, then finalize
             stages.append(
                 Stage(
-                    config=replace(stage_config, command=command, case_root=case_root)
+                    config=replace(
+                        stage_config,
+                        command=command,
+                        post_command=post_command,
+                        case_root=case_root,
+                    )
                 )
             )
         return stages
+
+    def _member_command(self, action: str, member: str, stage: str) -> str:
+        """Creates an ensemble member command
+
+        Args:
+            action (str): action (meristem command)
+            member (str): member string name
+            stage (str): member stage's string name
+
+        Returns:
+            str: command
+        """
+        command = shlex.join(
+            [
+                *shlex.split(meristem_cmd()),
+                "ensemble",
+                action,
+                "--root",
+                str(self.root),
+                "--member",
+                member,
+                "--stage",
+                stage,
+            ]
+        )
+        return command
 
     def _case_root(self, member: str, stage: str) -> Path:
         """Case directory for one member stage's clone
