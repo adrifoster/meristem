@@ -69,7 +69,7 @@ def test_save_content_structure(created_run):
     with correct types"""
     state = json.loads((created_run.root / "run_state.json").read_text())
     assert state["run_id"] == created_run.run_id
-    assert state["user"] == created_run.user
+    assert state["email"] == created_run.email
     assert state["project"] == created_run.project
     assert state["scheduler"] == created_run.scheduler.name
     assert isinstance(state["stages"], list)

@@ -101,6 +101,27 @@ def test_validate_args_submit_advance_without_cime_job_id_raises():
     assert exc.value.code == 2
 
 
+def test_validate_args_submit_advance_with_two_cime_job_ids_raises():
+    """Test that submit-advance only accepts a single cime job id"""
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--submit-advance",
+            "--root",
+            "/tmp/run",
+            "--stage",
+            "spinup_ad",
+            "--cime-job-id",
+            "100.pbs",
+            "--cime-job-id",
+            "101.pbs",
+        ]
+    )
+    with pytest.raises(SystemExit) as exc:
+        validate_args(args, parser)
+    assert exc.value.code == 2
+
+
 def test_validate_args_submit_fail_with_all_args_passes():
     """Test that submit-fail with correct arguments passes"""
     parser = build_parser()
@@ -367,8 +388,37 @@ def test_dispatch_submit_fail_calls_submit_fail(mock_run):
     )
     dispatch(args)
     mock_run.submit_fail.assert_called_once_with(
-        "spinup_ad", "55555.pbs", dry_run=False
+        "spinup_ad", ["55555.pbs"], dry_run=False
     )
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_dispatch_submit_fail_passes_every_cime_job_id(mock_run, capsys):
+    """Test that a repeated --cime-job-id reaches submit_fail as a list, and each
+    fail job ID is printed
+    """
+    mock_run.submit_fail.return_value = ["1.pbs", "2.pbs"]
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--submit-fail",
+            "--root",
+            "/tmp/run",
+            "--stage",
+            "spinup_ad",
+            "--cime-job-id",
+            "100.pbs",
+            "--cime-job-id",
+            "101.pbs",
+        ]
+    )
+    dispatch(args)
+    mock_run.submit_fail.assert_called_once_with(
+        "spinup_ad", ["100.pbs", "101.pbs"], dry_run=False
+    )
+    out = capsys.readouterr().out
+    assert "Fail job submitted: 1.pbs" in out
+    assert "Fail job submitted: 2.pbs" in out
 
 
 @pytest.mark.usefixtures("mock_load")
@@ -388,7 +438,9 @@ def test_dispatch_submit_fail_dry_run_passed_through(mock_run):
         ]
     )
     dispatch(args)
-    mock_run.submit_fail.assert_called_once_with("spinup_ad", "55555.pbs", dry_run=True)
+    mock_run.submit_fail.assert_called_once_with(
+        "spinup_ad", ["55555.pbs"], dry_run=True
+    )
 
 
 @pytest.mark.usefixtures("mock_load")

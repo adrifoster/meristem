@@ -38,8 +38,8 @@ Only the first stage needs to be submitted manually. The rest of the pipeline ru
   `/glade/work`). Generated job scripts call meristem through the absolute path of the Python
   that created the run (`/path/to/python -m meristem`), so no environment needs to be activated
   inside the jobs. Don't move, delete, or rebuild that environment while a run is in progress.
-- Setup scripts and stage `command`s can call `meristem` directly. They do not get an
-  activated conda environment, so a setup script that needs one must activate it itself.
+- Setup scripts can call `meristem` directly. They do not get an activated conda environment,
+  so a setup script that needs one must activate it itself.
 
 ----
 
@@ -52,7 +52,7 @@ Only the first stage needs to be submitted manually. The rest of the pipeline ru
 root: /glade/derecho/scratch/user/my_spinup  # working directory for the entire run
 run_id: my_spinup                            # short identifier (letters, digits, hyphens, underscores)
 project: PXXXXXXX                            # PBS project code
-user: auser                                  # PBS username (for job emails)
+email: name@ucar.edu                         # email
 
 stages:
   - name: spinup_ad               # name of stage - used for job and case names
@@ -109,7 +109,7 @@ you'd expect, use `--check` to ask PBS whether it is still running (see [Lost st
 | `stages` | yes | | List of stages, run in order (see below) |
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
-| `user` | no | `$USER` | PBS username, used for job emails (`#PBS -M`). If omitted, the `USER` environment variable is used |
+| `email` | no | user email, used for job emails (`#PBS -M`). If omitted, the directive is not added |
 | `scheduler` | no | `pbs` | Job scheduler used to submit job scripts. Saved in the state file. Only `pbs` is currently supported |
 
 Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded when the run is created,
@@ -129,7 +129,6 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 | `memory` | no | `10GB` | Memory for the setup job, e.g. `16GB` |
 | `no_cime` | no | `false` | If true, the stage isn't a CIME case: run the script, then advance directly |
 | `extra_pbs` | no | `[]` | Extra raw PBS directives, e.g. `["-l place=group=rack"]` |
-| `kind` | no | `custom` | Reserved for future use (see [Stage kinds](#stage-kinds)) |
 | `spinup_check` | no | `false` | Reserved for future use. Currently has no effect |
 
 The resource keys (`walltime`, `select`, `ncpus`, `memory`) apply to the setup job only. The model run's
@@ -179,6 +178,7 @@ meristem run --root <path> --fail --stage <name>
 ```
 
 Add `--dry-run` to any submission command to generate job scripts without calling `qsub`.
+A dry run doesn't change the run's state, so you can follow it with the real command.
 Add `--debug` to any command to show the full traceback on errors.
 
 ### Lost stages
@@ -288,17 +288,3 @@ pipeline completed. The submit script prints the exact command.
 Note that PBS jobs don't inherit your shell's environment. That's why the example scripts read their
 settings from a file next to them rather than from exported variables.
 
-----
-
-## Stage kinds
-
-The `kind` key labels a stage. It doesn't change any behavior yet, but is reserved for stage-specific
-behavior (such as spinup checks) in the future.
-
-| Kind | Description |
-| --- | --- |
-| `ad` | Accelerated decomposition spinup |
-| `sasu` | SASU spinup |
-| `post-sasu` | Post-SASU stage |
-| `historical` | Historical run |
-| `custom` | Any other stage type (default) |

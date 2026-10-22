@@ -7,7 +7,9 @@
 #PBS -o {{ log_file }}
 #PBS -j oe
 #PBS -k eod
-#PBS -M {{ user }}
+{% if email %}
+#PBS -M {{ email }}
+{% endif %}
 {% if depend_job_id %}
 #PBS -W depend=afterok:{{ depend_job_id }}
 {% endif %}
@@ -29,26 +31,44 @@ echo "=== Started: $(date) ==="
 
 {% if not skip_script %}
 {% if command %}
-# built-in setup command (e.g. meristem ensemble prepare)
-# strict mode is enforced, matching the setup script path
+# built-in setup command (e.g. meristem ensemble prepare), run before any
+# setup script; strict mode is enforced, matching the setup script
 bash -c {{ ("set -euo pipefail; " ~ command) | shquote }}
-{% else %}
-# create, configure, and build the CIME case
+{% endif %}
+{% if script %}
+# create, configure, and build the CIME case (or, after a setup command,
+# customize the case it made)
 # strict mode is enforced even if the user's script doesn't set it
 bash -c 'set -euo pipefail; source "$0" "$@"' {{ script | shquote }} {{ case_root | shquote }}{% if previous_case %} {{ previous_case | shquote }} {{ previous_case_root | shquote }}{% endif +%}
+{% endif %}
+{% if post_command %}
+# built-in step after the setup script (e.g. meristem ensemble finalize), so the script can't undo it
+bash -c {{ ("set -euo pipefail; " ~ post_command) | shquote }}
 {% endif %}
 {% endif %}
 
 {% if cime %}
-# submit the CIME case; capture the final job ID (short-term archiver)
+# submit the CIME case and capture its job IDs
 cd {{ case_root | shquote }}
-./case.submit --resubmit-immediate{% if submit_args %} -a {{ submit_args | shquote }}{% endif %}
-JOB_IDS=$(./xmlquery JOB_IDS)
-FINAL_JOB_ID=${JOB_IDS##*:}
-echo "CIME submitted, final job ID: $FINAL_JOB_ID"
- 
-meristem run --root "$RUN_ROOT" --submit-advance --stage "$STAGE" --cime-job-id $FINAL_JOB_ID
-meristem run --root "$RUN_ROOT" --submit-fail --stage "$STAGE" --cime-job-id $FINAL_JOB_ID
+./case.submit --resubmit-immediate {% if submit_args %} -a {{ submit_args | shquote }}{% endif +%}
+# e.g. "case.run:123.desched1, case.st_archive:124.desched1"; with RESUBMIT > 0
+# only the last segment's jobs are listed
+JOB_IDS=$(./xmlquery --value JOB_IDS)
+RUN_JOB_ID=$(sed -n 's/.*case\.run:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
+ARCHIVE_JOB_ID=$(sed -n 's/.*case\.st_archive:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
+if [[ -z $RUN_JOB_ID ]]; then
+    echo "No case.run job ID in JOB_IDS: '$JOB_IDS'" >&2
+    false  # trips the ERR trap (exit wouldn't)
+fi
+# advance after archiving finishes (no archiver when DOUT_S is FALSE)
+FINAL_JOB_ID=${ARCHIVE_JOB_ID:-$RUN_JOB_ID}
+echo "CIME submitted, case.run: $RUN_JOB_ID, final job ID: $FINAL_JOB_ID"
+
+meristem run --root "$RUN_ROOT" --submit-advance --stage "$STAGE" --cime-job-id "$FINAL_JOB_ID"
+# watch case.run too: if it crashes PBS deletes st_archive and anything
+# waiting on it, so a fail job on st_archive alone never runs
+meristem run --root "$RUN_ROOT" --submit-fail --stage "$STAGE" \
+    --cime-job-id "$RUN_JOB_ID" --cime-job-id "$FINAL_JOB_ID"
 {% else %}
 meristem run --root "$RUN_ROOT" --advance --stage "$STAGE"
 {% endif %}

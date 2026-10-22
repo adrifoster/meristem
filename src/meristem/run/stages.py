@@ -1,6 +1,6 @@
 """
 Module for holding core classes for tethering:
-StageStatus and StageKind Enums, plus StageState, StageConfig, and Stage
+StageStatus Enum, plus StageState, StageConfig, and Stage
 """
 
 from __future__ import annotations
@@ -20,12 +20,13 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
         "status",
         "job_id",
         "advance_job_id",
-        "fail_job_id",
+        "fail_job_ids",
         "submit_time",
         "end_time",
         "attempts",
     }
 )
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -80,49 +81,6 @@ _ALLOWED_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
 }
 
 
-class StageKind(Enum):
-    """Stage Kind enum
-
-    Currently informational only; used for logging and checkpointing.
-    Intended to drive stage-specific behavior (walltime defaults, spinup
-    checks, post-processing) as the tethering system matures.
-    """
-
-    AD = "ad"
-    SASU = "sasu"
-    POST_SASU = "post-sasu"
-    HISTORICAL = "historical"
-    CUSTOM = "custom"
-
-    def to_str(self) -> str:
-        """Return value string
-
-        Returns:
-            str: output string
-        """
-        return self.value
-
-    @classmethod
-    def from_str(cls, raw: str) -> StageKind:
-        """Instantiate the class from an input raw string
-
-        Args:
-            raw (str): input string
-
-        Raises:
-            ValueError: invalid kind supplied
-
-        Returns:
-            StageKind: StageKind instance
-        """
-        try:
-            return cls(raw.lower().strip().replace("_", "-"))
-        except ValueError as e:
-            raise ValueError(
-                f"Invalid StageKind {raw!r}. " f"Valid values: {[e.value for e in cls]}"
-            ) from e
-
-
 # ---------------------------------------------------------------------------
 # StageStage (mutable runtime state)
 # ---------------------------------------------------------------------------
@@ -152,8 +110,9 @@ class StageState:
         PBS job ID of actual job assigned after submission
     advance_job_id: str or None
         PBS job ID of advance job assigned after submission
-    fail_job_id: str or None
-        PBS job ID of fail job assigned after submission
+    fail_job_ids: list of str
+        PBS job IDs of fail jobs assigned after submission (one per CIME job
+        they watch)
     submit_time: float or None
         Unix timestamp of the most recent submission
     end_time: float or None
@@ -167,7 +126,7 @@ class StageState:
         status: StageStatus = StageStatus.PENDING,
         job_id: str | None = None,
         advance_job_id: str | None = None,
-        fail_job_id: str | None = None,
+        fail_job_ids: list[str] | None = None,
         submit_time: float | None = None,
         end_time: float | None = None,
         attempts: int = 0,
@@ -175,7 +134,7 @@ class StageState:
         self._status = status
         self.job_id = job_id
         self.advance_job_id = advance_job_id
-        self.fail_job_id = fail_job_id
+        self.fail_job_ids = list(fail_job_ids or [])
         self._submit_time = submit_time
         self._end_time = end_time
         self._attempts = attempts
@@ -278,7 +237,7 @@ class StageState:
             self.status == other.status
             and self.job_id == other.job_id
             and self.advance_job_id == other.advance_job_id
-            and self.fail_job_id == other.fail_job_id
+            and self.fail_job_ids == other.fail_job_ids
             and self._submit_time == other._submit_time
             and self._end_time == other._end_time
             and self._attempts == other._attempts
@@ -287,7 +246,7 @@ class StageState:
     def __repr__(self) -> str:
         return (
             f"StageState(status={self.status!r}, job_id={self.job_id!r}, "
-            f"advance_job_id={self.advance_job_id!r}, fail_job_id={self.fail_job_id!r}, "
+            f"advance_job_id={self.advance_job_id!r}, fail_job_ids={self.fail_job_ids!r}, "
             f"submit_time={self._submit_time!r}, end_time={self._end_time!r}, "
             f"attempts={self._attempts!r})"
         )
@@ -305,7 +264,7 @@ class StageState:
             "status": self.status.to_str(),
             "job_id": self.job_id,
             "advance_job_id": self.advance_job_id,
-            "fail_job_id": self.fail_job_id,
+            "fail_job_ids": list(self.fail_job_ids),
             "submit_time": self._submit_time,
             "end_time": self._end_time,
             "attempts": self._attempts,
@@ -324,11 +283,16 @@ class StageState:
             ValueError: If "status" is absent or not a valid StageStatus value
         """
         input_dict = dict(input_dict)
+        fail_job_ids = input_dict.get("fail_job_ids")
+        if fail_job_ids is None:
+            # older state files stored a single fail_job_id
+            legacy = input_dict.get("fail_job_id")
+            fail_job_ids = [legacy] if legacy else []
         return cls(
             status=StageStatus.from_str(input_dict.get("status", "")),
             job_id=input_dict.get("job_id"),
             advance_job_id=input_dict.get("advance_job_id"),
-            fail_job_id=input_dict.get("fail_job_id"),
+            fail_job_ids=fail_job_ids,
             submit_time=input_dict.get("submit_time"),
             end_time=input_dict.get("end_time"),
             attempts=input_dict.get("attempts", 0),
@@ -352,15 +316,20 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: unique identifier, e.g., "spinup_ad"
     walltime: PBS walltime string, e.g., "06:00:00"
     queue: PBS queue name
-    kind: stage kind, really just a name right now
     spinup_check: if True, advance() reads runs spinup_stability before proceeding
     ncpus: CPUs per node requested from PBS
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
     extra_pbs: additional raw #PBS directives
-    script: path to setup script; must either supply this or command;
-        called as bash <script> <case_root> <run_id>
-    command: command to run (in place of script)
+    script: path to the user's setup script; called as
+        bash <script> <case_root> <previous_case_name> <previous_case_root>
+    command: built-in setup command run before the script (e.g. meristem
+        ensemble prepare). Set by meristem, not by users: run and ensemble
+        configs reject it. A stage needs a script, a command, or both by the
+        time it's validated
+    post_command: built-in finalize command run after the script (e.g. meristem
+        ensemble finalize). Set by meristem, not by users: run and ensemble
+        configs reject it.
     case_root: absolute path to the CESM case directory. If None, the run uses
         <root>/<name>
     submit_args: extra submission arguments, optional
@@ -369,7 +338,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: str
     queue: str
     walltime: str = "01:00:00"
-    kind: StageKind = StageKind.CUSTOM
     spinup_check: bool = False
     ncpus: int = 1
     select: int = 1
@@ -378,6 +346,7 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     extra_pbs: tuple[str, ...] = ()
     script: Path | None = None
     command: str | None = None
+    post_command: str | None = None
     case_root: Path | None = None
     submit_args: str | None = None
 
@@ -385,13 +354,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         if not self.name:
             raise ValueError("name must not be empty.")
 
-        if not self.script and not self.command:
-            raise ValueError("either script or command must be supplied.")
-
-        if self.script and self.command:
-            raise ValueError(
-                "both script and command cannot be supplied together; choose one"
-            )
+        # checked before the Path conversion below, which would turn "" into "."
+        if self.script is not None and not self.script:
+            raise ValueError(f"stage {self.name!r}: script must not be empty.")
 
         # __setattr__ is required because the dataclass is frozen
         if self.script is not None:
@@ -419,13 +384,24 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         """Validate that this config is ready for submission.
 
         Separated from __post_init__ so StageConfig can be constructed and
-        deserialized without requiring filesystem access
+        deserialized without requiring filesystem access, and so an ensemble
+        member stage can be defined without a script and have its command
+        filled in later
 
         Raises:
+            ValueError: if there's neither a script nor a command to run
             ValueError: if the script path does not exist
+            ValueError: if case_root is not an absolute path
         """
+        if not self.script and not self.command:
+            raise ValueError(f"stage {self.name!r} has no setup script.")
         if self.script and not self.script.exists():
             raise ValueError(f"cannot open script {self.script!r}.")
+        if self.case_root is not None and not self.case_root.is_absolute():
+            raise ValueError(
+                f"case_root {str(self.case_root)!r} for stage {self.name!r} "
+                "must be an absolute path."
+            )
 
     def to_dict(self) -> dict:
         """Serialize configuration fields to a plain dictionary"""
@@ -435,9 +411,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             "submit_args": self.submit_args if self.submit_args is not None else None,
             "script": str(self.script) if self.script is not None else None,
             "command": self.command,
+            "post_command": self.post_command,
             "walltime": self.walltime,
             "queue": self.queue,
-            "kind": self.kind.to_str(),
             "spinup_check": self.spinup_check,
             "ncpus": self.ncpus,
             "select": self.select,
@@ -457,7 +433,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             StageConfig: StageConfig instance
         """
         in_dict = dict(input_dict)
-        in_dict["kind"] = StageKind.from_str(in_dict.get("kind", "custom"))
         in_dict["extra_pbs"] = tuple(in_dict.get("extra_pbs", []))
         return cls(**in_dict)
 
@@ -475,7 +450,7 @@ class Stage:
     Attributes
     -----------
     config: StageConfig attributes
-    state: StageState instance; reset with stage.status = StageState()
+    state: StageState instance; reset with stage.state = StageState()
     """
 
     config: StageConfig

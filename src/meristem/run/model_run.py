@@ -50,6 +50,11 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 # keys that must be present in a config dict.
 _REQUIRED_CONFIG_KEYS = frozenset({"root", "stages"})
 
+# seconds after submission that an UNKNOWN setup job still counts as active.
+# NCAR's qstat wrapper (qstat-cache) serves a snapshot that lags by minutes, so
+# a just-submitted job isn't in it yet
+_UNKNOWN_GRACE_SECONDS = 600
+
 
 class ModelRun:
     """
@@ -63,8 +68,8 @@ class ModelRun:
     root: working directory; all CIME cases live under here
     run_id: short identifier, e.g. "member_0042" or "my_spinup"
     stages: ordered tuple of Stage instances
-    user: username for the machine - used for PBS job submission. can use os.environ variable
-    project: PBS project code to use for job submission. can use os.environ variable
+    email: email for the machine - can be None
+    project: project code to use for job submission. can use os.environ variable
     scheduler: job scheduler used to submit job scripts. defaults to PBS
     """
 
@@ -73,15 +78,15 @@ class ModelRun:
         root: Path | str,
         run_id: str,
         stages: tuple[Stage, ...] | list[Stage],
-        user: str,
         project: str,
+        email: str | None = None,
         scheduler: Scheduler | None = None,
     ):
         self.root = Path(root)
         self.run_id = run_id
         self.stages: tuple[Stage, ...] = tuple(stages)
-        self.user = user if user else os.getenv("USER")
-        self.project = project if project else os.getenv("PROJECT")
+        self.email = email
+        self.project = project if project else os.getenv("PROJECT", "")
         self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
         self._validate()
 
@@ -92,10 +97,6 @@ class ModelRun:
             raise ValueError(
                 f"run_id {self.run_id!r} contains invalid characters. "
                 "Only letters, digits, hyphens, and underscores are allowed."
-            )
-        if not self.user:
-            raise ValueError(
-                "user must not be empty and $USER environment variable not set."
             )
         if not self.project:
             raise ValueError(
@@ -110,6 +111,21 @@ class ModelRun:
                 f"root {str(self.root)!r} must not contain whitespace "
                 "(PBS can't write job logs to such paths)."
             )
+
+    def _validate_stages(self, start: str | None = None):
+        """Validate stage configs (script exists, case_root absolute)
+
+        Not part of _validate so that load still works (e.g. for status) if a
+        script has since moved; called at create, submit, and retry instead, so
+        a bad later stage fails up front rather than inside an advance job.
+
+        Args:
+            start (str | None, optional): validate only this stage and those
+            after it (the ones still to run). Defaults to None (all stages).
+        """
+        idx = self.stage_names.index(start) if start else 0
+        for stage in self.stages[idx:]:
+            stage.config.validate()
 
     @classmethod
     def create(
@@ -150,11 +166,12 @@ class ModelRun:
             root=root,
             run_id=cfg.get("run_id", "run"),
             stages=stages,
-            user=cfg.get("user", ""),
+            email=cfg.get("email"),
             project=cfg.get("project", ""),
             scheduler=scheduler
             or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
         )
+        run._validate_stages()
         run.root.mkdir(parents=True, exist_ok=True)
         run.save()
         return run
@@ -186,7 +203,7 @@ class ModelRun:
         return cls(
             root=root,
             run_id=state["run_id"],
-            user=state.get("user", ""),
+            email=state.get("email"),
             stages=[Stage.from_dict(stage) for stage in state["stages"]],
             project=state.get("project", ""),
             # state files written before the scheduler key existed are PBS runs
@@ -202,7 +219,7 @@ class ModelRun:
         """
         state = {
             "run_id": self.run_id,
-            "user": self.user,
+            "email": self.email,
             "project": self.project,
             "scheduler": self.scheduler.name,
             "stages": [stage.to_dict() for stage in self.stages],
@@ -238,10 +255,18 @@ class ModelRun:
         and fail jobs (including every no_cime stage), and advance/fail jobs
         that ended or were deleted without updating the stage.
 
+        A setup job PBS reports as UNKNOWN within _UNKNOWN_GRACE_SECONDS of
+        submission counts as active, since qstat's cache may not have it yet.
+
         PBS is queried before the state file is re-read: a job saves the state
         before it exits, so any job PBS reports as finished has already written
         its result. The stage is only lost if it is still SUBMITTED on disk with
         the same job IDs; this run's stages are updated to match the disk.
+
+        This is also how a crash in an earlier segment of a resubmitting CIME run
+        (RESUBMIT > 0) shows up: CIME's JOB_IDS only holds the last segment's
+        jobs, so the fail jobs can't watch earlier segments, and PBS deletes
+        every later job (including the advance and fail jobs) along with them.
 
         Known gaps (the stage is reported lost while its CIME run is going):
         a setup job killed between case.submit and --submit-advance, and stages
@@ -264,7 +289,7 @@ class ModelRun:
         recorded = (
             stage.state.job_id,
             stage.state.advance_job_id,
-            stage.state.fail_job_id,
+            *stage.state.fail_job_ids,
         )
         job_ids = [
             job_id for job_id in recorded if job_id and not job_id.startswith("DRY_")
@@ -277,6 +302,17 @@ class ModelRun:
         active = {JobState.QUEUED, JobState.RUNNING}
         if any(states.get(job_id, JobState.UNKNOWN) in active for job_id in job_ids):
             return False
+        # a lagging qstat cache may not have the setup job yet. Only the setup
+        # job needs this: it submits the advance and fail jobs before exiting, so
+        # a snapshot that shows it finished also has them
+        setup_job_id, submit_time = stage.state.job_id, stage.state.submit_time
+        if (
+            setup_job_id is not None
+            and states.get(setup_job_id, JobState.UNKNOWN) is JobState.UNKNOWN
+            and submit_time is not None
+            and time.time() - submit_time < _UNKNOWN_GRACE_SECONDS
+        ):
+            return False
 
         # re-read the state now that PBS has been queried (see docstring)
         self.stages = ModelRun.load(self.root, scheduler=self.scheduler).stages
@@ -284,7 +320,7 @@ class ModelRun:
         return fresh.status == StageStatus.SUBMITTED and recorded == (
             fresh.job_id,
             fresh.advance_job_id,
-            fresh.fail_job_id,
+            *fresh.fail_job_ids,
         )
 
     def _stage(self, name: str) -> Stage:
@@ -418,6 +454,7 @@ class ModelRun:
                 f"  {self.run_id}: skipping submit (first stage is {first.state.status.value})"
             )
             return first.state.job_id or None
+        self._validate_stages()
         return self._submit_stage(first, dry_run=dry_run)
 
     def fail(self, stage_name: str):
@@ -454,11 +491,10 @@ class ModelRun:
         """
         stage = self._stage(stage_name)
         job_file = self._write_advance_script(stage, cime_job_id)
-        job_id = (
-            f"DRY_advance_{self.run_id}_{stage_name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
+        if dry_run:
+            print(f"  {self.run_id} / {stage_name}: dry run, wrote {job_file}")
+            return f"DRY_advance_{self.run_id}_{stage_name}"
+        job_id = self.scheduler.submit(job_file)
         stage.state.advance_job_id = job_id
         self.save()
         print(
@@ -468,35 +504,58 @@ class ModelRun:
         return job_id
 
     def submit_fail(
-        self, stage_name: str, cime_job_id: str, dry_run: bool = False
-    ) -> str:
-        """Write the fail script with the CIME job ID and submit it
+        self, stage_name: str, cime_job_ids: str | list[str], dry_run: bool = False
+    ) -> list[str]:
+        """Write and submit one fail script per CIME job ID
         This is so that if our CIME job crashes we can fail the stage
         Called from the setup job script after case.submit completes
 
+        One fail job per CIME job is needed because PBS deletes (rather than
+        runs) an afternotok job whose dependency was itself deleted: if
+        case.run crashes, st_archive is deleted along with anything waiting on
+        it. At most one of these fail jobs ever runs, since a failed job takes
+        every job after it in the chain down with it.
+
         Args:
             stage_name (str): name of stage
-            cime_job_id (str): CIME job ID
+            cime_job_ids (str | list[str]): CIME job ID(s), e.g. case.run and
+                case.st_archive. Duplicates are submitted once
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
 
         Returns:
-            str: PBS job ID of the fail script
+            list[str]: PBS job IDs of the fail scripts
         """
         stage = self._stage(stage_name)
-        job_file = self._write_fail_script(stage, cime_job_id)
-        job_id = (
-            f"DRY_fail_{self.run_id}_{stage_name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
-        stage.state.fail_job_id = job_id
-        self.save()
-        print(
-            f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
-            f"(afternotok:{cime_job_id})"
-        )
-        return job_id
+        if isinstance(cime_job_ids, str):
+            cime_job_ids = [cime_job_ids]
+        cime_job_ids = list(dict.fromkeys(cime_job_ids))
+        if not cime_job_ids:
+            raise ValueError("submit_fail needs at least one CIME job ID")
+
+        if dry_run:
+            job_ids = []
+            for idx, cime_job_id in enumerate(cime_job_ids, start=1):
+                suffix = f"_fail_{idx}" if len(cime_job_ids) > 1 else "_fail"
+                job_file = self._write_fail_script(stage, cime_job_id, suffix)
+                print(f"  {self.run_id} / {stage_name}: dry run, wrote {job_file}")
+                job_ids.append(f"DRY{suffix}_{self.run_id}_{stage_name}")
+            return job_ids
+
+        stage.state.fail_job_ids = []
+        for idx, cime_job_id in enumerate(cime_job_ids, start=1):
+            # a single fail job keeps the plain _fail name
+            suffix = f"_fail_{idx}" if len(cime_job_ids) > 1 else "_fail"
+            job_file = self._write_fail_script(stage, cime_job_id, suffix)
+            job_id = self.scheduler.submit(job_file)
+            # save after each one so a later qsub failure keeps what was submitted
+            stage.state.fail_job_ids.append(job_id)
+            self.save()
+            print(
+                f"  {self.run_id} / {stage_name}: fail job submitted {job_id} "
+                f"(afternotok:{cime_job_id})"
+            )
+        return list(stage.state.fail_job_ids)
 
     def advance(self, completed_stage_name: str, dry_run: bool = False) -> str | None:
         """Advance the pipeline and submit the next stage
@@ -515,6 +574,15 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only advance SUBMITTED stages."
             )
+        if dry_run:
+            next_stage = self._next_stage(completed_stage_name)
+            if next_stage is None:
+                print(
+                    f"  {self.run_id}: dry run, no stages after {completed_stage_name}"
+                )
+                return None
+            return self._submit_stage(next_stage, dry_run=True)
+
         stage.state.status = StageStatus.DONE
         stage.state.end_time = time.time()
         self.save()
@@ -547,6 +615,8 @@ class ModelRun:
         Raises:
             ValueError: if the stage can't be retried, or lost is True and the
             stage isn't lost (so a running stage is never resubmitted)
+            ValueError: if this or a later stage's config is invalid (e.g. its
+            script is missing); the stage is left as it was
 
         Returns:
             str | None: PBS job ID of the advance script, or None if all stages complete
@@ -564,20 +634,25 @@ class ModelRun:
                 )
             # is_lost re-read the state file, so look the stage up again
             stage = self._stage(name)
-            # go through FAILED: SUBMITTED -> PENDING isn't an allowed transition
-            stage.state.status = StageStatus.FAILED
-            print(f"  {self.run_id} / {name}: lost, marked FAILED")
-        if stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
+        elif stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
             raise ValueError(
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only retry PENDING or FAILED stages."
             )
+        self._validate_stages(start=stage.config.name)
+        if dry_run:
+            return self._dry_run_stage(stage, skip_script=skip_script)
+
+        if lost:
+            # go through FAILED: SUBMITTED -> PENDING isn't an allowed transition
+            stage.state.status = StageStatus.FAILED
+            print(f"  {self.run_id} / {stage.config.name}: lost, marked FAILED")
         stage.state.status = StageStatus.PENDING
         stage.state.end_time = None
         stage.state.submit_time = None
         stage.state.job_id = None
         stage.state.advance_job_id = None
-        stage.state.fail_job_id = None
+        stage.state.fail_job_ids = []
         self.save()
         return self._submit_stage(stage, dry_run=dry_run, skip_script=skip_script)
 
@@ -613,12 +688,10 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "- can only submit PENDING or FAILED stages."
             )
+        if dry_run:
+            return self._dry_run_stage(stage, depend_job_id, skip_script)
         job_file = self._write_job_script(stage, depend_job_id, skip_script)
-        job_id = (
-            f"DRY_{self.run_id}_{stage.config.name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
+        job_id = self.scheduler.submit(job_file)
 
         # record successful submission
         stage.state.job_id = job_id
@@ -628,6 +701,28 @@ class ModelRun:
         self.save()
         print(f"{self.run_id} / {stage.config.name}: submitted {job_id}")
         return job_id
+
+    def _dry_run_stage(
+        self,
+        stage: Stage,
+        depend_job_id: str | None = None,
+        skip_script: bool = False,
+    ) -> str:
+        """Write a stage's job script without submitting it or changing any state
+
+        Args:
+            stage (Stage): stage
+            depend_job_id (str | None, optional): CIME job id to add to afterok
+                dependency. Defaults to None.
+            skip_script (bool, optional): If True, the script won't run the user's
+                script. Defaults to False
+
+        Returns:
+            str: synthetic DRY_ job ID
+        """
+        job_file = self._write_job_script(stage, depend_job_id, skip_script)
+        print(f"  {self.run_id} / {stage.config.name}: dry run, wrote {job_file}")
+        return f"DRY_{self.run_id}_{stage.config.name}"
 
     def _write_job_script(
         self, stage: Stage, depend_job_id: str | None = None, skip_script: bool = False
@@ -673,7 +768,7 @@ class ModelRun:
             walltime=stage.config.walltime,
             project=self.project,
             log_file=log_file,
-            user=self.user,
+            email=self.email,
             depend_job_id=depend_job_id,
             extra=extra,
             root=self.root,
@@ -687,6 +782,7 @@ class ModelRun:
             skip_script=skip_script,
             submit_args=stage.config.submit_args,
             command=stage.config.command,
+            post_command=stage.config.post_command,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
@@ -711,7 +807,7 @@ class ModelRun:
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,
-            user=self.user,
+            email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,
@@ -719,18 +815,22 @@ class ModelRun:
         job_file.write_text(template, encoding="utf-8")
         return job_file
 
-    def _write_fail_script(self, stage: Stage, cime_job_id: str) -> Path:
+    def _write_fail_script(
+        self, stage: Stage, cime_job_id: str, suffix: str = "_fail"
+    ) -> Path:
         """Write the fail job script with the real CIME job ID already in
         the afternotok dependency line
 
         Args:
-            stage (Stage): Stage to advance
+            stage (Stage): Stage to fail
             cime_job_id (str): CIME job ID
+            suffix (str, optional): appended to the job and file name, so each
+                fail job of a stage gets its own script. Defaults to "_fail".
 
         Returns:
             Path: path to script
         """
-        job_name = f"{self.run_id}_{stage.config.name}_fail"
+        job_name = f"{self.run_id}_{stage.config.name}{suffix}"
         job_file = self.root / f"{job_name}.pbs"
 
         template = _ENV.get_template("fail_script_template.txt")
@@ -739,7 +839,7 @@ class ModelRun:
             job_name=job_name,
             queue=stage.config.queue,
             project=self.project,
-            user=self.user,
+            email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,
@@ -769,6 +869,29 @@ def _validate_config(config: dict) -> None:
         )
     if len(config["stages"]) == 0:
         raise ValueError("Config key 'stages' must not be empty.")
+    # command is for meristem's own setup steps (e.g. ensemble prepare); a
+    # user's setup belongs in a script
+    with_command = [
+        stage.get("name", idx)
+        for idx, stage in enumerate(config["stages"])
+        if isinstance(stage, dict) and "command" in stage
+    ]
+    if with_command:
+        raise ValueError(
+            f"stage(s) {with_command} set 'command', which is reserved for "
+            "meristem's own setup steps; use a setup script instead."
+        )
+
+    with_post_command = [
+        stage.get("name", idx)
+        for idx, stage in enumerate(config["stages"])
+        if isinstance(stage, dict) and "post_command" in stage
+    ]
+    if with_post_command:
+        raise ValueError(
+            f"stage(s) {with_post_command} set 'post_command', which is reserved for "
+            "meristem's own finalize scripts."
+        )
 
 
 def _load_config(config: Path | str | dict) -> dict:

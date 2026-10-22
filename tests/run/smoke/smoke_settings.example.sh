@@ -12,7 +12,8 @@
 CTSM_ROOT=/glade/work/${USER}/CTSM
 
 # CIME output root: case run directories and the short-term archive go here
-OUT_DIR=/glade/derecho/scratch/${USER}/meristem_smoke
+SMOKE_ROOT=/glade/derecho/scratch/${USER}/meristem_smoke
+OUT_DIR=${SMOKE_ROOT}/out
 
 # PBS project code to charge
 PROJECT=PXXXXXXXX

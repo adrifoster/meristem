@@ -39,13 +39,14 @@ def test_qsub_accepts_advance_script(integration_run):
 @pytest.mark.pbs
 def test_qstat_query_reports_submitted_and_unknown_jobs(integration_run):
     """Test that PbsScheduler.query() parses real qstat output: a just-submitted
-    job is active, and an ID PBS has never seen is UNKNOWN
+    job is active (or UNKNOWN, if NCAR's qstat cache hasn't picked it up yet), an
+    ID PBS has never seen is UNKNOWN, and the stage isn't lost either way
     """
     job_id = integration_run.submit()
     assert job_id
     try:
         states = integration_run.scheduler.query([job_id, "1.desched1"])
-        assert states[job_id] in (JobState.QUEUED, JobState.RUNNING)
+        assert states[job_id] in (JobState.QUEUED, JobState.RUNNING, JobState.UNKNOWN)
         assert states["1.desched1"] is JobState.UNKNOWN
         assert not integration_run.is_lost("spinup_ad")
     finally:

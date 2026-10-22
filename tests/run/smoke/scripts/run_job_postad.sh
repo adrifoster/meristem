@@ -6,15 +6,13 @@
 # machine- and user-specific settings: CTSM_ROOT, OUT_DIR, PROJECT, SITE
 source "$(dirname "${BASH_SOURCE[0]}")/../smoke_settings.sh"
 
-COMPSET=2000_DATM%1PT_CLM60%BGC_SICE_SOCN_SROF_SGLC_SWAV
-RES=CLM_USRDAT
-
-if [ $# -lt 2 ] || [ -z "$2" ]; then
-  echo "ERROR: please specify case_root and previous_case_name"
+if [ $# -lt 3 ] || [ -z "$2" ]; then
+  echo "ERROR: please specify case_root, previous_case_name, and previous_case_root"
   exit 1
 fi
 case_root="$1"
 prev_case="$2"
+prev_case_root="$3"
 case_name=$(basename "${case_root}")
 
 # start clean if this stage is being retried
@@ -23,9 +21,7 @@ rm -rf "${case_root}" "${OUT_DIR:?}/${case_name}" "${OUT_DIR:?}/archive/${case_n
 user_mods=${CTSM_ROOT}/cime_config/usermods_dirs/clm/NEON/${SITE}
 
 cd "${CTSM_ROOT}/cime/scripts"
-./create_newcase --case "${case_root}" --compset "${COMPSET}" --res "${RES}" \
-  --project "${PROJECT}" --run-unsupported --output-root "${OUT_DIR}" \
-  --user-mods-dir "${user_mods}"
+./create_clone --case "${case_root}" --clone "${prev_case_root}" --keepexe
 cd "${case_root}"
 
 # start from the last restart of the previous stage
@@ -51,6 +47,5 @@ ref_date=${last_date%-*}
 
 ./case.setup
 ./preview_namelists
-./case.build
 
 ### DO NOT DO ./case.submit: meristem.run submits the case ###

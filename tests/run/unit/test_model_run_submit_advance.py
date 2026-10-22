@@ -31,7 +31,7 @@ def test_submit_advance_writes_jobscript(created_run):
         ("PBS -N ", "job_name"),
         ("#PBS -q ", "queue"),
         ("#PBS -A ", "project"),
-        ("#PBS -M ", "user"),
+        ("#PBS -M ", "email"),
         ("#PBS -W depend=afterok:", "cime_job_id"),
     ],
 )
@@ -52,7 +52,7 @@ def test_submit_advance_script_contains_pbs_directives(created_run, field, expec
         "job_name": f"{created_run.run_id}_{stage.config.name}",
         "queue": stage.config.queue,
         "project": created_run.project,
-        "user": created_run.user,
+        "email": created_run.email,
         "cime_job_id": cime_job_id,
     }
     assert field + values[expected] in job_file
@@ -164,12 +164,14 @@ def test_submit_advance_records_advance_job_id(created_run):
     assert reloaded.stages[0].state.advance_job_id == job_id
 
 
-def test_submit_advance_dry_run_records_advance_job_id(created_run):
-    """Test that submit_advance(dry_run=True) saves the synthetic DRY_ job ID"""
+def test_submit_advance_dry_run_does_not_record_job_id(created_run):
+    """Test that submit_advance(dry_run=True) doesn't record the DRY_ job ID"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
     stage.state.submit_time = time.time() - 100
+    created_run.save()
     job_id = created_run.submit_advance("spinup_ad", "55555.pbs", dry_run=True)
     assert job_id.startswith("DRY_")
+    assert created_run.stages[0].state.advance_job_id is None
     reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
-    assert reloaded.stages[0].state.advance_job_id == job_id
+    assert reloaded.stages[0].state.advance_job_id is None

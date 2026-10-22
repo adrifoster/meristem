@@ -10,6 +10,7 @@ import yaml
 
 from meristem.run.model_run import ModelRun, _STATE_FILE
 from meristem.run.scheduler import PbsScheduler
+from meristem.run.stages import Stage
 
 
 def test_model_run_create_valid_config_passes(run_config_dict):
@@ -164,3 +165,86 @@ def test_model_run_create_root_with_whitespace_raises(tmp_path, run_config_dict)
     with pytest.raises(ValueError, match="whitespace"):
         ModelRun.create(run_config_dict)
     assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_create_missing_script_raises(tmp_path, run_config_dict):
+    """Test that a stage script that doesn't exist is rejected before root is
+    created
+    """
+    run_config_dict["stages"][0]["script"] = str(tmp_path / "nope.sh")
+    with pytest.raises(ValueError, match=r"cannot open script.*nope\.sh"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_create_missing_later_script_raises(tmp_path, run_config_dict):
+    """Test that every stage's script is checked at create, not just the first"""
+    later = {**run_config_dict["stages"][0], "name": "later"}
+    later["script"] = str(tmp_path / "later.sh")
+    run_config_dict["stages"].append(later)
+    with pytest.raises(ValueError, match=r"later\.sh"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_create_relative_case_root_raises(run_config_dict):
+    """Test that a relative case_root on any stage is rejected at create"""
+    later = {**run_config_dict["stages"][0], "name": "later", "case_root": "cases/x"}
+    run_config_dict["stages"].append(later)
+    with pytest.raises(ValueError, match="case_root 'cases/x' for stage 'later'"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+@pytest.mark.parametrize("with_script", [False, True])
+def test_model_run_create_command_raises(run_config_dict, with_script):
+    """Test that a run config can't set a stage command (with or without a
+    script), naming the stage, and writes nothing
+    """
+    second = {**run_config_dict["stages"][0], "name": "later", "command": "echo hi"}
+    if not with_script:
+        del second["script"]
+    run_config_dict["stages"].append(second)
+    with pytest.raises(ValueError, match=r"stage\(s\) \['later'\] set 'command'"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_create_null_command_raises(run_config_dict):
+    """Test that even an empty command key is rejected (it's not a user key)"""
+    run_config_dict["stages"][0]["command"] = None
+    with pytest.raises(ValueError, match="set 'command'"):
+        ModelRun.create(run_config_dict)
+
+
+def test_model_run_create_no_script_raises(run_config_dict):
+    """Test that a stage with no script is rejected at create, writing nothing"""
+    del run_config_dict["stages"][0]["script"]
+    with pytest.raises(ValueError, match="stage 'spinup_ad' has no setup script"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
+def test_model_run_load_keeps_command(tmp_path, command_stage_config_dict):
+    """Test that load accepts a stage command meristem wrote to the state file
+    (only run configs reject it)
+    """
+    run = ModelRun(
+        root=tmp_path / "run",
+        run_id="run",
+        stages=[Stage.from_dict(command_stage_config_dict)],
+        project="PROJ",
+    )
+    run.root.mkdir()
+    run.save()
+    loaded = ModelRun.load(run.root)
+    assert loaded.stages[0].config.command == command_stage_config_dict["command"]
+
+
+def test_model_run_load_after_script_removed(created_run, script_file):
+    """Test that load doesn't recheck scripts, so status etc. still work on a
+    run whose script has since moved
+    """
+    script_file.unlink()
+    loaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert loaded.stage_names == created_run.stage_names

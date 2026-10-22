@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import shlex
 import subprocess
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 from meristem.commands import meristem_cmd
 from meristem.run import model_run
 from meristem.run.model_run import ModelRun
-from meristem.run.stages import StageStatus
+from meristem.run.stages import Stage, StageStatus
 from jinja2 import TemplateNotFound
 
 
@@ -42,7 +43,7 @@ def test_submit_raises_if_template_missing(created_run, mocker):
         ("mem=", "memory"),
         ("#PBS -l walltime=", "walltime"),
         ("#PBS -A ", "project"),
-        ("#PBS -M ", "user"),
+        ("#PBS -M ", "email"),
     ],
 )
 def test_submit_script_contains_pbs_directives(created_run, field, expected):
@@ -58,7 +59,7 @@ def test_submit_script_contains_pbs_directives(created_run, field, expected):
         "memory": str(stage.config.memory),
         "walltime": stage.config.walltime,
         "project": created_run.project,
-        "user": created_run.user,
+        "email": created_run.email,
     }
     assert field + values[expected] in job_file
 
@@ -133,11 +134,28 @@ def test_shquote_filter_quotes_values(value, expected):
     assert model_run._ENV.filters["shquote"](value) == expected
 
 
+def _run_with_stages(root: Path, stage_dicts: list[dict], scheduler) -> ModelRun:
+    """A ModelRun built directly (as Ensemble does) and saved, since run configs
+    can't set a stage command
+    """
+    run = ModelRun(
+        root=root,
+        run_id="member_0001",
+        stages=[Stage.from_dict(stage) for stage in stage_dicts],
+        project="PROJ123",
+        scheduler=scheduler,
+    )
+    run.root.mkdir(parents=True)
+    run.save()
+    return run
+
+
 @pytest.fixture
-def command_run(run_config_dict, command_stage_config_dict, fake_scheduler) -> ModelRun:
+def command_run(tmp_path, command_stage_config_dict, fake_scheduler) -> ModelRun:
     """A ModelRun whose single stage runs a command instead of a script"""
-    run_config_dict["stages"] = [command_stage_config_dict]
-    return ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    return _run_with_stages(
+        tmp_path / "myrun", [command_stage_config_dict], fake_scheduler
+    )
 
 
 def _command_call(job_file: Path) -> list[str]:
@@ -203,15 +221,16 @@ def test_job_scripts_call_this_meristem_install(created_run, kind):
 
 
 def test_submit_command_stage_can_call_meristem_without_conda(
-    run_config_dict, command_stage_config_dict, fake_scheduler
+    tmp_path, command_stage_config_dict, fake_scheduler
 ):
     """Test that a command stage's bash -c child shell can call `meristem` with
     only system directories on PATH (no activated environment)
     """
-    run_config_dict["stages"] = [
-        {**command_stage_config_dict, "command": "meristem --version"}
-    ]
-    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run = _run_with_stages(
+        tmp_path / "myrun",
+        [{**command_stage_config_dict, "command": "meristem --version"}],
+        fake_scheduler,
+    )
     run.submit()
     job_file = run.root / f"{run.run_id}_spinup_ad.pbs"
 
@@ -233,15 +252,16 @@ def test_submit_command_stage_can_call_meristem_without_conda(
 
 
 def test_submit_command_stage_strict_mode_stops_on_failure(
-    run_config_dict, command_stage_config_dict, fake_scheduler
+    tmp_path, command_stage_config_dict, fake_scheduler
 ):
     """Test that the rendered command line really stops at the first failing
     command and exits non-zero
     """
-    run_config_dict["stages"] = [
-        {**command_stage_config_dict, "command": "false; echo after"}
-    ]
-    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run = _run_with_stages(
+        tmp_path / "myrun",
+        [{**command_stage_config_dict, "command": "false; echo after"}],
+        fake_scheduler,
+    )
     run.submit()
     job_file = run.root / f"{run.run_id}_spinup_ad.pbs"
     result = subprocess.run(
@@ -260,6 +280,79 @@ def test_submit_skip_script_omits_command(command_run):
     assert "meristem ensemble prepare" not in job_file
 
 
+@pytest.fixture
+def command_and_script_run(
+    tmp_path, minimal_stage_config_dict, fake_scheduler
+) -> ModelRun:
+    """A ModelRun whose single stage runs a command and then a script"""
+    stage = {**minimal_stage_config_dict, "command": "echo prepare"}
+    return _run_with_stages(tmp_path / "myrun", [stage], fake_scheduler)
+
+
+def _setup_calls(job_file: Path) -> list[list[str]]:
+    """Every bash -c invocation (command, then script) in a job script, in order"""
+    return [
+        shlex.split(line)
+        for line in job_file.read_text().splitlines()
+        if line.startswith("bash -c")
+    ]
+
+
+def test_submit_command_and_script_runs_command_then_script(
+    command_and_script_run, script_file
+):
+    """Test that a stage with both runs its command, then its script with the
+    case root, each in strict mode
+    """
+    run = command_and_script_run
+    run.submit()
+    calls = _setup_calls(run.root / f"{run.run_id}_spinup_ad.pbs")
+    assert calls == [
+        ["bash", "-c", "set -euo pipefail; echo prepare"],
+        [
+            "bash",
+            "-c",
+            'set -euo pipefail; source "$0" "$@"',
+            str(script_file),
+            str(run.root / "spinup_ad"),
+        ],
+    ]
+
+
+def test_submit_command_and_script_stops_if_command_fails(
+    tmp_path, minimal_stage_config_dict, fake_scheduler
+):
+    """Test that the script doesn't run if the command before it fails (the job
+    runs under set -e)
+    """
+    script = tmp_path / "setup.sh"
+    script.write_text("echo script-ran\n", encoding="utf-8")
+    run = _run_with_stages(
+        tmp_path / "myrun",
+        [{**minimal_stage_config_dict, "script": str(script), "command": "false"}],
+        fake_scheduler,
+    )
+    run.submit()
+    calls = _setup_calls(run.root / f"{run.run_id}_spinup_ad.pbs")
+    result = subprocess.run(
+        ["/bin/bash", "-c", "set -e\n" + "\n".join(shlex.join(c) for c in calls)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "script-ran" not in result.stdout
+
+
+def test_submit_skip_script_omits_command_and_script(command_and_script_run):
+    """Test that skip_script skips both a stage's command and its script"""
+    # pylint: disable=protected-access
+    job_file = command_and_script_run._write_job_script(
+        command_and_script_run.stages[0], skip_script=True
+    )
+    assert _setup_calls(job_file) == []
+
+
 @pytest.mark.parametrize("command", ["--submit-advance", "--submit-fail"])
 def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
@@ -269,6 +362,116 @@ def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f'meristem run --root "$RUN_ROOT" {command} --stage "$STAGE"' in job_file
+
+
+def _run_cime_block(
+    run: ModelRun, job_ids: str
+) -> tuple[subprocess.CompletedProcess, Path]:
+    """Run the setup script's CIME block (cd case root through the meristem
+    calls) against stub case.submit and xmlquery, with meristem recording its
+    arguments instead of running
+
+    Returns:
+        tuple: the finished process, and the stub case root
+    """
+    case_root = run.root / run.stages[0].config.name
+    case_root.mkdir(parents=True, exist_ok=True)
+    (case_root / "case.submit").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$@" > submit_args.txt\n'
+    )
+    (case_root / "xmlquery").write_text(
+        '#!/bin/bash\n[[ "$*" == "--value JOB_IDS" ]] && printf "%s" "$FAKE_JOB_IDS"\n'
+    )
+    for stub in ("case.submit", "xmlquery"):
+        (case_root / stub).chmod(0o755)
+
+    lines = (run.root / f"{run.run_id}_{run.stages[0].config.name}.pbs").read_text()
+    lines = lines.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("cd "))
+    end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
+    calls = run.root / "meristem_calls.txt"
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            "RUN_ROOT=root STAGE=stage",
+            f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; }}',
+            *lines[start:end],
+        ]
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        env={"PATH": "/usr/bin:/bin", "FAKE_JOB_IDS": job_ids},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, case_root
+
+
+@pytest.mark.parametrize(
+    "job_ids,advance_on,fail_on",
+    [
+        (
+            "case.run:100.desched1, case.st_archive:101.desched1",
+            "101.desched1",
+            "100.desched1 --cime-job-id 101.desched1",
+        ),
+        # DOUT_S=FALSE: no archiver, so everything waits on case.run
+        (
+            "case.run:100.desched1",
+            "100.desched1",
+            "100.desched1 --cime-job-id 100.desched1",
+        ),
+    ],
+)
+def test_submit_script_cime_block_uses_case_run_and_archive_ids(
+    created_run, job_ids, advance_on, fail_on
+):
+    """Test that the setup script calls case.submit with only its own arguments,
+    advances after the final (archive) job, and watches case.run and the final
+    job with fail jobs
+    """
+    created_run.submit()
+    result, case_root = _run_cime_block(created_run, job_ids)
+    assert result.returncode == 0, result.stderr
+
+    # case.submit and JOB_IDS= on separate lines (trim_blocks once joined them)
+    submit_args = (case_root / "submit_args.txt").read_text().splitlines()
+    assert submit_args == ["--resubmit-immediate"]
+
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls == [
+        f"run --root root --submit-advance --stage stage --cime-job-id {advance_on}",
+        f"run --root root --submit-fail --stage stage --cime-job-id {fail_on}",
+    ]
+
+
+def test_submit_script_cime_block_passes_submit_args(
+    run_config_dict, ad_stage_config_dict, fake_scheduler
+):
+    """Test that submit_args reach case.submit as one -a argument, on its own line"""
+    run_config_dict["stages"] = [
+        {**ad_stage_config_dict, "submit_args": "-l job_priority=premium"}
+    ]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    result, case_root = _run_cime_block(
+        run, "case.run:100.desched1, case.st_archive:101.desched1"
+    )
+    assert result.returncode == 0, result.stderr
+    submit_args = (case_root / "submit_args.txt").read_text().splitlines()
+    assert submit_args == ["--resubmit-immediate", "-a", "-l job_priority=premium"]
+
+
+def test_submit_script_cime_block_without_case_run_id_fails(created_run):
+    """Test that the setup script stops before submitting advance/fail jobs when
+    JOB_IDS has no case.run ID
+    """
+    created_run.submit()
+    result, _ = _run_cime_block(created_run, "")
+    assert result.returncode != 0
+    assert "No case.run job ID" in result.stderr
+    assert not (created_run.root / "meristem_calls.txt").exists()
 
 
 def test_submit_stage_status_set_to_submitted(created_run):
@@ -363,10 +566,9 @@ def test_submit_dry_run_does_not_call_qsub(created_run, fake_scheduler):
 
 
 def test_submit_dry_run_job_id_format(created_run):
-    """Test that submit(dry_run=True) produces a synthetic DRY_ job ID"""
-    created_run.submit(dry_run=True)
-    expected = f"DRY_{created_run.run_id}_{created_run.stages[0].config.name}"
-    assert created_run.stages[0].state.job_id == expected
+    """Test that submit(dry_run=True) returns a synthetic DRY_ job ID"""
+    result = created_run.submit(dry_run=True)
+    assert result == f"DRY_{created_run.run_id}_{created_run.stages[0].config.name}"
 
 
 def test_submit_dry_run_still_writes_job_script(created_run):
@@ -376,9 +578,20 @@ def test_submit_dry_run_still_writes_job_script(created_run):
     assert job_file.exists()
 
 
-def test_submit_dry_run_still_updates_stage_state(created_run):
-    """Test that submit(dry_run=True) still marks the stage as SUBMITTED"""
+def test_submit_dry_run_does_not_change_state(created_run):
+    """Test that submit(dry_run=True) leaves the stage PENDING, in memory and on disk"""
+    state = copy.deepcopy(created_run.stages[0].state)
     created_run.submit(dry_run=True)
+    assert created_run.stages[0].state == state
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_submit_after_dry_run_submits(created_run, fake_scheduler):
+    """Test that a real submit() after a dry run still submits the first stage"""
+    created_run.submit(dry_run=True)
+    created_run.submit()
+    assert len(fake_scheduler.submitted) == 1
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
 
 
@@ -458,7 +671,7 @@ def test_advance_passes_configured_previous_case_root(
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
         "project": "PROJ123",
-        "user": "auser",
+        "email": "name@ucar.edu",
         "stages": [
             {**ad_stage_config_dict, "case_root": str(ad_case_root)},
             sasu_stage_config_dict,
@@ -489,7 +702,7 @@ def test_submit_script_quotes_awkward_paths(
         "root": str(tmp_path / "two_stage"),
         "run_id": "member_0001",
         "project": "PROJ123",
-        "user": "auser",
+        "email": "name@ucar.edu",
         "stages": [
             {**ad_stage_config_dict, "case_root": str(ad_case_root)},
             {
@@ -512,3 +725,38 @@ def test_submit_script_quotes_awkward_paths(
         str(ad_case_root),
     ]
     assert f"cd {shlex.quote(str(sasu_case_root))}\n" in content
+
+
+def test_submit_missing_later_script_raises(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+):
+    """Test that submit checks every stage's script up front, so a bad later
+    stage fails now rather than inside an advance job, and nothing is submitted
+    """
+    sasu_script = tmp_path / "sasu.sh"
+    sasu_script.touch()
+    run = ModelRun.create(
+        {
+            "root": str(tmp_path / "run"),
+            "project": "PROJ123",
+            "stages": [
+                ad_stage_config_dict,
+                {**sasu_stage_config_dict, "script": str(sasu_script)},
+            ],
+        },
+        scheduler=fake_scheduler,
+    )
+    sasu_script.unlink()
+    with pytest.raises(ValueError, match=r"cannot open script.*sasu\.sh"):
+        run.submit()
+    assert fake_scheduler.submitted == []
+    assert run.stages[0].state.status == StageStatus.PENDING
+
+
+def test_submit_skipped_does_not_validate(created_run, script_file):
+    """Test that submit doesn't validate when the first stage isn't PENDING
+    (nothing is submitted, so a moved script shouldn't block it)
+    """
+    created_run.submit()
+    script_file.unlink()
+    assert created_run.submit() == created_run.stages[0].state.job_id

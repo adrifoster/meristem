@@ -11,7 +11,6 @@ import pytest
 from meristem.run.stages import (
     Stage,
     StageConfig,
-    StageKind,
     StageState,
     StageStatus,
     _RUNTIME_KEYS,
@@ -53,44 +52,6 @@ def test_stage_status_from_str_invalid_rases():
 def test_stage_status_no_implicit_string_equality():
     """Enum members must not compare equal to raw strings"""
     assert StageStatus.DONE != "done"
-
-
-# ---------------------------------------------------------------------------
-# StageKind
-# ---------------------------------------------------------------------------
-
-
-def test_stage_kind_from_str_valid():
-    """Test that StageKind.from_str works as intended"""
-    assert StageKind.from_str("ad") is StageKind.AD
-    assert StageKind.from_str("sasu") is StageKind.SASU
-    assert StageKind.from_str("SASU") is StageKind.SASU
-    assert StageKind.from_str("sasu ") is StageKind.SASU
-
-
-def test_stage_kind_to_str_valid():
-    """Test that the StageKind.to_str works as intended"""
-    assert StageKind.AD.to_str() == "ad"
-    assert StageKind.SASU.to_str() == "sasu"
-
-
-def test_stage_kind_roundtrip():
-    """Test that all members of StageStatus can be "roundtripped" from the Enum
-    to a string, and back to a member
-    """
-    for member in StageKind:
-        assert StageKind.from_str(member.to_str()) is member
-
-
-def test_stage_kind_from_str_invalid_rases():
-    """Test that StageKind.from_str raises a ValueError with an invalid str"""
-    with pytest.raises(ValueError, match="Invalid StageKind"):
-        StageKind.from_str("not_a_status")
-
-
-def test_stage_kind_no_implicit_string_equality():
-    """Enum members must not compare equal to raw strings"""
-    assert StageKind.AD != "ad"
 
 
 # ---------------------------------------------------------------------------
@@ -213,13 +174,13 @@ def test_stage_state_from_dict_roundtrip(submitted_state):
 
 
 def test_stage_state_from_dict_roundtrip_with_advance_and_fail_job_ids(submitted_state):
-    """Test that advance_job_id and fail_job_id survive a to_dict/from_dict round trip"""
+    """Test that advance_job_id and fail_job_ids survive a to_dict/from_dict round trip"""
     submitted_state.advance_job_id = "12346.pbs"
-    submitted_state.fail_job_id = "12347.pbs"
+    submitted_state.fail_job_ids = ["12347.pbs", "12348.pbs"]
     roundtrip = StageState.from_dict(submitted_state.to_dict())
     assert roundtrip == submitted_state
     assert roundtrip.advance_job_id == "12346.pbs"
-    assert roundtrip.fail_job_id == "12347.pbs"
+    assert roundtrip.fail_job_ids == ["12347.pbs", "12348.pbs"]
 
 
 def test_stage_state_from_dict_without_advance_and_fail_job_ids():
@@ -228,7 +189,7 @@ def test_stage_state_from_dict_without_advance_and_fail_job_ids():
         {"status": "submitted", "job_id": "12345.pbs", "submit_time": 1_000_000.0}
     )
     assert stage_state.advance_job_id is None
-    assert stage_state.fail_job_id is None
+    assert not stage_state.fail_job_ids
 
 
 def test_stage_state_from_dict_defaults_optional_fields():
@@ -279,7 +240,7 @@ def test_stage_state_equality_with_non_stage_state_returns_not_implemented():
         ("_status", StageStatus.DONE),
         ("job_id", "99999.pbs"),  # no underscore
         ("advance_job_id", "99998.pbs"),
-        ("fail_job_id", "99997.pbs"),
+        ("fail_job_ids", ["99997.pbs"]),
         ("_submit_time", 2_000_000.0),
         ("_end_time", 2_003_600.0),
         ("_attempts", 5),
@@ -349,7 +310,7 @@ def test_stage_state_repr(failed_state):
     assert result == (
         f"StageState(status={failed_state.status!r}, job_id={failed_state.job_id!r}, "
         f"advance_job_id={failed_state.advance_job_id!r}, "
-        f"fail_job_id={failed_state.fail_job_id!r}, "
+        f"fail_job_ids={failed_state.fail_job_ids!r}, "
         f"submit_time={failed_state.submit_time!r}, "
         f"end_time={failed_state.end_time!r}, attempts={failed_state.attempts!r})"
     )
@@ -363,7 +324,6 @@ def test_stage_state_repr(failed_state):
 def test_stage_config_valid_minimal(minimal_stage_config):
     """Test that StageConfig can be constructed with a minimal dict"""
     assert minimal_stage_config.name == "spinup_ad"
-    assert minimal_stage_config.kind is StageKind.CUSTOM
 
 
 def test_stage_config_empty_name_raises(minimal_stage_config_dict):
@@ -471,13 +431,6 @@ def test_stage_config_select_zero_raises(minimal_stage_config_dict):
         StageConfig.from_dict(config)
 
 
-def test_stage_config_invalid_kind_raises(minimal_stage_config_dict):
-    """Test that StageConfig initialized with a bad StageKind raises a ValueError"""
-    config = {**minimal_stage_config_dict, "kind": "nonsense"}
-    with pytest.raises(ValueError, match="Invalid StageKind"):
-        StageConfig.from_dict(config)
-
-
 def test_stage_config_is_frozen(minimal_stage_config):
     """Test that StageConfig is actually immutable"""
     with pytest.raises(Exception):
@@ -487,11 +440,6 @@ def test_stage_config_is_frozen(minimal_stage_config):
 def test_stage_config_extra_pbs_stored_as_tuple(full_stage_config):
     """Test that StageConfig's extra_pbs attribute is stored as a tuple"""
     assert isinstance(full_stage_config.extra_pbs, tuple)
-
-
-def test_stage_config_to_dict_kind_is_string(full_stage_config):
-    """Test that StageConfig's to_dict correctly sets the kind as a string"""
-    assert full_stage_config.to_dict()["kind"] == "ad"
 
 
 def test_stage_config_to_dict_extra_pbs_is_list(full_stage_config):
@@ -531,25 +479,34 @@ def test_stage_config_command_without_script_is_valid(command_stage_config_dict)
     stage_config.validate()
 
 
-def test_stage_config_neither_script_nor_command_raises(minimal_stage_config_dict):
-    """Test that a StageConfig with neither script nor command raises a ValueError"""
+def test_stage_config_neither_script_nor_command_raises_on_validate(
+    minimal_stage_config_dict,
+):
+    """Test that a StageConfig with neither script nor command constructs (so
+    an ensemble member stage can have its command filled in later) but raises
+    on validate
+    """
     config = {k: v for k, v in minimal_stage_config_dict.items() if k != "script"}
-    with pytest.raises(ValueError, match="either script or command"):
-        StageConfig.from_dict(config)
+    stage_config = StageConfig.from_dict(config)
+    with pytest.raises(ValueError, match="stage 'spinup_ad' has no setup script"):
+        stage_config.validate()
 
 
-def test_stage_config_script_and_command_raises(minimal_stage_config_dict):
-    """Test that a StageConfig with both script and command raises a ValueError"""
+def test_stage_config_script_and_command_is_valid(minimal_stage_config_dict):
+    """Test that a StageConfig can have both a script and a command"""
     config = {**minimal_stage_config_dict, "command": "echo hi"}
-    with pytest.raises(ValueError, match="both script and command"):
-        StageConfig.from_dict(config)
+    stage_config = StageConfig.from_dict(config)
+    stage_config.validate()
+    assert stage_config.script == Path(minimal_stage_config_dict["script"])
+    assert stage_config.command == "echo hi"
 
 
-def test_stage_config_from_dict_defaults_kind_to_custom(minimal_stage_config_dict):
-    """Test that StageConfig initiated without a kind defaults to CUSTOM"""
-    # kind absent from dict should default to "custom"
-    stage_config = StageConfig.from_dict(minimal_stage_config_dict)
-    assert stage_config.kind is StageKind.CUSTOM
+def test_stage_config_roundtrip_script_and_command(minimal_stage_config_dict):
+    """Test that a StageConfig with both a script and a command round trips"""
+    stage_config = StageConfig.from_dict(
+        {**minimal_stage_config_dict, "command": "echo hi"}
+    )
+    assert StageConfig.from_dict(stage_config.to_dict()) == stage_config
 
 
 def test_stage_config_from_dict_defaults_memory_to_10gb(minimal_stage_config_dict):
@@ -666,16 +623,6 @@ def test_stage_from_dict_does_not_mutate_input(full_stage):
     assert stage_dict == copy
 
 
-def test_stage_from_dict_legacy_null_case_root(minimal_stage_config_dict):
-    """Test that a stage dict from an older state file, where case_root was a
-    runtime key and always null, loads with the default case_root
-    """
-    stage = Stage.from_dict(
-        {**minimal_stage_config_dict, "status": "pending", "case_root": None}
-    )
-    assert stage.config.case_root is None
-
-
 def test_stage_config_is_frozen_through_stage(full_stage):
     """Test that StageConfig is immutable when owned by Stage"""
     with pytest.raises(Exception):
@@ -703,3 +650,16 @@ def test_stage_from_dict_partial_state(minimal_stage_config_dict, partial_state)
     assert stage.state.attempts == partial_state.get("attempts", 0)
     assert stage.state.submit_time == partial_state.get("submit_time")
     assert stage.state.end_time is None
+
+
+def test_stage_config_relative_case_root_raises_on_validate(minimal_stage_config_dict):
+    """Test that a relative case_root constructs but raises on validate"""
+    config = {**minimal_stage_config_dict, "case_root": "cases/spinup_ad"}
+    stage = StageConfig.from_dict(config)
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        stage.validate()
+
+
+def test_stage_config_absolute_case_root_validates(full_stage_config):
+    """Test that an absolute case_root passes validate"""
+    full_stage_config.validate()

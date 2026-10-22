@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
-from meristem.run.model_run import ModelRun
+from meristem.run.model_run import _UNKNOWN_GRACE_SECONDS, ModelRun
 from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
@@ -23,7 +25,7 @@ def test_retry_resets_to_pending_before_submitting(created_run, mocker):
     """Test that retry() resets stage to PENDING before calling _submit_stage"""
     created_run.stages[0].state.status = StageStatus.FAILED
     created_run.stages[0].state.advance_job_id = "111.pbs"
-    created_run.stages[0].state.fail_job_id = "222.pbs"
+    created_run.stages[0].state.fail_job_ids = ["222.pbs", "333.pbs"]
 
     def check_status(stage, dry_run=False, skip_script=False):
         # signature must match _submit_stage, which is called with these as keywords
@@ -33,7 +35,7 @@ def test_retry_resets_to_pending_before_submitting(created_run, mocker):
         assert stage.state.submit_time is None
         assert stage.state.job_id is None
         assert stage.state.advance_job_id is None
-        assert stage.state.fail_job_id is None
+        assert stage.state.fail_job_ids == []
         return "12345.pbs"
 
     mocker.patch.object(created_run, "_submit_stage", side_effect=check_status)
@@ -110,11 +112,35 @@ def test_retry_returns_none_when_nothing_to_retry(two_stage_run, mocker):
     assert result is None
 
 
-def test_retry_dry_run_passed_through(created_run, mocker):
-    """Test that retry() passes dry_run through to _submit_stage"""
-    mock = mocker.patch.object(created_run, "_submit_stage", return_value="DRY_run")
+def test_retry_dry_run_writes_script_only(created_run, mocker):
+    """Test that retry(dry_run=True) writes the job script without submitting"""
+    created_run.stages[0].state.status = StageStatus.FAILED
+    submit = mocker.patch.object(created_run, "_submit_stage")
+    dry = mocker.spy(created_run, "_dry_run_stage")
+    created_run.retry("spinup_ad", dry_run=True, skip_script=True)
+    submit.assert_not_called()
+    dry.assert_called_once_with(created_run.stages[0], skip_script=True)
+
+
+def test_retry_dry_run_does_not_change_state(created_run):
+    """Test that retry(dry_run=True) leaves a FAILED stage FAILED, in memory and on disk"""
+    stage = created_run.stages[0]
+    stage.state.status = StageStatus.SUBMITTED
+    stage.state.job_id = "12345.pbs"
+    stage.state.status = StageStatus.FAILED
+    created_run.save()
+    state = copy.deepcopy(stage.state)
     created_run.retry("spinup_ad", dry_run=True)
-    mock.assert_called_once_with(created_run.stages[0], dry_run=True, skip_script=False)
+    assert created_run.stages[0].state == state
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_retry_dry_run_rejects_submitted_stage(created_run):
+    """Test that retry(dry_run=True) still rejects a stage that can't be retried"""
+    created_run.stages[0].state.status = StageStatus.SUBMITTED
+    with pytest.raises(ValueError, match="can only retry PENDING or FAILED"):
+        created_run.retry("spinup_ad", dry_run=True)
 
 
 def test_retry_skip_script_passed_through(created_run, mocker):
@@ -136,11 +162,18 @@ def test_retry_unknown_stage_raises(created_run, mocker):
 # ---------------------------------------------------------------------------
 
 
+def _age_submission(run: ModelRun) -> None:
+    """Backdate the first stage's submission past the UNKNOWN grace period"""
+    run.stages[0].state.submit_time -= 2 * _UNKNOWN_GRACE_SECONDS
+    run.save()
+
+
 def _submit_with_jobs(run: ModelRun) -> None:
     """Submit the first stage and record advance/fail jobs, as the setup job would"""
     run.submit()
     run.submit_advance("spinup_ad", "55555.fake")
     run.submit_fail("spinup_ad", "55555.fake")
+    _age_submission(run)
 
 
 def test_retry_lost_resubmits_stage(created_run, fake_scheduler):
@@ -158,8 +191,23 @@ def test_retry_lost_resubmits_stage(created_run, fake_scheduler):
     assert state.status is StageStatus.SUBMITTED
     assert state.job_id == new_job_id
     assert state.advance_job_id is None
-    assert state.fail_job_id is None
+    assert state.fail_job_ids == []
     assert state.attempts == 2
+    reloaded = ModelRun.load(created_run.root, scheduler=fake_scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_retry_lost_dry_run_does_not_change_state(created_run, fake_scheduler):
+    """Test that retry(lost=True, dry_run=True) leaves a lost stage SUBMITTED with
+    its old job IDs, and submits nothing
+    """
+    _submit_with_jobs(created_run)
+    n_submitted = len(fake_scheduler.submitted)
+    state = copy.deepcopy(created_run.stages[0].state)
+    result = created_run.retry("spinup_ad", lost=True, dry_run=True)
+    assert result.startswith("DRY_")
+    assert len(fake_scheduler.submitted) == n_submitted
+    assert created_run.stages[0].state == state
     reloaded = ModelRun.load(created_run.root, scheduler=fake_scheduler)
     assert reloaded.stages[0].state == state
 
@@ -232,6 +280,7 @@ def test_retry_submitted_without_lost_still_raises(created_run, mocker):
 def test_retry_lost_uses_current_stage_when_no_name_given(two_stage_run):
     """Test that retry(None, lost=True) checks and resubmits the current stage"""
     two_stage_run.submit()
+    _age_submission(two_stage_run)
     new_job_id = two_stage_run.retry(None, lost=True)
     assert two_stage_run.stages[0].state.job_id == new_job_id
     assert two_stage_run.stages[0].state.attempts == 2
@@ -248,3 +297,60 @@ def test_retry_lost_query_error_propagates(created_run, fake_scheduler, mocker):
         created_run.retry("spinup_ad", lost=True)
     mock.assert_not_called()
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
+
+
+@pytest.fixture
+def two_script_run(
+    tmp_path, ad_stage_config_dict, sasu_stage_config_dict, fake_scheduler
+) -> ModelRun:
+    """A two-stage ModelRun whose stages have separate scripts (ad.sh, sasu.sh)"""
+    stages = []
+    for stage_dict in (ad_stage_config_dict, sasu_stage_config_dict):
+        script = tmp_path / f"{stage_dict['name'].split('_')[-1]}.sh"
+        script.touch()
+        stages.append({**stage_dict, "script": str(script)})
+    return ModelRun.create(
+        {"root": str(tmp_path / "run"), "project": "PROJ123", "stages": stages},
+        scheduler=fake_scheduler,
+    )
+
+
+def test_retry_missing_later_script_raises(two_script_run, tmp_path, fake_scheduler):
+    """Test that retry checks later stages' scripts up front, so a bad later
+    stage fails now rather than inside an advance job
+    """
+    two_script_run.stages[0].state.status = StageStatus.FAILED
+    two_script_run.save()
+    (tmp_path / "sasu.sh").unlink()
+    with pytest.raises(ValueError, match=r"cannot open script.*sasu\.sh"):
+        two_script_run.retry("spinup_ad")
+    assert fake_scheduler.submitted == []
+
+
+def test_retry_invalid_config_leaves_state_unchanged(two_script_run, tmp_path):
+    """Test that a failed check doesn't reset or save the stage"""
+    stage = two_script_run.stages[0]
+    stage.state.status = StageStatus.FAILED
+    stage.state.job_id = "999.pbs"
+    two_script_run.save()
+    (tmp_path / "sasu.sh").unlink()
+    with pytest.raises(ValueError):
+        two_script_run.retry("spinup_ad")
+    assert stage.state.status == StageStatus.FAILED
+    assert stage.state.job_id == "999.pbs"
+    loaded = ModelRun.load(two_script_run.root, scheduler=two_script_run.scheduler)
+    assert loaded.stages[0].state.status == StageStatus.FAILED
+    assert loaded.stages[0].state.job_id == "999.pbs"
+
+
+def test_retry_ignores_earlier_stage_scripts(two_script_run, tmp_path, mocker):
+    """Test that retry doesn't check stages before the retried one (they won't
+    rerun), so a cleaned-up earlier script doesn't block it
+    """
+    two_script_run.stages[0].state.status = StageStatus.SUBMITTED
+    two_script_run.stages[0].state.status = StageStatus.DONE
+    two_script_run.stages[1].state.status = StageStatus.FAILED
+    (tmp_path / "ad.sh").unlink()
+    mock = mocker.patch.object(two_script_run, "_submit_stage", return_value="1.pbs")
+    two_script_run.retry("spinup_sasu")
+    mock.assert_called_once()
