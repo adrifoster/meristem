@@ -577,7 +577,9 @@ class ModelRun:
         if dry_run:
             next_stage = self._next_stage(completed_stage_name)
             if next_stage is None:
-                print(f"  {self.run_id}: dry run, no stages after {completed_stage_name}")
+                print(
+                    f"  {self.run_id}: dry run, no stages after {completed_stage_name}"
+                )
                 return None
             return self._submit_stage(next_stage, dry_run=True)
 

@@ -549,6 +549,9 @@ class Ensemble:
     def _case_root(self, member: str, stage: str) -> Path:
         """Case directory for one member stage's clone
 
+        The name includes ensemble_id, so ensembles that reuse the same base case
+        and parameter members don't share cases or CIME output directories.
+
         Args:
             member (str): member name string
             stage (str): stage string
@@ -556,7 +559,10 @@ class Ensemble:
         Returns:
             Path: path to case directory for member stage's clone
         """
-        return self.config.case_dir / f"{self.config.base_case.name}_{member}_{stage}"
+        case = (
+            f"{self.config.base_case.name}_{self.config.ensemble_id}_{member}_{stage}"
+        )
+        return self.config.case_dir / case
 
     def _case_setup(self, case_root: Path):
         """Run case.setup in a member case

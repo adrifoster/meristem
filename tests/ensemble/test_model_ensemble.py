@@ -260,6 +260,20 @@ def test_create_no_project_raises(ready_config_dict, monkeypatch):
     assert not Path(ready_config_dict["root"]).exists()
 
 
+def test_case_root_differs_between_ensembles(ready_config_dict, tmp_path):
+    """Test that two ensembles sharing a base case, parameter members and
+    case_dir give each member stage a different case
+    """
+    first = Ensemble.create(ready_config_dict)
+    ready_config_dict["ensemble_id"] = "my_ens-2"
+    ready_config_dict["root"] = str(tmp_path / "ens2")
+    second = Ensemble.create(ready_config_dict)
+    first_root = _member_run(first, MEMBERS[0]).stages[0].config.case_root
+    second_root = _member_run(second, MEMBERS[0]).stages[0].config.case_root
+    assert first_root.parent == second_root.parent
+    assert first_root != second_root
+
+
 def test_create_member_stages_run_prepare(ready_config_dict, tmp_path):
     """Test that each member stage, in order, runs meristem ensemble prepare in
     its own case under case_dir, keeping the stage's other settings
@@ -286,9 +300,8 @@ def test_create_member_stages_run_prepare(ready_config_dict, tmp_path):
             "--stage",
             name,
         ]
-        assert (
-            stage.config.case_root == tmp_path / "cases" / f"base_case_{member}_{name}"
-        )
+        case = f"base_case_{ensemble.config.ensemble_id}_{member}_{name}"
+        assert stage.config.case_root == tmp_path / "cases" / case
         assert stage.state.status == StageStatus.PENDING
     assert run.stages[1].config.queue == "develop"
     assert run.stages[1].config.ncpus == 4
