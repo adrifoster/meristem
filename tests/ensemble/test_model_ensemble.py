@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from pathlib import Path
 
@@ -219,15 +220,6 @@ def test_create_writes_member_runs(created_ensemble):
         assert (members_dir / member / _RUN_STATE_FILE).is_file()
         run = _member_run(created_ensemble, member)
         assert run.run_id == f"my_ens-1_{member}"
-
-
-def test_case_root_matches_member_run(created_ensemble):
-    """Test that _case_root gives the case_root stored on each member stage"""
-    for member in MEMBERS:
-        for stage in _member_run(created_ensemble, member).stages:
-            assert stage.config.case_root == created_ensemble._case_root(
-                member, stage.config.name
-            )
 
 
 def test_prepare_unknown_stage_raises(created_ensemble):
@@ -841,20 +833,26 @@ def test_is_existing_case_wrong_case_raises(tmp_path):
         _is_existing_case(case_root)
 
 
+def _stage_case_root(ensemble: Ensemble) -> Path:
+    """The first member's first stage case_root, as stored on its ModelRun"""
+    return _member_run(ensemble, MEMBERS[0]).stages[0].config.case_root
+
+
+def _prepare(ensemble: Ensemble):
+    """Prepare the first member's first stage"""
+    ensemble.prepare(MEMBERS[0], ensemble.config.member_stages[0].name)
+
+
 def test_prepare_partial_case_root_raises(created_ensemble):
     """Test that prepare raises if the stage's case_root is a partial case"""
-    stage = created_ensemble.config.member_stages[0].name
-    created_ensemble._case_root(MEMBERS[0], stage).mkdir(parents=True)
+    _stage_case_root(created_ensemble).mkdir(parents=True)
     with pytest.raises(FileExistsError, match="not a complete CIME case"):
-        created_ensemble.prepare(MEMBERS[0], stage)
+        _prepare(created_ensemble)
 
 
 # ---------------------------------------------------------------------------
-# _clone
+# prepare: clone
 # ---------------------------------------------------------------------------
-
-# project passed to _clone directly (matches ready_config_dict's project)
-_PROJECT = "PROJ123"
 
 # what the fake create_clone does once it has parsed --case into $case_root
 _CREATE_CLONE_BODIES = {
@@ -921,41 +919,36 @@ def fake_cime(ensemble_config_dict, tmp_path):
     return _write
 
 
-def _case_root(ensemble: Ensemble) -> Path:
-    """The first member's first stage case_root"""
-    return ensemble._case_root(MEMBERS[0], ensemble.config.member_stages[0].name)
-
-
-def test_clone_creates_case(ensemble_config_dict, fake_cime):
-    """Test that _clone runs create_clone --keepexe from the base case"""
+def test_prepare_clones_case(created_ensemble, fake_cime):
+    """Test that prepare runs create_clone --keepexe from the base case, into
+    the member run's case_root, with the member run's project
+    """
     log = fake_cime()
-    ensemble = _ensemble(ensemble_config_dict)
-    case_root = _case_root(ensemble)
-    ensemble._clone(case_root, _PROJECT)
+    _prepare(created_ensemble)
+    case_root = _stage_case_root(created_ensemble)
     assert _is_existing_case(case_root)
     args = log.read_text(encoding="utf-8").splitlines()
     assert args[args.index("--case") + 1] == str(case_root)
-    assert args[args.index("--clone") + 1] == str(ensemble.base_case)
+    assert args[args.index("--clone") + 1] == str(created_ensemble.base_case)
     assert "--keepexe" in args
-    assert args[args.index("--project") + 1] == _PROJECT
+    assert args[args.index("--project") + 1] == "PROJ123"
     assert "--cime-output-root" not in args
 
 
-def test_clone_creates_case_dir(ensemble_config_dict, fake_cime):
-    """Test that _clone makes case_dir if it doesn't exist yet"""
+def test_prepare_creates_case_dir(created_ensemble, fake_cime):
+    """Test that prepare makes case_dir if it doesn't exist yet"""
     fake_cime()
-    ensemble = _ensemble(ensemble_config_dict)
-    assert not ensemble.case_dir.exists()
-    ensemble._clone(_case_root(ensemble), _PROJECT)
-    assert ensemble.case_dir.is_dir()
+    assert not created_ensemble.case_dir.exists()
+    _prepare(created_ensemble)
+    assert created_ensemble.case_dir.is_dir()
 
 
-def test_clone_passes_output_root(ensemble_config_dict, fake_cime, tmp_path):
+def test_prepare_passes_output_root(ready_config_dict, fake_cime, tmp_path):
     """Test that output_root is passed as --cime-output-root (two arguments)"""
-    ensemble_config_dict["output_root"] = str(tmp_path / "output")
+    ready_config_dict["output_root"] = str(tmp_path / "output")
+    ensemble = Ensemble.create(ready_config_dict)
     log = fake_cime()
-    ensemble = _ensemble(ensemble_config_dict)
-    ensemble._clone(_case_root(ensemble), _PROJECT)
+    _prepare(ensemble)
     args = log.read_text(encoding="utf-8").splitlines()
     assert args[args.index("--cime-output-root") + 1] == str(tmp_path / "output")
 
@@ -963,115 +956,395 @@ def test_clone_passes_output_root(ensemble_config_dict, fake_cime, tmp_path):
 @pytest.mark.parametrize(
     "kwargs", [{"present": False}, {"executable": False}], ids=["missing", "not_exec"]
 )
-def test_clone_no_create_clone_raises(ensemble_config_dict, fake_cime, kwargs):
+def test_prepare_no_create_clone_raises(created_ensemble, fake_cime, kwargs):
     """Test that a missing or non-executable create_clone raises, naming it"""
     fake_cime(**kwargs)
-    ensemble = _ensemble(ensemble_config_dict)
     with pytest.raises(FileNotFoundError, match="no executable create_clone at"):
-        ensemble._clone(_case_root(ensemble), _PROJECT)
+        _prepare(created_ensemble)
 
 
-def test_clone_failure_raises(ensemble_config_dict, fake_cime):
+def test_prepare_clone_failure_raises(created_ensemble, fake_cime):
     """Test that a failed create_clone raises with its stderr, and no
     leftover hint when it left nothing behind
     """
     fake_cime(mode="fail")
-    ensemble = _ensemble(ensemble_config_dict)
-    case_root = _case_root(ensemble)
     with pytest.raises(RuntimeError, match="clone exploded") as excinfo:
-        ensemble._clone(case_root, _PROJECT)
-    assert f"cloning {ensemble.base_case} failed" in str(excinfo.value)
-    assert str(case_root) in str(excinfo.value)
+        _prepare(created_ensemble)
+    assert f"cloning {created_ensemble.base_case} failed" in str(excinfo.value)
+    assert str(_stage_case_root(created_ensemble)) in str(excinfo.value)
     assert "partial" not in str(excinfo.value)
 
 
-def test_clone_failure_partial_raises(ensemble_config_dict, fake_cime):
+def test_prepare_clone_failure_partial_raises(created_ensemble, fake_cime):
     """Test that a failed create_clone that left a partial case says to remove
     it, and leaves it in place
     """
     fake_cime(mode="fail_partial")
-    ensemble = _ensemble(ensemble_config_dict)
-    case_root = _case_root(ensemble)
     with pytest.raises(RuntimeError, match="remove it before retrying"):
-        ensemble._clone(case_root, _PROJECT)
-    assert case_root.is_dir()
+        _prepare(created_ensemble)
+    assert _stage_case_root(created_ensemble).is_dir()
 
 
-def test_clone_success_without_case_raises(ensemble_config_dict, fake_cime):
+def test_prepare_clone_success_without_case_raises(created_ensemble, fake_cime):
     """Test that create_clone exiting 0 without making the case raises"""
     fake_cime(mode="noop")
-    ensemble = _ensemble(ensemble_config_dict)
     with pytest.raises(RuntimeError, match="was not created"):
-        ensemble._clone(_case_root(ensemble), _PROJECT)
+        _prepare(created_ensemble)
 
 
 def test_prepare_clones_then_reuses_case(created_ensemble, fake_cime):
     """Test that prepare clones the stage's case, and a re-run reuses it"""
     log = fake_cime()
-    stage = created_ensemble.config.member_stages[0].name
-    created_ensemble.prepare(MEMBERS[0], stage)
-    created_ensemble.prepare(MEMBERS[0], stage)
-    assert _is_existing_case(created_ensemble._case_root(MEMBERS[0], stage))
+    _prepare(created_ensemble)
+    _prepare(created_ensemble)
+    assert _is_existing_case(_stage_case_root(created_ensemble))
     assert log.read_text(encoding="utf-8").splitlines().count("--keepexe") == 1
-
-
-def test_prepare_clones_with_member_project(created_ensemble, fake_cime):
-    """Test that prepare passes the member run's project to create_clone"""
-    log = fake_cime()
-    created_ensemble.prepare(MEMBERS[0], created_ensemble.config.member_stages[0].name)
-    args = log.read_text(encoding="utf-8").splitlines()
-    assert args[args.index("--project") + 1] == "PROJ123"
 
 
 def test_prepare_runs_case_setup_every_time(created_ensemble, fake_cime):
     """Test that prepare runs case.setup on a new clone, and again on a re-run"""
     fake_cime()
-    stage = created_ensemble.config.member_stages[0].name
-    created_ensemble.prepare(MEMBERS[0], stage)
-    created_ensemble.prepare(MEMBERS[0], stage)
-    setup_log = created_ensemble._case_root(MEMBERS[0], stage) / "case.setup.log"
+    _prepare(created_ensemble)
+    _prepare(created_ensemble)
+    setup_log = _stage_case_root(created_ensemble) / "case.setup.log"
     assert setup_log.read_text(encoding="utf-8").splitlines() == ["ran", "ran"]
 
 
 # ---------------------------------------------------------------------------
-# _case_setup
+# prepare: case.setup
 # ---------------------------------------------------------------------------
 
 
-def _write_case_setup(case_root: Path, body: str, mode: int = 0o755) -> Path:
-    """Write a fake case.setup into case_root"""
+def _write_case_setup(ensemble: Ensemble, body: str, mode: int = 0o755) -> Path:
+    """Make the first member's first stage an existing case (so prepare
+    doesn't clone it) with a fake case.setup running body
+
+    Returns:
+        Path: the case_root
+    """
+    case_root = _write_case(_stage_case_root(ensemble))
     case_setup = case_root / "case.setup"
     case_setup.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
     case_setup.chmod(mode)
-    return case_setup
+    return case_root
 
 
-def test_case_setup_runs(ensemble_config_dict, tmp_path):
-    """Test that _case_setup runs case.setup from the case directory"""
-    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
-    _write_case_setup(case_root, "pwd > ran_in\n")
-    _ensemble(ensemble_config_dict)._case_setup(case_root)
+def test_prepare_runs_case_setup_in_case_dir(created_ensemble):
+    """Test that prepare runs case.setup from the case directory"""
+    case_root = _write_case_setup(created_ensemble, "pwd > ran_in\n")
+    _prepare(created_ensemble)
     assert (case_root / "ran_in").read_text(encoding="utf-8").strip() == str(case_root)
 
 
-def test_case_setup_missing_raises(ensemble_config_dict, tmp_path):
+def test_prepare_case_setup_missing_raises(created_ensemble):
     """Test that a case with no case.setup raises"""
-    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
+    case_root = _write_case_setup(created_ensemble, "exit 0\n")
+    (case_root / "case.setup").unlink()
     with pytest.raises(FileNotFoundError, match="has no case.setup"):
-        _ensemble(ensemble_config_dict)._case_setup(case_root)
+        _prepare(created_ensemble)
 
 
-def test_case_setup_not_executable_raises(ensemble_config_dict, tmp_path):
+def test_prepare_case_setup_not_executable_raises(created_ensemble):
     """Test that a non-executable case.setup raises"""
-    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
-    _write_case_setup(case_root, "exit 0\n", mode=0o644)
+    _write_case_setup(created_ensemble, "exit 0\n", mode=0o644)
     with pytest.raises(PermissionError, match="case.setup is not executable"):
-        _ensemble(ensemble_config_dict)._case_setup(case_root)
+        _prepare(created_ensemble)
 
 
-def test_case_setup_failure_raises(ensemble_config_dict, tmp_path):
+def test_prepare_case_setup_failure_raises(created_ensemble):
     """Test that a failed case.setup raises with its stderr"""
-    case_root = _write_case(tmp_path / "base_ens_0000_spinup")
-    _write_case_setup(case_root, "echo 'setup exploded' >&2\nexit 1\n")
+    _write_case_setup(created_ensemble, "echo 'setup exploded' >&2\nexit 1\n")
     with pytest.raises(RuntimeError, match="case.setup failed: .*setup exploded"):
-        _ensemble(ensemble_config_dict)._case_setup(case_root)
+        _prepare(created_ensemble)
+
+
+# ---------------------------------------------------------------------------
+# finalize
+# ---------------------------------------------------------------------------
+
+# a fake preview_namelists that "generates" lnd_in from user_nl_clm
+_COPY_TO_LND_IN = "cp user_nl_clm CaseDocs/lnd_in\n"
+
+
+def _write_namelist_case(
+    ensemble: Ensemble,
+    user_nl_clm: str | None = "",
+    lnd_in: str | None = None,
+    body: str = _COPY_TO_LND_IN,
+    mode: int = 0o755,
+) -> Path:
+    """Make the first member's first stage an existing case with user_nl_clm
+    and CaseDocs/lnd_in (each none if None) and a fake preview_namelists
+    running body
+
+    Returns:
+        Path: the case_root
+    """
+    case_root = _write_case(_stage_case_root(ensemble))
+    if user_nl_clm is not None:
+        (case_root / "user_nl_clm").write_text(user_nl_clm, encoding="utf-8")
+    (case_root / "CaseDocs").mkdir()
+    if lnd_in is not None:
+        (case_root / "CaseDocs" / "lnd_in").write_text(lnd_in, encoding="utf-8")
+    preview_namelists = case_root / "preview_namelists"
+    preview_namelists.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    preview_namelists.chmod(mode)
+    return case_root
+
+
+def _finalize(ensemble: Ensemble):
+    """Finalize the first member's first stage"""
+    ensemble.finalize(MEMBERS[0], ensemble.config.member_stages[0].name)
+
+
+def _param_file(ensemble: Ensemble) -> str:
+    """The first member's parameter file"""
+    return str(ensemble.param_files[MEMBERS[0]])
+
+
+def _assignment(ensemble: Ensemble, key: str = "fates_paramfile") -> str:
+    """The user_nl_clm line finalize writes for the first member"""
+    return f"{key} = '{_param_file(ensemble)}'\n"
+
+
+def test_finalize_unknown_stage_raises(created_ensemble):
+    """Test that finalize raises for a stage that isn't a member stage"""
+    with pytest.raises(ValueError, match="unknown member stage 'nope'"):
+        created_ensemble.finalize(MEMBERS[0], "nope")
+
+
+def test_finalize_unprepared_case_raises(created_ensemble):
+    """Test that finalize raises if the stage's case hasn't been made"""
+    with pytest.raises(FileNotFoundError, match="run prepare first"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_sets_then_checks_paramfile(created_ensemble):
+    """Test that finalize sets the key in user_nl_clm, then checks the lnd_in
+    preview_namelists regenerates (not the stale one already there)
+    """
+    case_root = _write_namelist_case(
+        created_ensemble, "a = 1\n", lnd_in="fates_paramfile = '/stale.nc'\n"
+    )
+    _finalize(created_ensemble)
+    expected = "a = 1\n" + _assignment(created_ensemble)
+    assert (case_root / "user_nl_clm").read_text(encoding="utf-8") == expected
+
+
+# ---------------------------------------------------------------------------
+# finalize: set parameter file
+# ---------------------------------------------------------------------------
+
+
+def _finalized_user_nl_clm(ensemble: Ensemble, text: str) -> str:
+    """Write text as the first member stage's user_nl_clm, finalize, and
+    return the resulting user_nl_clm
+    """
+    case_root = _write_namelist_case(ensemble, text)
+    _finalize(ensemble)
+    return (case_root / "user_nl_clm").read_text(encoding="utf-8")
+
+
+def test_finalize_appends_to_empty_user_nl_clm(created_ensemble):
+    """Test that the key is added to an empty user_nl_clm"""
+    result = _finalized_user_nl_clm(created_ensemble, "")
+    assert result == _assignment(created_ensemble)
+
+
+def test_finalize_keeps_other_user_nl_clm_lines(created_ensemble):
+    """Test that unrelated lines are kept, in order, before the new key"""
+    text = "hist_nhtfrq = 0\n! a comment\nuse_fates = .true.\n"
+    result = _finalized_user_nl_clm(created_ensemble, text)
+    assert result == text + _assignment(created_ensemble)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "fates_paramfile = '/old.nc'",
+        "FATES_PARAMFILE = '/old.nc'",
+        "  Fates_ParamFile='/old.nc'",
+        "\tfates_paramfile\t=\t'/old.nc'",
+    ],
+)
+def test_finalize_replaces_existing_paramfile(created_ensemble, line):
+    """Test that an existing assignment is replaced regardless of case or
+    whitespace
+    """
+    result = _finalized_user_nl_clm(created_ensemble, f"a = 1\n{line}\nb = 2\n")
+    assert result == "a = 1\nb = 2\n" + _assignment(created_ensemble)
+
+
+def test_finalize_removes_duplicate_paramfiles(created_ensemble):
+    """Test that every existing assignment is removed, leaving exactly one"""
+    text = "fates_paramfile = '/x.nc'\nfates_paramfile = '/y.nc'\n"
+    result = _finalized_user_nl_clm(created_ensemble, text)
+    assert result == _assignment(created_ensemble)
+
+
+def test_finalize_is_idempotent(created_ensemble):
+    """Test that finalizing twice gives the same user_nl_clm as once"""
+    user_nl_clm = _write_namelist_case(created_ensemble, "a = 1\n") / "user_nl_clm"
+    _finalize(created_ensemble)
+    once = user_nl_clm.read_text(encoding="utf-8")
+    _finalize(created_ensemble)
+    assert user_nl_clm.read_text(encoding="utf-8") == once
+
+
+def test_finalize_set_key_not_matched_by_suffix(ready_config_dict):
+    """Test that paramfile_key paramfile leaves fates_paramfile alone"""
+    ready_config_dict["paramfile_key"] = "paramfile"
+    ensemble = Ensemble.create(ready_config_dict)
+    text = "fates_paramfile = '/f.nc'\nparamfile = '/old.nc'\n"
+    result = _finalized_user_nl_clm(ensemble, text)
+    assert result == "fates_paramfile = '/f.nc'\n" + _assignment(ensemble, "paramfile")
+
+
+def test_finalize_keeps_key_in_comment_or_value(created_ensemble):
+    """Test that lines only mentioning the key (not assigning it) are kept"""
+    text = "! fates_paramfile = '/c.nc'\nfoo = 'fates_paramfile'\n"
+    result = _finalized_user_nl_clm(created_ensemble, text)
+    assert result == text + _assignment(created_ensemble)
+
+
+@pytest.mark.parametrize(
+    "text, kept",
+    [
+        ("a = 1", "a = 1\n"),
+        ("a = 1\nb = 2", "a = 1\nb = 2\n"),
+        ("a = 1\nfates_paramfile = '/old.nc'", "a = 1\n"),
+    ],
+    ids=["one_line", "two_lines", "key_last"],
+)
+def test_finalize_user_nl_clm_no_trailing_newline(created_ensemble, text, kept):
+    """Test that the new line isn't glued onto a last line with no newline"""
+    result = _finalized_user_nl_clm(created_ensemble, text)
+    assert result == kept + _assignment(created_ensemble)
+
+
+def test_finalize_missing_user_nl_clm_raises(created_ensemble):
+    """Test that a case with no user_nl_clm raises"""
+    _write_namelist_case(created_ensemble, user_nl_clm=None)
+    with pytest.raises(FileNotFoundError, match="user_nl_clm"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_leaves_no_user_nl_clm_tmp_file(created_ensemble):
+    """Test that the atomic write doesn't leave its temp file behind"""
+    case_root = _write_namelist_case(created_ensemble, "a = 1\n")
+    _finalize(created_ensemble)
+    assert not (case_root / "user_nl_clm.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# finalize: check parameter file
+# ---------------------------------------------------------------------------
+
+# a fake preview_namelists that leaves CaseDocs/lnd_in as written
+_KEEP_LND_IN = "exit 0\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        " fates_paramfile = '{}'",
+        " FATES_PARAMFILE='{}'",
+        ' fates_paramfile = "{}"',
+    ],
+)
+def test_finalize_check_passes(created_ensemble, line):
+    """Test that lnd_in setting the key to the parameter file passes,
+    regardless of case, whitespace, or quote style
+    """
+    lnd_in = f" a = 1\n{line.format(_param_file(created_ensemble))}\n b = 2\n"
+    _write_namelist_case(created_ensemble, lnd_in=lnd_in, body=_KEEP_LND_IN)
+    _finalize(created_ensemble)
+
+
+def test_finalize_check_wrong_value_raises(created_ensemble):
+    """Test that lnd_in setting the key to a different file raises, naming both"""
+    _write_namelist_case(
+        created_ensemble, lnd_in=" fates_paramfile = '/p/b.nc'\n", body=_KEEP_LND_IN
+    )
+    expected = f"['/p/b.nc'], expected '{_param_file(created_ensemble)}'"
+    with pytest.raises(RuntimeError, match=re.escape(expected)):
+        _finalize(created_ensemble)
+
+
+@pytest.mark.parametrize(
+    "lnd_in",
+    [
+        "",
+        " paramfile = '{}'\n",
+        "! fates_paramfile = '{}'\n",
+        " foo = '{}'\n",
+    ],
+    ids=["empty", "other_key", "comment", "path_only"],
+)
+def test_finalize_check_key_missing_raises(created_ensemble, lnd_in):
+    """Test that the path appearing anywhere but as the key's value raises"""
+    _write_namelist_case(
+        created_ensemble,
+        lnd_in=lnd_in.format(_param_file(created_ensemble)),
+        body=_KEEP_LND_IN,
+    )
+    with pytest.raises(RuntimeError, match="fates_paramfile is not set in"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_check_key_not_matched_by_suffix(ready_config_dict):
+    """Test that paramfile_key paramfile isn't satisfied by fates_paramfile"""
+    ready_config_dict["paramfile_key"] = "paramfile"
+    ensemble = Ensemble.create(ready_config_dict)
+    _write_namelist_case(
+        ensemble,
+        lnd_in=f" fates_paramfile = '{_param_file(ensemble)}'\n",
+        body=_KEEP_LND_IN,
+    )
+    with pytest.raises(RuntimeError, match="paramfile is not set in"):
+        _finalize(ensemble)
+
+
+def test_finalize_check_duplicates_raise(created_ensemble):
+    """Test that more than one assignment in lnd_in raises, even if one is right"""
+    param_file = _param_file(created_ensemble)
+    _write_namelist_case(
+        created_ensemble,
+        lnd_in=f" fates_paramfile = '{param_file}'\n fates_paramfile = '/p/b.nc'\n",
+        body=_KEEP_LND_IN,
+    )
+    with pytest.raises(RuntimeError, match=re.escape(f"['{param_file}', '/p/b.nc']")):
+        _finalize(created_ensemble)
+
+
+def test_finalize_missing_lnd_in_raises(created_ensemble):
+    """Test that a case with no CaseDocs/lnd_in raises"""
+    _write_namelist_case(created_ensemble, body=_KEEP_LND_IN)
+    with pytest.raises(FileNotFoundError, match="lnd_in"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_no_preview_namelists_raises(created_ensemble):
+    """Test that a case with no preview_namelists raises"""
+    case_root = _write_namelist_case(created_ensemble)
+    (case_root / "preview_namelists").unlink()
+    with pytest.raises(FileNotFoundError, match="has no preview_namelists"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_preview_namelists_not_executable_raises(created_ensemble):
+    """Test that a non-executable preview_namelists raises"""
+    _write_namelist_case(created_ensemble, mode=0o644)
+    with pytest.raises(PermissionError, match="preview_namelists is not executable"):
+        _finalize(created_ensemble)
+
+
+def test_finalize_preview_namelists_failure_raises(created_ensemble):
+    """Test that a failed preview_namelists raises with its stderr"""
+    _write_namelist_case(
+        created_ensemble, body="echo 'namelist exploded' >&2\nexit 1\n"
+    )
+    with pytest.raises(
+        RuntimeError, match="preview_namelists failed: .*namelist exploded"
+    ):
+        _finalize(created_ensemble)

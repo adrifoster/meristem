@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import json
 import shlex
@@ -12,7 +13,7 @@ import pandas as pd
 
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
-from meristem.run.stages import Stage
+from meristem.run.stages import Stage, StageStatus
 from meristem.run.model_run import ModelRun
 
 # state file name
@@ -120,9 +121,42 @@ class Ensemble:
         param_files = {member: Path(path) for member, path in state["members"].items()}
         return cls(EnsembleConfig.from_dict(state["config"]), param_files)
 
-    def submit(self, limit: int | None = None, dry_run: bool = False) -> dict[str, str]:
-        """Submit the first stage of every pending member"""
+    def submit(
+        self, limit: int | None = None, dry_run: bool = False
+    ) -> dict[str, str | None]:
+        """Submit the first stage of every pending member
+
+        A member is pending if its first stage has never been submitted.
+
+        Args:
+            limit (int | None, optional): submit at most this many pending members.
+                Defaults to None (all).
+            dry_run (bool, optional): write job scripts but don't submit.
+                Defaults to False.
+
+        Raises:
+            FileNotFoundError: if any selected member's parameter file is missing
+
+        Returns:
+            dict[str, str]: member name -> job ID of its first stage's setup job
+        """
         runs = {member: self.member_run(member) for member in self.param_files}
+        pending = [
+            member
+            for member, run in runs.items()
+            if run.stages[0].state.status == StageStatus.PENDING
+        ]
+
+        if limit is not None:
+            pending = pending[:limit]
+
+        if not pending:
+            print(f"{self.config.ensemble_id}: no pending members")
+            return {}
+
+        self.check_param_files(pending)
+
+        return {member: runs[member].submit(dry_run=dry_run) for member in pending}
 
     def prepare(self, member: str, stage: str):
         """Clone and configure one member's case
@@ -158,6 +192,18 @@ class Ensemble:
 
         # safe to re-run: CIME skips setup that's already been done
         self._case_setup(case_root)
+
+    def finalize(self, member: str, stage: str):
+        """Post-script hook for each member stage which set's the parameter file
+
+        Args:
+            member (str): member string
+            stage (str): stage string name
+        """
+        self._check_stage(member, stage)
+        case_root = self._case_root(member, stage)
+        self._set_paramfile(case_root, self.param_files[member])
+        self._check_paramfile(case_root, self.param_files[member])
 
     def member_run(self, member: str) -> ModelRun:
         """Load one member's ModelRun"""
@@ -394,6 +440,111 @@ class Ensemble:
             ]
         )
         return command
+
+    def _set_paramfile(self, case_root: Path, param_file: Path):
+        """Point a case's user_nl_clm at a member's parameter file
+
+        Removes any existing assignment of ``config.paramfile_key`` and appends a new one.
+        Written via temp-file-then-rename
+
+        Args:
+            case_root (Path): case directory
+            param_file (Path): parameter file to use
+        Raises:
+            FileNotFoundError: user_nl_clm doesn't exist (broken case?)
+        """
+        user_nl_clm = case_root / "user_nl_clm"
+        if not user_nl_clm.is_file():
+            raise FileNotFoundError(
+                f"can't find {user_nl_clm}; case {case_root} looks broken"
+            )
+
+        key = self.config.paramfile_key
+
+        # namelists are case-insensitive; the re anchor keeps "paramfile" from
+        # matching "fates_paramfile"
+        pattern = re.compile(rf"^\s*{re.escape(key)}\s*=", re.IGNORECASE)
+
+        text = user_nl_clm.read_text(encoding="utf-8")
+        lines = [
+            line for line in text.splitlines(keepends=True) if not pattern.match(line)
+        ]
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"{key} = '{param_file}'\n")
+
+        tmp = case_root / "user_nl_clm.tmp"
+        tmp.write_text("".join(lines), encoding="utf-8")
+        tmp.rename(user_nl_clm)
+
+    def _check_paramfile(self, case_root: Path, param_file: Path):
+        """Check that a case's generated lnd_in sets ``config.paramfile_key`` to
+        a member's parameter file
+
+        Runs preview_namelists, then checks the key's value in CaseDocs/lnd_in
+        (not just that the path appears somewhere, so a comment or a different
+        key can't pass)
+
+        Args:
+            case_root (Path): case directory
+            param_file (Path): parameter file the case should use
+
+        Raises:
+            RuntimeError: preview_namelists failed, or the key is missing or
+                set to something else
+            FileNotFoundError: CaseDocs/lnd_in doesn't exist (broken case?)
+        """
+        _check_case_script("preview_namelists", case_root)
+        try:
+            _run(["./preview_namelists"], case_root)
+        except RuntimeError as exc:
+            raise RuntimeError(f"preview_namelists failed: {exc}") from exc
+
+        lnd_in = case_root / "CaseDocs" / "lnd_in"
+        if not lnd_in.is_file():
+            raise FileNotFoundError(
+                f"can't find {lnd_in}; case {case_root} looks broken"
+            )
+
+        key = self.config.paramfile_key
+        # same anchor as _set_paramfile, capturing the quoted value
+        pattern = re.compile(
+            rf"^\s*{re.escape(key)}\s*=\s*(['\"])(.*?)\1", re.IGNORECASE | re.MULTILINE
+        )
+        text = lnd_in.read_text(encoding="utf-8")
+        values = [match.group(2) for match in pattern.finditer(text)]
+        if not values:
+            raise RuntimeError(f"{key} is not set in {lnd_in}")
+        if values != [str(param_file)]:
+            raise RuntimeError(
+                f"{key} in {lnd_in} is {values}, expected {str(param_file)!r}"
+            )
+
+    def _check_stage(self, member: str, stage: str):
+        """Checks to see if stage is ready for submission
+
+        Args:
+            member (str): member string
+            stage (str): stage name string
+
+        Raises:
+            ValueError: unknown member stage
+            FileNotFoundError: can't find stage or isn't complete
+        """
+
+        if stage not in [s.name for s in self.config.member_stages]:
+            raise ValueError(
+                f"unknown member stage {stage!r}; member stages are "
+                f"{[s.name for s in self.config.member_stages]}."
+            )
+        self.check_param_files([member])
+
+        case_root = self._case_root(member, stage)
+        if not _is_existing_case(case_root):
+            raise FileNotFoundError(
+                f"can't find case {case_root} or isn't a complete case. "
+                "run prepare first"
+            )
 
     def _case_root(self, member: str, stage: str) -> Path:
         """Case directory for one member stage's clone
