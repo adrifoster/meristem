@@ -135,11 +135,15 @@ class Ensemble:
                 Defaults to False.
 
         Raises:
+            ValueError: if limit is less than 1
             FileNotFoundError: if any selected member's parameter file is missing
 
         Returns:
             dict[str, str]: member name -> job ID of its first stage's setup job
         """
+        if limit is not None and limit < 1:
+            raise ValueError(f"limit must be greater than 0, got {limit}")
+
         runs = {member: self.member_run(member) for member in self.param_files}
         pending = [
             member

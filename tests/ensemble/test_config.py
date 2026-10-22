@@ -92,6 +92,15 @@ def test_init_relative_path_raises(tmp_path, name):
         _config(tmp_path, **{name: "relative/dir"})
 
 
+def test_from_dict_relative_member_stage_script_raises(ensemble_config_dict):
+    """Test that a relative member stage script is rejected when the config is read"""
+    ensemble_config_dict["member_stages"][0]["script"] = "rel_script.sh"
+    with pytest.raises(
+        ValueError, match="script 'rel_script.sh' for stage .* must be an absolute path"
+    ):
+        EnsembleConfig.from_dict(ensemble_config_dict)
+
+
 def test_init_output_root_none_allowed(tmp_path):
     """Test that an unset output_root isn't checked for being absolute"""
     assert _config(tmp_path, output_root=None).output_root is None
@@ -183,6 +192,27 @@ def test_init_no_cime_stage_raises(tmp_path):
     """Test that a no_cime member stage raises"""
     with pytest.raises(ValueError, match="no_cime is not allowed"):
         _config(tmp_path, member_stages=(_stage(no_cime=True),))
+
+
+def test_init_case_root_stage_raises(tmp_path):
+    """Test that a member stage can't set case_root, since the ensemble puts
+    each member's case under case_dir
+    """
+    stage = _stage("ad", case_root="/path/to/case")
+    with pytest.raises(
+        ValueError, match="member stage 'ad': case_root is not allowed; .* case_dir"
+    ):
+        _config(tmp_path, member_stages=(stage,))
+
+
+def test_init_post_command_stage_raises(tmp_path):
+    """Test that a member stage can't set a post_command, since the ensemble sets it"""
+    stage = _stage("ad", post_command="echo hi")
+    with pytest.raises(
+        ValueError,
+        match="member stage 'ad': post_command is not allowed; .* finalize",
+    ):
+        _config(tmp_path, member_stages=(stage,))
 
 
 def test_init_empty_members_raises(tmp_path):

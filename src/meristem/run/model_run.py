@@ -113,7 +113,7 @@ class ModelRun:
             )
 
     def _validate_stages(self, start: str | None = None):
-        """Validate stage configs (script exists, case_root absolute)
+        """Validate stage configs (there's a script or command, the script exists)
 
         Not part of _validate so that load still works (e.g. for status) if a
         script has since moved; called at create, submit, and retry instead, so

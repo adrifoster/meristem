@@ -13,6 +13,7 @@ import yaml
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
 from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case
+from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
 
@@ -451,6 +452,141 @@ def test_save_leaves_no_tmp_file(created_ensemble):
 
 
 # ---------------------------------------------------------------------------
+# submit
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def submit_ensemble(created_ensemble, fake_scheduler, monkeypatch) -> Ensemble:
+    """created_ensemble whose member runs load with fake_scheduler, so submit
+    records job files instead of calling qsub
+    """
+    monkeypatch.setattr(model_run, "get_scheduler", lambda name: fake_scheduler)
+    return created_ensemble
+
+
+def _first_status(ensemble: Ensemble, member: str) -> StageStatus:
+    """Status of a member's first stage, as saved on disk"""
+    return _member_run(ensemble, member).stages[0].state.status
+
+
+def _set_first_status(ensemble: Ensemble, member: str, status: StageStatus):
+    """Save a member's first stage with the given status, skipping the
+    transition checks
+    """
+    run = _member_run(ensemble, member)
+    object.__setattr__(run.stages[0].state, "_status", status)
+    run.save()
+
+
+def test_submit_all_pending_members(submit_ensemble, fake_scheduler):
+    """Test that submit submits every member's first stage and returns its job ID"""
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+    for member, job_id in result.items():
+        state = _member_run(submit_ensemble, member).stages[0].state
+        assert state.status is StageStatus.SUBMITTED
+        assert state.job_id == job_id
+
+
+@pytest.mark.parametrize(
+    "status", [StageStatus.SUBMITTED, StageStatus.DONE, StageStatus.FAILED]
+)
+def test_submit_skips_members_not_pending(submit_ensemble, fake_scheduler, status):
+    """Test that a member whose first stage isn't PENDING is left alone"""
+    _set_first_status(submit_ensemble, MEMBERS[0], status)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS[1:]
+    assert len(fake_scheduler.submitted) == len(MEMBERS) - 1
+    assert _first_status(submit_ensemble, MEMBERS[0]) is status
+
+
+def test_submit_limit(submit_ensemble, fake_scheduler):
+    """Test that limit submits the first pending members, in member order"""
+    result = submit_ensemble.submit(limit=2)
+    assert list(result) == MEMBERS[:2]
+    assert len(fake_scheduler.submitted) == 2
+    assert _first_status(submit_ensemble, MEMBERS[2]) is StageStatus.PENDING
+
+
+def test_submit_limit_then_rest(submit_ensemble, fake_scheduler):
+    """Test that a second submit picks up the members a limit left out"""
+    submit_ensemble.submit(limit=2)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS[2:]
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+
+
+def test_submit_limit_counts_only_pending(submit_ensemble):
+    """Test that limit skips over members that aren't pending"""
+    _set_first_status(submit_ensemble, MEMBERS[0], StageStatus.SUBMITTED)
+    result = submit_ensemble.submit(limit=1)
+    assert list(result) == [MEMBERS[1]]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_submit_limit_below_one_raises(submit_ensemble, fake_scheduler, limit):
+    """Test that a limit below 1 raises and submits nothing"""
+    with pytest.raises(ValueError, match=f"limit must be greater than 0, got {limit}"):
+        submit_ensemble.submit(limit=limit)
+    assert not fake_scheduler.submitted
+    for member in MEMBERS:
+        assert _first_status(submit_ensemble, member) is StageStatus.PENDING
+
+
+def test_submit_no_pending_members(submit_ensemble, fake_scheduler, capsys):
+    """Test that submit with nothing pending returns {} and submits nothing"""
+    submit_ensemble.submit()
+    capsys.readouterr()
+    assert submit_ensemble.submit() == {}
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+    assert "my_ens-1: no pending members" in capsys.readouterr().out
+
+
+def test_submit_missing_param_file_submits_nothing(submit_ensemble, fake_scheduler):
+    """Test that a missing parameter file raises before any member is submitted"""
+    submit_ensemble.param_files[MEMBERS[-1]].unlink()
+    with pytest.raises(FileNotFoundError):
+        submit_ensemble.submit()
+    assert not fake_scheduler.submitted
+    for member in MEMBERS:
+        assert _first_status(submit_ensemble, member) is StageStatus.PENDING
+
+
+def test_submit_checks_only_selected_param_files(submit_ensemble):
+    """Test that a missing parameter file for a member limit leaves out
+    doesn't stop the others being submitted
+    """
+    submit_ensemble.param_files[MEMBERS[-1]].unlink()
+    result = submit_ensemble.submit(limit=2)
+    assert list(result) == MEMBERS[:2]
+
+
+def test_submit_dry_run(submit_ensemble, fake_scheduler):
+    """Test that a dry run writes every member's job script but submits nothing
+    and leaves every member pending
+    """
+    result = submit_ensemble.submit(dry_run=True)
+    assert list(result) == MEMBERS
+    assert not fake_scheduler.submitted
+    stage = submit_ensemble.config.member_stages[0].name
+    for member, job_id in result.items():
+        run = _member_run(submit_ensemble, member)
+        assert job_id.startswith("DRY_")
+        assert (run.root / f"{run.run_id}_{stage}.pbs").is_file()
+        assert run.stages[0].state.status is StageStatus.PENDING
+
+
+def test_submit_after_dry_run(submit_ensemble, fake_scheduler):
+    """Test that a real submit after a dry run submits every member"""
+    submit_ensemble.submit(dry_run=True)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+
+
+# ---------------------------------------------------------------------------
 # find_param_members
 # ---------------------------------------------------------------------------
 
@@ -846,7 +982,7 @@ def test_is_existing_case_wrong_case_raises(tmp_path):
         _is_existing_case(case_root)
 
 
-def _stage_case_root(ensemble: Ensemble) -> Path:
+def _stage_case_root(ensemble: Ensemble) -> Path | None:
     """The first member's first stage case_root, as stored on its ModelRun"""
     return _member_run(ensemble, MEMBERS[0]).stages[0].config.case_root
 
