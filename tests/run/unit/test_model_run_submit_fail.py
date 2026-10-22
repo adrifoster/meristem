@@ -162,15 +162,23 @@ def test_submit_fail_records_fail_job_ids(created_run):
     assert reloaded.stages[0].state.fail_job_ids == job_ids
 
 
-def test_submit_fail_dry_run_records_fail_job_ids(created_run):
-    """Test that submit_fail(dry_run=True) saves the synthetic DRY_ job ID"""
+def test_submit_fail_dry_run_does_not_record_job_ids(created_run):
+    """Test that submit_fail(dry_run=True) doesn't record the DRY_ job IDs"""
     stage = created_run.stages[0]
     stage.state.status = StageStatus.SUBMITTED
     stage.state.submit_time = time.time() - 100
-    job_ids = created_run.submit_fail("spinup_ad", "55555.pbs", dry_run=True)
-    assert all(job_id.startswith("DRY_") for job_id in job_ids)
+    stage.state.fail_job_ids = ["111.pbs"]
+    created_run.save()
+    job_ids = created_run.submit_fail(
+        "spinup_ad", ["55555.pbs", "55556.pbs"], dry_run=True
+    )
+    assert job_ids == [
+        f"DRY_fail_1_{created_run.run_id}_spinup_ad",
+        f"DRY_fail_2_{created_run.run_id}_spinup_ad",
+    ]
+    assert created_run.stages[0].state.fail_job_ids == ["111.pbs"]
     reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
-    assert reloaded.stages[0].state.fail_job_ids == job_ids
+    assert reloaded.stages[0].state.fail_job_ids == ["111.pbs"]
 
 
 def test_submit_fail_script_name_not_doubled(created_run):

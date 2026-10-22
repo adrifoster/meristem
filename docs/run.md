@@ -178,6 +178,7 @@ meristem run --root <path> --fail --stage <name>
 ```
 
 Add `--dry-run` to any submission command to generate job scripts without calling `qsub`.
+A dry run doesn't change the run's state, so you can follow it with the real command.
 Add `--debug` to any command to show the full traceback on errors.
 
 ### Lost stages

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import shlex
 import subprocess
 from pathlib import Path
@@ -565,10 +566,9 @@ def test_submit_dry_run_does_not_call_qsub(created_run, fake_scheduler):
 
 
 def test_submit_dry_run_job_id_format(created_run):
-    """Test that submit(dry_run=True) produces a synthetic DRY_ job ID"""
-    created_run.submit(dry_run=True)
-    expected = f"DRY_{created_run.run_id}_{created_run.stages[0].config.name}"
-    assert created_run.stages[0].state.job_id == expected
+    """Test that submit(dry_run=True) returns a synthetic DRY_ job ID"""
+    result = created_run.submit(dry_run=True)
+    assert result == f"DRY_{created_run.run_id}_{created_run.stages[0].config.name}"
 
 
 def test_submit_dry_run_still_writes_job_script(created_run):
@@ -578,9 +578,20 @@ def test_submit_dry_run_still_writes_job_script(created_run):
     assert job_file.exists()
 
 
-def test_submit_dry_run_still_updates_stage_state(created_run):
-    """Test that submit(dry_run=True) still marks the stage as SUBMITTED"""
+def test_submit_dry_run_does_not_change_state(created_run):
+    """Test that submit(dry_run=True) leaves the stage PENDING, in memory and on disk"""
+    state = copy.deepcopy(created_run.stages[0].state)
     created_run.submit(dry_run=True)
+    assert created_run.stages[0].state == state
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_submit_after_dry_run_submits(created_run, fake_scheduler):
+    """Test that a real submit() after a dry run still submits the first stage"""
+    created_run.submit(dry_run=True)
+    created_run.submit()
+    assert len(fake_scheduler.submitted) == 1
     assert created_run.stages[0].state.status is StageStatus.SUBMITTED
 
 

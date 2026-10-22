@@ -491,11 +491,10 @@ class ModelRun:
         """
         stage = self._stage(stage_name)
         job_file = self._write_advance_script(stage, cime_job_id)
-        job_id = (
-            f"DRY_advance_{self.run_id}_{stage_name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
+        if dry_run:
+            print(f"  {self.run_id} / {stage_name}: dry run, wrote {job_file}")
+            return f"DRY_advance_{self.run_id}_{stage_name}"
+        job_id = self.scheduler.submit(job_file)
         stage.state.advance_job_id = job_id
         self.save()
         print(
@@ -534,16 +533,21 @@ class ModelRun:
         if not cime_job_ids:
             raise ValueError("submit_fail needs at least one CIME job ID")
 
+        if dry_run:
+            job_ids = []
+            for idx, cime_job_id in enumerate(cime_job_ids, start=1):
+                suffix = f"_fail_{idx}" if len(cime_job_ids) > 1 else "_fail"
+                job_file = self._write_fail_script(stage, cime_job_id, suffix)
+                print(f"  {self.run_id} / {stage_name}: dry run, wrote {job_file}")
+                job_ids.append(f"DRY{suffix}_{self.run_id}_{stage_name}")
+            return job_ids
+
         stage.state.fail_job_ids = []
         for idx, cime_job_id in enumerate(cime_job_ids, start=1):
             # a single fail job keeps the plain _fail name
             suffix = f"_fail_{idx}" if len(cime_job_ids) > 1 else "_fail"
             job_file = self._write_fail_script(stage, cime_job_id, suffix)
-            job_id = (
-                f"DRY{suffix}_{self.run_id}_{stage_name}"
-                if dry_run
-                else self.scheduler.submit(job_file)
-            )
+            job_id = self.scheduler.submit(job_file)
             # save after each one so a later qsub failure keeps what was submitted
             stage.state.fail_job_ids.append(job_id)
             self.save()
@@ -570,6 +574,13 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only advance SUBMITTED stages."
             )
+        if dry_run:
+            next_stage = self._next_stage(completed_stage_name)
+            if next_stage is None:
+                print(f"  {self.run_id}: dry run, no stages after {completed_stage_name}")
+                return None
+            return self._submit_stage(next_stage, dry_run=True)
+
         stage.state.status = StageStatus.DONE
         stage.state.end_time = time.time()
         self.save()
@@ -621,15 +632,19 @@ class ModelRun:
                 )
             # is_lost re-read the state file, so look the stage up again
             stage = self._stage(name)
-            # go through FAILED: SUBMITTED -> PENDING isn't an allowed transition
-            stage.state.status = StageStatus.FAILED
-            print(f"  {self.run_id} / {name}: lost, marked FAILED")
-        if stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
+        elif stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
             raise ValueError(
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only retry PENDING or FAILED stages."
             )
         self._validate_stages(start=stage.config.name)
+        if dry_run:
+            return self._dry_run_stage(stage, skip_script=skip_script)
+
+        if lost:
+            # go through FAILED: SUBMITTED -> PENDING isn't an allowed transition
+            stage.state.status = StageStatus.FAILED
+            print(f"  {self.run_id} / {stage.config.name}: lost, marked FAILED")
         stage.state.status = StageStatus.PENDING
         stage.state.end_time = None
         stage.state.submit_time = None
@@ -671,12 +686,10 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "- can only submit PENDING or FAILED stages."
             )
+        if dry_run:
+            return self._dry_run_stage(stage, depend_job_id, skip_script)
         job_file = self._write_job_script(stage, depend_job_id, skip_script)
-        job_id = (
-            f"DRY_{self.run_id}_{stage.config.name}"
-            if dry_run
-            else self.scheduler.submit(job_file)
-        )
+        job_id = self.scheduler.submit(job_file)
 
         # record successful submission
         stage.state.job_id = job_id
@@ -686,6 +699,28 @@ class ModelRun:
         self.save()
         print(f"{self.run_id} / {stage.config.name}: submitted {job_id}")
         return job_id
+
+    def _dry_run_stage(
+        self,
+        stage: Stage,
+        depend_job_id: str | None = None,
+        skip_script: bool = False,
+    ) -> str:
+        """Write a stage's job script without submitting it or changing any state
+
+        Args:
+            stage (Stage): stage
+            depend_job_id (str | None, optional): CIME job id to add to afterok
+                dependency. Defaults to None.
+            skip_script (bool, optional): If True, the script won't run the user's
+                script. Defaults to False
+
+        Returns:
+            str: synthetic DRY_ job ID
+        """
+        job_file = self._write_job_script(stage, depend_job_id, skip_script)
+        print(f"  {self.run_id} / {stage.config.name}: dry run, wrote {job_file}")
+        return f"DRY_{self.run_id}_{stage.config.name}"
 
     def _write_job_script(
         self, stage: Stage, depend_job_id: str | None = None, skip_script: bool = False

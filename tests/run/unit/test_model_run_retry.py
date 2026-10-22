@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from meristem.run.model_run import _UNKNOWN_GRACE_SECONDS, ModelRun
@@ -110,11 +112,35 @@ def test_retry_returns_none_when_nothing_to_retry(two_stage_run, mocker):
     assert result is None
 
 
-def test_retry_dry_run_passed_through(created_run, mocker):
-    """Test that retry() passes dry_run through to _submit_stage"""
-    mock = mocker.patch.object(created_run, "_submit_stage", return_value="DRY_run")
+def test_retry_dry_run_writes_script_only(created_run, mocker):
+    """Test that retry(dry_run=True) writes the job script without submitting"""
+    created_run.stages[0].state.status = StageStatus.FAILED
+    submit = mocker.patch.object(created_run, "_submit_stage")
+    dry = mocker.spy(created_run, "_dry_run_stage")
+    created_run.retry("spinup_ad", dry_run=True, skip_script=True)
+    submit.assert_not_called()
+    dry.assert_called_once_with(created_run.stages[0], skip_script=True)
+
+
+def test_retry_dry_run_does_not_change_state(created_run):
+    """Test that retry(dry_run=True) leaves a FAILED stage FAILED, in memory and on disk"""
+    stage = created_run.stages[0]
+    stage.state.status = StageStatus.SUBMITTED
+    stage.state.job_id = "12345.pbs"
+    stage.state.status = StageStatus.FAILED
+    created_run.save()
+    state = copy.deepcopy(stage.state)
     created_run.retry("spinup_ad", dry_run=True)
-    mock.assert_called_once_with(created_run.stages[0], dry_run=True, skip_script=False)
+    assert created_run.stages[0].state == state
+    reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_retry_dry_run_rejects_submitted_stage(created_run):
+    """Test that retry(dry_run=True) still rejects a stage that can't be retried"""
+    created_run.stages[0].state.status = StageStatus.SUBMITTED
+    with pytest.raises(ValueError, match="can only retry PENDING or FAILED"):
+        created_run.retry("spinup_ad", dry_run=True)
 
 
 def test_retry_skip_script_passed_through(created_run, mocker):
@@ -167,6 +193,21 @@ def test_retry_lost_resubmits_stage(created_run, fake_scheduler):
     assert state.advance_job_id is None
     assert state.fail_job_ids == []
     assert state.attempts == 2
+    reloaded = ModelRun.load(created_run.root, scheduler=fake_scheduler)
+    assert reloaded.stages[0].state == state
+
+
+def test_retry_lost_dry_run_does_not_change_state(created_run, fake_scheduler):
+    """Test that retry(lost=True, dry_run=True) leaves a lost stage SUBMITTED with
+    its old job IDs, and submits nothing
+    """
+    _submit_with_jobs(created_run)
+    n_submitted = len(fake_scheduler.submitted)
+    state = copy.deepcopy(created_run.stages[0].state)
+    result = created_run.retry("spinup_ad", lost=True, dry_run=True)
+    assert result.startswith("DRY_")
+    assert len(fake_scheduler.submitted) == n_submitted
+    assert created_run.stages[0].state == state
     reloaded = ModelRun.load(created_run.root, scheduler=fake_scheduler)
     assert reloaded.stages[0].state == state
 

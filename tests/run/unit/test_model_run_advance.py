@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 import time
 
@@ -94,19 +96,38 @@ def test_advance_dry_run_does_not_call_qsub(two_stage_run, fake_scheduler):
     assert not fake_scheduler.submitted
 
 
-def test_advance_dry_run_still_marks_stage_done(two_stage_run):
-    """Test that advance(dry_run=True) still marks the completed stage as DONE"""
+def test_advance_dry_run_does_not_change_state(two_stage_run):
+    """Test that advance(dry_run=True) doesn't mark the stage DONE or submit the
+    next one, in memory or on disk
+    """
     two_stage_run.submit()
+    states = copy.deepcopy([stage.state for stage in two_stage_run.stages])
     two_stage_run.advance("spinup_ad", dry_run=True)
-    assert two_stage_run.stages[0].state.status is StageStatus.DONE
+    assert [stage.state for stage in two_stage_run.stages] == states
+    reloaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
+    assert [stage.state for stage in reloaded.stages] == states
 
 
-def test_advance_dry_run_next_stage_job_id_format(two_stage_run):
-    """Test that advance(dry_run=True) gives the next stage a DRY_ job ID"""
+def test_advance_dry_run_writes_next_stage_script(two_stage_run):
+    """Test that advance(dry_run=True) writes the next stage's job script"""
     two_stage_run.submit()
-    two_stage_run.advance("spinup_ad", dry_run=True)
-    expected = f"DRY_{two_stage_run.run_id}_spinup_sasu"
-    assert two_stage_run.stages[1].state.job_id == expected
+    result = two_stage_run.advance("spinup_ad", dry_run=True)
+    assert result == f"DRY_{two_stage_run.run_id}_spinup_sasu"
+    assert (two_stage_run.root / f"{two_stage_run.run_id}_spinup_sasu.pbs").exists()
+
+
+def test_advance_dry_run_last_stage_returns_none(two_stage_run):
+    """Test that advance(dry_run=True) on the last stage returns None"""
+    object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.DONE)
+    object.__setattr__(two_stage_run.stages[1].state, "_status", StageStatus.SUBMITTED)
+    assert two_stage_run.advance("spinup_sasu", dry_run=True) is None
+    assert two_stage_run.stages[1].state.status is StageStatus.SUBMITTED
+
+
+def test_advance_dry_run_non_submitted_raises(two_stage_run):
+    """Test that advance(dry_run=True) still rejects a stage that isn't SUBMITTED"""
+    with pytest.raises(ValueError, match="can only advance SUBMITTED"):
+        two_stage_run.advance("spinup_ad", dry_run=True)
 
 
 def test_advance_unknown_stage_raises(two_stage_run):
