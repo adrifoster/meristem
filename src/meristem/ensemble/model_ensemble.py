@@ -7,6 +7,7 @@ import re
 import subprocess
 import json
 import shlex
+from collections import Counter
 from pathlib import Path
 from dataclasses import replace
 import pandas as pd
@@ -110,6 +111,7 @@ class Ensemble:
             Ensemble: Ensemble instance
         Raises:
             FileNotFoundError: if no state file exists at root
+            ValueError: if the ensemble was created somewhere else (i.e. moved)
         """
         state_path = Path(root) / _STATE_FILE
         if not state_path.exists():
@@ -118,8 +120,19 @@ class Ensemble:
                 "Use Ensemble.create() to initialise a new ensemble."
             )
         state = json.loads(state_path.read_text(encoding="utf-8"))
+        config = EnsembleConfig.from_dict(state["config"])
+
+        # absolute paths under the original root are saved in this state file,
+        # every member's run state, the job scripts, and the cases, so a moved
+        # ensemble would keep using the old location
+        if Path(root).resolve() != config.root.resolve():
+            raise ValueError(
+                f"ensemble at {root} was created at {config.root}; ensembles "
+                "can't be moved, so create it again at the new location."
+            )
+
         param_files = {member: Path(path) for member, path in state["members"].items()}
-        return cls(EnsembleConfig.from_dict(state["config"]), param_files)
+        return cls(config, param_files)
 
     def submit(
         self, limit: int | None = None, dry_run: bool = False
@@ -170,22 +183,15 @@ class Ensemble:
             stage (str): stage string name
 
         Raises:
-            ValueError: unknown member stage, or base case not built
+            ValueError: unknown member or member stage, or base case not built
             FileNotFoundError: missing base case, parameter file, member run,
                 or CIME script (xmlquery, create_clone, case.setup)
             PermissionError: a CIME script isn't executable
             FileExistsError: the stage's case_root exists but isn't its complete clone
             RuntimeError: a CIME command (create_clone, case.setup) failed
         """
-
-        if stage not in [s.name for s in self.config.member_stages]:
-            raise ValueError(
-                f"unknown member stage {stage!r}; member stages are "
-                f"{[s.name for s in self.config.member_stages]}."
-            )
-
+        self._check_member_stage(member, stage)
         self.check_base_case()
-        self.check_param_files([member])
         run = self.member_run(member)
         case_root = self._case_root(member, stage)
 
@@ -258,7 +264,7 @@ class Ensemble:
             raise ValueError(f"member list {list_file} is empty.")
 
         # check for duplicates
-        duplicates = sorted({m for m in all_members if all_members.count(m) > 1})
+        duplicates = sorted(m for m, n in Counter(all_members).items() if n > 1)
         if duplicates:
             raise ValueError(f"member list {list_file} has duplicates: {duplicates}")
 
@@ -359,8 +365,18 @@ class Ensemble:
                 Defaults to None.
 
         Raises:
+            ValueError: if any of members isn't in this ensemble
             FileNotFoundError: if any of the checked members' parameter files is missing
         """
+        if members is not None:
+            unknown = sorted(set(members) - set(self.param_files))
+            if unknown:
+                raise ValueError(
+                    f"unknown member(s) {_preview(unknown)}; the ensemble has "
+                    f"{len(self.param_files)} members, e.g. "
+                    f"{_preview(list(self.param_files))}."
+                )
+
         to_check = (
             self.param_files
             if members is None
@@ -519,10 +535,31 @@ class Ensemble:
         values = [match.group(2) for match in pattern.finditer(text)]
         if not values:
             raise RuntimeError(f"{key} is not set in {lnd_in}")
-        if values != [str(param_file)]:
+        # compared resolved, so build-namelist writing the same file another
+        # way (through a symlink, or with e.g. // or ./) still passes
+        if len(values) != 1 or Path(values[0]).resolve() != param_file.resolve():
             raise RuntimeError(
                 f"{key} in {lnd_in} is {values}, expected {str(param_file)!r}"
             )
+
+    def _check_member_stage(self, member: str, stage: str):
+        """Check that member and stage are in this ensemble, and the member's
+        parameter file still exists
+
+        Args:
+            member (str): member name
+            stage (str): member stage name
+
+        Raises:
+            ValueError: unknown member stage or member
+            FileNotFoundError: the member's parameter file is missing
+        """
+        stage_names = [s.name for s in self.config.member_stages]
+        if stage not in stage_names:
+            raise ValueError(
+                f"unknown member stage {stage!r}; member stages are {stage_names}."
+            )
+        self.check_param_files([member])
 
     def _check_stage(self, member: str, stage: str):
         """Checks to see if stage is ready for submission
@@ -532,16 +569,11 @@ class Ensemble:
             stage (str): stage name string
 
         Raises:
-            ValueError: unknown member stage
-            FileNotFoundError: can't find stage or isn't complete
+            ValueError: unknown member or member stage
+            FileNotFoundError: missing parameter file, or can't find stage's
+                case or it isn't complete
         """
-
-        if stage not in [s.name for s in self.config.member_stages]:
-            raise ValueError(
-                f"unknown member stage {stage!r}; member stages are "
-                f"{[s.name for s in self.config.member_stages]}."
-            )
-        self.check_param_files([member])
+        self._check_member_stage(member, stage)
 
         case_root = self._case_root(member, stage)
         if not _is_existing_case(case_root):
@@ -660,6 +692,20 @@ class Ensemble:
             run._validate_stages()  # pylint: disable=protected-access
             runs.append(run)
         return runs
+
+
+def _preview(names: list[str], n: int = 3) -> str:
+    """Show at most n names, saying how many more there are
+
+    Args:
+        names (list[str]): names to show
+        n (int, optional): most names to show. Defaults to 3.
+
+    Returns:
+        str: e.g. "['a', 'b', 'c'] and 2 more"
+    """
+    more = f" and {len(names) - n} more" if len(names) > n else ""
+    return f"{names[:n]}{more}"
 
 
 def _to_config(config: EnsembleConfig | dict | Path | str) -> EnsembleConfig:

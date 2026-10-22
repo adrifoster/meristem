@@ -1,6 +1,7 @@
 """Dataclasses for reading and validating ensemble YAML"""
 
 from __future__ import annotations
+from collections import Counter
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -67,6 +68,28 @@ def _validate_member_stage(stage: StageConfig) -> None:
         )
 
 
+def _validate_top_level_keys(config) -> None:
+    """Check that the config is a mapping with every required key (absent or
+    null counts as missing) and no unknown keys
+
+    Raises:
+        ValueError: if any check fails
+    """
+    if config is None:
+        raise ValueError("ensemble config is empty.")
+    if not isinstance(config, dict):
+        raise ValueError(
+            "ensemble config must be a mapping of keys to values, "
+            f"got {type(config).__name__}."
+        )
+    for key in _REQUIRED_KEYS:
+        if config.get(key) is None:
+            raise ValueError(f"missing required key {key} in ensemble config.")
+    unknown = set(config) - _REQUIRED_KEYS - _OPTIONAL_KEYS
+    if unknown:
+        raise ValueError(f"unknown key(s) {sorted(unknown)} in ensemble config.")
+
+
 def _validate_members(members) -> None:
     """Check that a members list is non-empty, all non-empty strings, and unique
 
@@ -81,7 +104,7 @@ def _validate_members(members) -> None:
             f"members must be non-empty strings, got {bad}; "
             "quote numeric member names in the YAML."
         )
-    duplicates = sorted({m for m in members if members.count(m) > 1})
+    duplicates = sorted(m for m, n in Counter(members).items() if n > 1)
     if duplicates:
         raise ValueError(f"members must be unique, got duplicates {duplicates}.")
 
@@ -125,6 +148,8 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                 f"ensemble_id must be a string, got {type(self.ensemble_id).__name__} "
                 f"{self.ensemble_id!r}; quote it in the YAML."
             )
+        if not self.ensemble_id:
+            raise ValueError("ensemble_id must not be empty.")
         if not _ID_RE.match(self.ensemble_id):
             raise ValueError(
                 f"ensemble_id {self.ensemble_id!r} contains invalid characters. "
@@ -192,21 +217,20 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     def from_dict(cls, config: dict) -> EnsembleConfig:
         """Construct an EnsembleConfig from a config dictionary
 
+        A required key counts as missing if it's absent or null; one that's
+        present but empty (e.g. member_stages: []) is left to __post_init__,
+        which says what's wrong with it
+
         Args:
             config (dict): parsed ensemble YAML
 
         Returns:
             EnsembleConfig: EnsembleConfig instance
         Raises:
-            ValueError: if keys are missing, unknown, or malformed
+            ValueError: if config isn't a mapping, or keys are missing, unknown,
+                or malformed
         """
-        input_dict = dict(config)
-        for key in _REQUIRED_KEYS:
-            if not input_dict.get(key):
-                raise ValueError(f"missing required key {key} in ensemble config.")
-        unknown = set(config) - _REQUIRED_KEYS - _OPTIONAL_KEYS
-        if unknown:
-            raise ValueError(f"unknown key(s) {sorted(unknown)} in ensemble config.")
+        _validate_top_level_keys(config)
 
         paramgen = config["paramgen"]
         if not isinstance(paramgen, dict):
@@ -215,7 +239,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                 f"{sorted(_REQUIRED_PARAMGEN_KEYS)}, got {paramgen!r}."
             )
         for key in _REQUIRED_PARAMGEN_KEYS:
-            if not paramgen.get(key):
+            if paramgen.get(key) is None:
                 raise ValueError(
                     f"missing required key {key} in ensemble config subdict paramgen"
                 )

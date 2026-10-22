@@ -33,6 +33,21 @@ def test_to_absolute_path_relative_raises(path):
         to_absolute_path("root", path)
 
 
+def test_to_absolute_path_empty_raises():
+    """Test that an empty string raises, rather than becoming "." and being
+    reported as relative
+    """
+    with pytest.raises(ValueError, match=r"^root must not be empty\.$"):
+        to_absolute_path("root", "")
+
+
+@pytest.mark.parametrize("path", [[], {}, 3])
+def test_to_absolute_path_not_a_path_raises(path):
+    """Test that a value that isn't a str or Path raises a ValueError"""
+    with pytest.raises(ValueError, match=r"^root must be a path, got "):
+        to_absolute_path("root", path)
+
+
 def test_to_absolute_path_where_in_message():
     """Test that where is added after the path in the error message"""
     with pytest.raises(

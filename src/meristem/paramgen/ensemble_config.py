@@ -37,7 +37,7 @@ class EnsembleConfig:
     file_prefix : str
         Prefix for output filenames, e.g. 'my_ensemble' produces
         'my_ensemble_0001.nc', 'my_ensemble_0002.nc', etc.
-    default_data_file : Path
+    default_param_file : Path
         Path to default parameter dataset. Used as the base for all ensemble
         members and for parameter validation at construction time.
     param_list : list[str] | None

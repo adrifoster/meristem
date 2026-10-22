@@ -12,7 +12,7 @@ import yaml
 
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
-from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case
+from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case, _preview
 from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
@@ -229,6 +229,12 @@ def test_prepare_unknown_stage_raises(created_ensemble):
         created_ensemble.prepare(MEMBERS[0], "nope")
 
 
+def test_prepare_unknown_member_raises(created_ensemble):
+    """Test that prepare raises a ValueError for a member not in the ensemble"""
+    with pytest.raises(ValueError, match=r"unknown member\(s\) \['nope'\]"):
+        created_ensemble.prepare("nope", "spinup_ad")
+
+
 def test_create_member_runs_only_requested_members(ready_config_dict):
     """Test that only requested members get a run"""
     ready_config_dict["paramgen"]["members"] = [MEMBERS[1]]
@@ -415,6 +421,30 @@ def test_load_missing_state_file_raises(tmp_path):
     """Test that load raises FileNotFoundError when there's no state file"""
     with pytest.raises(FileNotFoundError, match="Ensemble.create"):
         Ensemble.load(tmp_path)
+
+
+def test_load_moved_ensemble_raises(created_ensemble, tmp_path):
+    """Test that loading an ensemble from somewhere other than where it was
+    created raises, naming both locations
+    """
+    moved = created_ensemble.root.rename(tmp_path / "moved")
+    with pytest.raises(ValueError) as excinfo:
+        Ensemble.load(moved)
+    assert str(moved) in str(excinfo.value)
+    assert f"created at {created_ensemble.root}" in str(excinfo.value)
+
+
+def test_load_through_symlink(created_ensemble, tmp_path):
+    """Test that loading through a symlink to the ensemble's root works"""
+    link = tmp_path / "link"
+    link.symlink_to(created_ensemble.root)
+    assert Ensemble.load(link).root == created_ensemble.root
+
+
+def test_load_relative_root(created_ensemble, monkeypatch):
+    """Test that loading with a relative path to the ensemble's root works"""
+    monkeypatch.chdir(created_ensemble.root.parent)
+    assert Ensemble.load(created_ensemble.root.name).root == created_ensemble.root
 
 
 def test_save_writes_config_and_members(created_ensemble):
@@ -876,6 +906,57 @@ def test_check_base_case_runs_in_base_case_dir(
 
 
 # ---------------------------------------------------------------------------
+# check_param_files
+# ---------------------------------------------------------------------------
+
+
+def test_check_param_files_all_present(created_ensemble):
+    """Test that check_param_files passes when every parameter file exists"""
+    created_ensemble.check_param_files()
+    created_ensemble.check_param_files([MEMBERS[0]])
+
+
+def test_check_param_files_missing_raises(created_ensemble):
+    """Test that a missing parameter file raises, naming the member and file"""
+    path = created_ensemble.param_files[MEMBERS[1]]
+    path.unlink()
+    with pytest.raises(FileNotFoundError, match=f"{MEMBERS[1]}: {re.escape(str(path))}"):
+        created_ensemble.check_param_files()
+
+
+def test_check_param_files_only_checks_given_members(created_ensemble):
+    """Test that a missing file for a member not asked about doesn't raise"""
+    created_ensemble.param_files[MEMBERS[1]].unlink()
+    created_ensemble.check_param_files([MEMBERS[0]])
+
+
+def test_check_param_files_unknown_member_raises(created_ensemble):
+    """Test that an unknown member raises a ValueError showing at most three
+    unknown names, the number of members, and the first three members
+    """
+    unknown = ["x1", "x2", "x3", "x4", "x5"]
+    with pytest.raises(ValueError) as excinfo:
+        created_ensemble.check_param_files([MEMBERS[0], *unknown])
+    assert str(excinfo.value) == (
+        "unknown member(s) ['x1', 'x2', 'x3'] and 2 more; the ensemble has "
+        f"{len(MEMBERS)} members, e.g. {MEMBERS[:3]}."
+    )
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [
+        ([], "[]"),
+        (["a", "b", "c"], "['a', 'b', 'c']"),
+        (["a", "b", "c", "d"], "['a', 'b', 'c'] and 1 more"),
+    ],
+)
+def test_preview(names, expected):
+    """Test that _preview shows at most three names and counts the rest"""
+    assert _preview(names) == expected
+
+
+# ---------------------------------------------------------------------------
 # check_stage_scripts
 # ---------------------------------------------------------------------------
 
@@ -1262,6 +1343,12 @@ def test_finalize_unknown_stage_raises(created_ensemble):
         created_ensemble.finalize(MEMBERS[0], "nope")
 
 
+def test_finalize_unknown_member_raises(created_ensemble):
+    """Test that finalize raises a ValueError for a member not in the ensemble"""
+    with pytest.raises(ValueError, match=r"unknown member\(s\) \['nope'\]"):
+        created_ensemble.finalize("nope", "spinup_ad")
+
+
 def test_finalize_unprepared_case_raises(created_ensemble):
     """Test that finalize raises if the stage's case hasn't been made"""
     with pytest.raises(FileNotFoundError, match="run prepare first"):
@@ -1407,6 +1494,34 @@ def test_finalize_check_passes(created_ensemble, line):
     """
     lnd_in = f" a = 1\n{line.format(_param_file(created_ensemble))}\n b = 2\n"
     _write_namelist_case(created_ensemble, lnd_in=lnd_in, body=_KEEP_LND_IN)
+    _finalize(created_ensemble)
+
+
+def test_finalize_check_passes_through_symlink(created_ensemble, tmp_path):
+    """Test that lnd_in naming the parameter file through a symlinked
+    directory passes, since it's the same file
+    """
+    param_file = Path(_param_file(created_ensemble))
+    link = tmp_path / "link"
+    link.symlink_to(param_file.parent)
+    _write_namelist_case(
+        created_ensemble,
+        lnd_in=f" fates_paramfile = '{link / param_file.name}'\n",
+        body=_KEEP_LND_IN,
+    )
+    _finalize(created_ensemble)
+
+
+@pytest.mark.parametrize("spelling", ["{dir}//{name}", "{dir}/./{name}"])
+def test_finalize_check_passes_other_spelling(created_ensemble, spelling):
+    """Test that lnd_in naming the parameter file with a different but
+    equivalent spelling passes
+    """
+    param_file = Path(_param_file(created_ensemble))
+    value = spelling.format(dir=param_file.parent, name=param_file.name)
+    _write_namelist_case(
+        created_ensemble, lnd_in=f" fates_paramfile = '{value}'\n", body=_KEEP_LND_IN
+    )
     _finalize(created_ensemble)
 
 

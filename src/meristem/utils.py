@@ -15,14 +15,21 @@ def to_absolute_path(
             " for stage 'spinup_ad'". Defaults to "".
 
     Raises:
-        ValueError: if path is relative, hinting at an unset environment
-        variable if it still contains a $
+        ValueError: if path isn't a str or Path, is empty, or is relative
+        (hinting at an unset environment variable if it still contains a $)
 
     Returns:
         Path | None: path as a Path, or None
     """
     if path is None:
         return None
+    if not isinstance(path, (str, Path)):
+        raise ValueError(
+            f"{name}{where} must be a path, got {type(path).__name__} {path!r}."
+        )
+    # checked before the Path conversion, which would turn "" into "."
+    if not str(path):
+        raise ValueError(f"{name}{where} must not be empty.")
     path = Path(path)
     if not path.is_absolute():
         hint = " (is an environment variable unset?)" if "$" in str(path) else ""

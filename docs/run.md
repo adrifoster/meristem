@@ -109,7 +109,7 @@ you'd expect, use `--check` to ask PBS whether it is still running (see [Lost st
 | `stages` | yes | | List of stages, run in order (see below) |
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
-| `email` | no | user email, used for job emails (`#PBS -M`). If omitted, the directive is not added |
+| `email` | no | | User email, used for job emails (`#PBS -M`). If omitted, the directive is not added |
 | `scheduler` | no | `pbs` | Job scheduler used to submit job scripts. Saved in the state file. Only `pbs` is currently supported |
 
 Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded when the run is created,
