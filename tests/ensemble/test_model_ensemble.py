@@ -920,7 +920,9 @@ def test_check_param_files_missing_raises(created_ensemble):
     """Test that a missing parameter file raises, naming the member and file"""
     path = created_ensemble.param_files[MEMBERS[1]]
     path.unlink()
-    with pytest.raises(FileNotFoundError, match=f"{MEMBERS[1]}: {re.escape(str(path))}"):
+    with pytest.raises(
+        FileNotFoundError, match=f"{MEMBERS[1]}: {re.escape(str(path))}"
+    ):
         created_ensemble.check_param_files()
 
 

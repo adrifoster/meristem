@@ -76,7 +76,7 @@ def test_submit_script_trap_references_run_root(created_run):
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"RUN_ROOT={created_run.root}\n" in content
-    assert 'trap \'meristem run --root "$RUN_ROOT"' in content
+    assert 'trap \'meristem run fail --root "$RUN_ROOT"' in content
 
 
 def test_submit_script_trap_references_stage_name(created_run):
@@ -84,7 +84,7 @@ def test_submit_script_trap_references_stage_name(created_run):
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"STAGE={created_run.stages[0].config.name}\n" in content
-    assert '--fail --stage "$STAGE"\' ERR' in content
+    assert '--stage "$STAGE"\' ERR' in content
 
 
 def test_submit_script_correct_script(created_run):
@@ -353,7 +353,7 @@ def test_submit_skip_script_omits_command_and_script(command_and_script_run):
     assert _setup_calls(job_file) == []
 
 
-@pytest.mark.parametrize("command", ["--submit-advance", "--submit-fail"])
+@pytest.mark.parametrize("command", ["submit-advance", "submit-fail"])
 def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
     Test that ModelRun.submit() creates a PBS file with the correct meristem run commands
@@ -361,7 +361,7 @@ def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
-    assert f'meristem run --root "$RUN_ROOT" {command} --stage "$STAGE"' in job_file
+    assert f'meristem run {command} --root "$RUN_ROOT" --stage "$STAGE"' in job_file
 
 
 def _run_cime_block(
@@ -441,8 +441,8 @@ def test_submit_script_cime_block_uses_case_run_and_archive_ids(
 
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
     assert calls == [
-        f"run --root root --submit-advance --stage stage --cime-job-id {advance_on}",
-        f"run --root root --submit-fail --stage stage --cime-job-id {fail_on}",
+        f"run submit-advance --root root --stage stage --cime-job-id {advance_on}",
+        f"run submit-fail --root root --stage stage --cime-job-id {fail_on}",
     ]
 
 

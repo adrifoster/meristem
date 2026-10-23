@@ -4,7 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from meristem.run.cli import EXIT_LOST, build_parser, validate_args, dispatch, main
+from meristem.run.cli import (
+    EXIT_LOST,
+    build_parser,
+    cmd_advance,
+    cmd_create,
+    cmd_fail,
+    cmd_retry,
+    cmd_status,
+    cmd_submit,
+    cmd_submit_advance,
+    cmd_submit_fail,
+    main,
+)
 
 
 @pytest.fixture
@@ -18,6 +30,7 @@ def mock_run(mocker):
     run.advance.return_value = "12345.pbs"
     run.retry.return_value = "12345.pbs"
     run.format_status.return_value = "Run: member_0001"
+    run.lost_stages.return_value = []
     return run
 
 
@@ -33,386 +46,221 @@ def mock_create(mocker, mock_run):
     return mocker.patch("meristem.run.cli.ModelRun.create", return_value=mock_run)
 
 
-def test_create_with_config_passes():
-    """Test that create with a config passes"""
-    parser = build_parser()
-    args = parser.parse_args(["--create", "--config", "run.yaml"])
-    validate_args(args, parser)
+SUBMIT_ADVANCE_ARGV = [
+    "submit-advance",
+    "--root",
+    "/tmp/run",
+    "--stage",
+    "spinup_ad",
+    "--cime-job-id",
+    "55555.pbs",
+]
+
+SUBMIT_FAIL_ARGV = [
+    "submit-fail",
+    "--root",
+    "/tmp/run",
+    "--stage",
+    "spinup_ad",
+    "--cime-job-id",
+    "55555.pbs",
+]
 
 
-def test_create_without_config_raises():
-    """Test that create without a config raises an error"""
-    parser = build_parser()
-    args = parser.parse_args(["--create"])
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
+# parser
 
 
 @pytest.mark.parametrize(
-    "action", ["--submit", "--advance", "--fail", "--retry", "--print-status"]
+    "argv,handler",
+    [
+        (["create", "--config", "run.yaml"], cmd_create),
+        (["submit", "--root", "/tmp/run"], cmd_submit),
+        (SUBMIT_ADVANCE_ARGV, cmd_submit_advance),
+        (SUBMIT_FAIL_ARGV, cmd_submit_fail),
+        (["advance", "--root", "/tmp/run", "--stage", "spinup_ad"], cmd_advance),
+        (["fail", "--root", "/tmp/run", "--stage", "spinup_ad"], cmd_fail),
+        (["retry", "--root", "/tmp/run"], cmd_retry),
+        (["status", "--root", "/tmp/run"], cmd_status),
+    ],
 )
-def test_validate_args_action_without_root_raises(action):
-    """Test that actions which require a root fail when root not supplied"""
-    parser = build_parser()
-    extra = ["--stage", "spinup_ad"] if action in ("--advance", "--fail") else []
-    args = parser.parse_args([action] + extra)
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
+def test_parser_subcommand_sets_handler(argv, handler):
+    """Test that each subcommand parses and routes to its handler"""
+    args = build_parser().parse_args(argv)
+    assert args.handler is handler
 
 
-def test_validate_args_submit_advance_with_all_args_passes():
-    """Test that submit-advance with correct arguments passes"""
-    parser = build_parser()
-    args = parser.parse_args(
+def test_parser_retry_accepts_optional_args():
+    """Test that retry accepts --stage, --skip-script and --lost"""
+    args = build_parser().parse_args(
         [
-            "--submit-advance",
+            "retry",
             "--root",
             "/tmp/run",
             "--stage",
             "spinup_ad",
-            "--cime-job-id",
-            "12345.pbs",
+            "--skip-script",
+            "--lost",
         ]
     )
-    validate_args(args, parser)
+    assert args.stage == "spinup_ad"
+    assert args.skip_script
+    assert args.lost
 
 
-def test_validate_args_submit_advance_without_stage_raises():
-    """Test that submit-advance without stage fails"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--submit-advance", "--root", "/tmp/run", "--cime-job-id", "12345.pbs"]
-    )
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
+def test_parser_submit_fail_collects_cime_job_ids():
+    """Test that a repeated --cime-job-id with submit-fail is collected as a list"""
+    args = build_parser().parse_args(SUBMIT_FAIL_ARGV + ["--cime-job-id", "55556.pbs"])
+    assert args.cime_job_id == ["55555.pbs", "55556.pbs"]
 
 
-def test_validate_args_submit_advance_without_cime_job_id_raises():
-    """Test that submit-advance without cime job id fails"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--submit-advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
-    )
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_submit_advance_with_two_cime_job_ids_raises():
-    """Test that submit-advance only accepts a single cime job id"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-advance",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "100.pbs",
-            "--cime-job-id",
-            "101.pbs",
-        ]
-    )
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_submit_fail_with_all_args_passes():
-    """Test that submit-fail with correct arguments passes"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "12345.pbs",
-        ]
-    )
-    validate_args(args, parser)
-
-
-def test_validate_args_submit_fail_without_stage_raises():
-    """Test that submit-fail without stage fails"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--submit-fail", "--root", "/tmp/run", "--cime-job-id", "12345.pbs"]
-    )
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_submit_fail_without_cime_job_id_raises():
-    """Test that submit-fail without cime job id fails"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--submit-fail", "--root", "/tmp/run", "--stage", "spinup_ad"]
-    )
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_advance_with_stage_passes():
-    """Test that advance with stage passes"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
-    )
-    validate_args(args, parser)
-
-
-def test_validate_args_advance_without_stage_raises():
-    """Test that advance without stage fails"""
-    parser = build_parser()
-    args = parser.parse_args(["--advance", "--root", "/tmp/run"])
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_fail_with_stage_passes():
-    """Test that fail with a stage passes"""
-    parser = build_parser()
-    args = parser.parse_args(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    validate_args(args, parser)
-
-
-def test_validate_args_fail_without_stage_raises():
-    """Test that fail without a stage fails"""
-    parser = build_parser()
-    args = parser.parse_args(["--fail", "--root", "/tmp/run"])
-    with pytest.raises(SystemExit) as exc:
-        validate_args(args, parser)
-    assert exc.value.code == 2
-
-
-def test_validate_args_retry_without_stage_passes():
-    """Test that fail without a stage passes"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run"])
-    validate_args(args, parser)
-
-
-def test_validate_args_retry_with_stage_passes():
-    """Test that fail with a stage passes"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    validate_args(args, parser)
-
-
-def test_validate_args_retry_with_skip_script_passes():
-    """Test that fail with a stage passes"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--retry", "--root", "/tmp/run", "--stage", "spinup_ad", "--skip-script"]
-    )
-    validate_args(args, parser)
+def test_parser_submit_advance_cime_job_id_is_a_string():
+    """Test that submit-advance takes a single --cime-job-id as a string"""
+    args = build_parser().parse_args(SUBMIT_ADVANCE_ARGV)
+    assert args.cime_job_id == "55555.pbs"
 
 
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--submit", "--root", "my_run"],
-        ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"],
-        ["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
+        [],  # no subcommand
+        ["bogus", "--root", "/tmp/run"],  # unknown subcommand
+        ["create"],  # missing --config
         [
-            "--submit-advance",
+            "create",
+            "--config",
+            "run.yaml",
             "--root",
             "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "12345.pbs",
-        ],
+        ],  # create has no --root
+        ["submit"],  # missing --root
+        ["status"],  # missing --root
+        ["retry"],  # missing --root
+        ["advance", "--root", "/tmp/run"],  # missing --stage
+        ["fail", "--root", "/tmp/run"],  # missing --stage
+        SUBMIT_ADVANCE_ARGV[:-2],  # missing --cime-job-id
+        SUBMIT_FAIL_ARGV[:-2],  # missing --cime-job-id
         [
-            "--submit-fail",
+            "submit-advance",
             "--root",
             "/tmp/run",
-            "--stage",
-            "spinup_ad",
             "--cime-job-id",
-            "12345.pbs",
-        ],
+            "1.pbs",
+        ],  # no --stage
+        ["submit-fail", "--root", "/tmp/run", "--cime-job-id", "1.pbs"],  # no --stage
     ],
 )
-def test_validate_args_skip_script_without_retry_raises(argv):
-    """Test that using --skip-script for anything other than --retry fails"""
+def test_main_argument_errors_exit_with_code_2(argv):
+    """Test that missing or invalid arguments error with code 2"""
     with pytest.raises(SystemExit) as exc:
-        main(argv + ["--skip-script"])
+        main(argv)
     assert exc.value.code == 2
 
 
-def test_dispatch_create_calls_model_run_create(mock_create):
-    """Test that create actually calls model_run.create"""
-    parser = build_parser()
-    args = parser.parse_args(["--create", "--config", "run.yaml"])
-    dispatch(args)
+@pytest.mark.parametrize("flag", ["--skip-script", "--lost"])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["submit", "--root", "/tmp/run"],
+        ["advance", "--root", "/tmp/run", "--stage", "spinup_ad"],
+        ["fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
+        ["status", "--root", "/tmp/run"],
+        SUBMIT_ADVANCE_ARGV,
+        SUBMIT_FAIL_ARGV,
+    ],
+)
+def test_retry_only_flags_rejected_elsewhere(argv, flag):
+    """Test that --skip-script and --lost are only accepted by retry"""
+    with pytest.raises(SystemExit) as exc:
+        main(argv + [flag])
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
+        ["status", "--root", "/tmp/run"],
+    ],
+)
+def test_dry_run_rejected_where_unsupported(argv):
+    """Test that --dry-run is rejected by subcommands that never submit"""
+    with pytest.raises(SystemExit) as exc:
+        main(argv + ["--dry-run"])
+    assert exc.value.code == 2
+
+
+# create
+
+
+def test_create_calls_model_run_create(mock_create, capsys):
+    """Test that create calls ModelRun.create and prints the next step"""
+    assert main(["create", "--config", "run.yaml"]) == 0
     mock_create.assert_called_once_with("run.yaml")
+    assert "meristem run submit --root /tmp/run" in capsys.readouterr().out
 
 
-@pytest.mark.usefixtures("mock_create")
-def test_dispatch_create_returns_zero():
-    """Test that create returns 0"""
-    parser = build_parser()
-    args = parser.parse_args(["--create", "--config", "run.yaml"])
-    assert dispatch(args) == 0
+# submit
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_print_status_calls_format_status(mock_run):
-    """Test that print-status actually calls model_run.format_status"""
-    parser = build_parser()
-    args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
-    dispatch(args)
-    mock_run.format_status.assert_called_once()
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_submit_calls_submit(mock_run, capsys, dry_run):
+    """Test that submit calls ModelRun.submit, passing --dry-run through"""
+    argv = ["submit", "--root", "/tmp/run"] + (["--dry-run"] if dry_run else [])
+    assert main(argv) == 0
+    mock_run.submit.assert_called_once_with(dry_run=dry_run)
+    assert "Submitted: 12345.pbs" in capsys.readouterr().out
+
+
+def test_submit_loads_run_from_root(mock_load):
+    """Test that the run is loaded from --root"""
+    main(["submit", "--root", "/tmp/run"])
+    assert str(mock_load.call_args.args[0]) == "/tmp/run"
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_print_status_returns_zero():
-    """Test that print-status returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
-    assert dispatch(args) == 0
+def test_submit_prints_nothing_without_job_id(mock_run, capsys):
+    """Test that no job ID line is printed when nothing was submitted"""
+    mock_run.submit.return_value = None
+    main(["submit", "--root", "/tmp/run"])
+    assert "Submitted" not in capsys.readouterr().out
+
+
+# submit-advance
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_calls_submit(mock_run):
-    """Test that submit actually calls model_run.submit"""
-    parser = build_parser()
-    args = parser.parse_args(["--submit", "--root", "/tmp/run"])
-    dispatch(args)
-    mock_run.submit.assert_called_once_with(dry_run=False)
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_dry_run_passed_through(mock_run):
-    """Test that submit with a dry run is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(["--submit", "--root", "/tmp/run", "--dry-run"])
-    dispatch(args)
-    mock_run.submit.assert_called_once_with(dry_run=True)
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_returns_zero():
-    """Test that submit returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(["--submit", "--root", "/tmp/run"])
-    assert dispatch(args) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_advance_calls_submit_advance(mock_run):
-    """Test that submit-advance actually calls model_run.submit_advance"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-advance",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-        ]
-    )
-    dispatch(args)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_submit_advance_calls_submit_advance(mock_run, dry_run):
+    """Test that submit-advance calls ModelRun.submit_advance, passing --dry-run through"""
+    argv = SUBMIT_ADVANCE_ARGV + (["--dry-run"] if dry_run else [])
+    assert main(argv) == 0
     mock_run.submit_advance.assert_called_once_with(
-        "spinup_ad", "55555.pbs", dry_run=False
+        "spinup_ad", "55555.pbs", dry_run=dry_run
     )
+
+
+# submit-fail
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_advance_dry_run_passed_through(mock_run):
-    """Test that submit-advance with a dry run is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-advance",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-            "--dry-run",
-        ]
-    )
-    dispatch(args)
-    mock_run.submit_advance.assert_called_once_with(
-        "spinup_ad", "55555.pbs", dry_run=True
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_fail_returns_zero():
-    """Test that submit-fail returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-        ]
-    )
-    assert dispatch(args) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_fail_calls_submit_fail(mock_run):
-    """Test that submit-fail actually calls model_run.submit_fail"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-        ]
-    )
-    dispatch(args)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_submit_fail_calls_submit_fail(mock_run, dry_run):
+    """Test that submit-fail calls ModelRun.submit_fail, passing --dry-run through"""
+    argv = SUBMIT_FAIL_ARGV + (["--dry-run"] if dry_run else [])
+    assert main(argv) == 0
     mock_run.submit_fail.assert_called_once_with(
-        "spinup_ad", ["55555.pbs"], dry_run=False
+        "spinup_ad", ["55555.pbs"], dry_run=dry_run
     )
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_fail_passes_every_cime_job_id(mock_run, capsys):
+def test_submit_fail_passes_every_cime_job_id(mock_run, capsys):
     """Test that a repeated --cime-job-id reaches submit_fail as a list, and each
     fail job ID is printed
     """
     mock_run.submit_fail.return_value = ["1.pbs", "2.pbs"]
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "100.pbs",
-            "--cime-job-id",
-            "101.pbs",
-        ]
-    )
-    dispatch(args)
+    main(SUBMIT_FAIL_ARGV[:-1] + ["100.pbs", "--cime-job-id", "101.pbs"])
     mock_run.submit_fail.assert_called_once_with(
         "spinup_ad", ["100.pbs", "101.pbs"], dry_run=False
     )
@@ -421,156 +269,57 @@ def test_dispatch_submit_fail_passes_every_cime_job_id(mock_run, capsys):
     assert "Fail job submitted: 2.pbs" in out
 
 
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_submit_fail_dry_run_passed_through(mock_run):
-    """Test that submit-fail with a dry run is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "--submit-fail",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-            "--cime-job-id",
-            "55555.pbs",
-            "--dry-run",
-        ]
-    )
-    dispatch(args)
-    mock_run.submit_fail.assert_called_once_with(
-        "spinup_ad", ["55555.pbs"], dry_run=True
-    )
+# advance
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_advance_calls_advance(mock_run):
-    """Test that advance actually calles model_run.advance"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
-    )
-    dispatch(args)
-    mock_run.advance.assert_called_once_with("spinup_ad", dry_run=False)
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_advance_calls_advance(mock_run, dry_run):
+    """Test that advance calls ModelRun.advance, passing --dry-run through"""
+    argv = ["advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
+    assert main(argv + (["--dry-run"] if dry_run else [])) == 0
+    mock_run.advance.assert_called_once_with("spinup_ad", dry_run=dry_run)
+
+
+# fail
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_advance_dry_run_passed_through(mock_run):
-    """Test that advance with a dry run is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad", "--dry-run"]
-    )
-    dispatch(args)
-    mock_run.advance.assert_called_once_with("spinup_ad", dry_run=True)
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_advance_returns_zero():
-    """Test that advance returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
-    )
-    assert dispatch(args) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_fail_calls_fail(mock_run):
-    """Test that fail actually calls model_run.fail"""
-    parser = build_parser()
-    args = parser.parse_args(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    dispatch(args)
+def test_fail_calls_fail(mock_run):
+    """Test that fail calls ModelRun.fail"""
+    assert main(["fail", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
     mock_run.fail.assert_called_once_with("spinup_ad")
 
 
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_fail_returns_zero():
-    """Test that fail actually returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    assert dispatch(args) == 0
+# retry
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_calls_retry_with_stage(mock_run):
-    """Test that retry with stage actually calls model_run.stage"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    dispatch(args)
-    mock_run.retry.assert_called_once_with(
-        "spinup_ad", dry_run=False, skip_script=False, lost=False
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_calls_retry_without_stage(mock_run):
-    """Test that retry without stage actually calls model_run.stage"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run"])
-    dispatch(args)
-    mock_run.retry.assert_called_once_with(
-        None, dry_run=False, skip_script=False, lost=False
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_dry_run_passed_through(mock_run):
-    """Test that retry with dry-run is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run", "--dry-run"])
-    dispatch(args)
-    mock_run.retry.assert_called_once_with(
-        None, dry_run=True, skip_script=False, lost=False
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_skip_script_passed_through(mock_run):
-    """Test that retry with skip-script is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run", "--skip-script"])
-    dispatch(args)
-    mock_run.retry.assert_called_once_with(
-        None, dry_run=False, skip_script=True, lost=False
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_lost_passed_through(mock_run):
-    """Test that retry with --lost is passed through"""
-    parser = build_parser()
-    args = parser.parse_args(
-        ["--retry", "--root", "/tmp/run", "--stage", "spinup_ad", "--lost"]
-    )
-    dispatch(args)
-    mock_run.retry.assert_called_once_with(
-        "spinup_ad", dry_run=False, skip_script=False, lost=True
-    )
-
-
 @pytest.mark.parametrize(
-    "argv",
+    "extra,expected_args,expected_kwargs",
     [
-        ["--submit", "--root", "my_run"],
-        ["--check", "--root", "/tmp/run"],
-        ["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
+        ([], (None,), {}),
+        (["--stage", "spinup_ad"], ("spinup_ad",), {}),
+        (["--dry-run"], (None,), {"dry_run": True}),
+        (["--skip-script"], (None,), {"skip_script": True}),
+        (["--stage", "spinup_ad", "--lost"], ("spinup_ad",), {"lost": True}),
     ],
 )
-def test_validate_args_lost_without_retry_raises(argv):
-    """Test that using --lost for anything other than --retry fails"""
-    with pytest.raises(SystemExit) as exc:
-        main(argv + ["--lost"])
-    assert exc.value.code == 2
+def test_retry_calls_retry(mock_run, extra, expected_args, expected_kwargs):
+    """Test that retry calls ModelRun.retry, passing optional args through"""
+    assert main(["retry", "--root", "/tmp/run"] + extra) == 0
+    kwargs = {"dry_run": False, "skip_script": False, "lost": False}
+    kwargs.update(expected_kwargs)
+    mock_run.retry.assert_called_once_with(*expected_args, **kwargs)
+
+
+# status
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_check_nothing_lost_returns_zero(mock_run, capsys):
-    """Test that --check prints the status and returns 0 when nothing is lost"""
-    mock_run.lost_stages.return_value = []
-    parser = build_parser()
-    args = parser.parse_args(["--check", "--root", "/tmp/run"])
-    assert dispatch(args) == 0
+def test_status_nothing_lost_returns_zero(mock_run, capsys):
+    """Test that status prints the status and returns 0 when nothing is lost"""
+    assert main(["status", "--root", "/tmp/run"]) == 0
     mock_run.format_status.assert_called_once_with(lost=[])
     out = capsys.readouterr().out
     assert "Run: member_0001" in out
@@ -578,169 +327,61 @@ def test_dispatch_check_nothing_lost_returns_zero(mock_run, capsys):
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_check_lost_returns_exit_lost(mock_run, capsys):
-    """Test that --check returns EXIT_LOST, shows the lost stage, and prints
+def test_status_lost_returns_exit_lost(mock_run, capsys):
+    """Test that status returns EXIT_LOST, shows the lost stage, and prints
     the retry command
     """
     mock_run.lost_stages.return_value = ["spinup_ad"]
-    parser = build_parser()
-    args = parser.parse_args(["--check", "--root", "/tmp/run"])
-    assert dispatch(args) == EXIT_LOST
+    assert main(["status", "--root", "/tmp/run"]) == EXIT_LOST
     mock_run.format_status.assert_called_once_with(lost=["spinup_ad"])
     assert (
-        "meristem run --root /tmp/run --retry --stage spinup_ad --lost"
+        "meristem run retry --root /tmp/run --stage spinup_ad --lost"
         in capsys.readouterr().out
     )
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_dispatch_check_does_not_retry(mock_run):
-    """Test that --check never resubmits anything"""
+def test_status_does_not_retry(mock_run):
+    """Test that status never resubmits anything"""
     mock_run.lost_stages.return_value = ["spinup_ad"]
-    parser = build_parser()
-    dispatch(parser.parse_args(["--check", "--root", "/tmp/run"]))
+    main(["status", "--root", "/tmp/run"])
     mock_run.retry.assert_not_called()
     mock_run.submit.assert_not_called()
 
 
-def test_main_check_exit_code_reaches_caller(mocker, mock_run):
-    """Test that main() returns EXIT_LOST from --check, not just dispatch()"""
-    mocker.patch("meristem.run.cli.ModelRun.load", return_value=mock_run)
-    mock_run.lost_stages.return_value = ["spinup_ad"]
-    assert main(["--check", "--root", "/tmp/run"]) == EXIT_LOST
+# error handling
 
 
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_retry_returns_zero():
-    """Test that retry with stage returns zero"""
-    parser = build_parser()
-    args = parser.parse_args(["--retry", "--root", "/tmp/run", "--stage", "spinup_ad"])
-    assert dispatch(args) == 0
+def test_main_load_missing_root_exits_one(tmp_path, capsys):
+    """Test that a missing root gives exit status 1 and an error on stderr"""
+    result = main(["status", "--root", str(tmp_path / "nonexistent")])
+    assert result == 1
+    assert "ERROR" in capsys.readouterr().err
 
 
-@pytest.mark.usefixtures("mock_load")
-def test_dispatch_unhandled_action_raises():
-    """Test that dispatch raises if no action branch matches"""
-    parser = build_parser()
-    args = parser.parse_args(["--print-status", "--root", "/tmp/run"])
-    args.print_status = False  # force all branches to be False
-    with pytest.raises(RuntimeError):
-        dispatch(args)
+def test_main_keyboard_interrupt_exits_130(mocker):
+    """Test that main with a keyboard interrupt exits with status 130"""
+    mocker.patch("meristem.run.cli.ModelRun.load", side_effect=KeyboardInterrupt)
+    assert main(["status", "--root", "/tmp/run"]) == 130
+
+
+def test_main_unexpected_exception_exits_one(mocker, capsys):
+    """Test that an unexpected exception exits with status 1 and prints to stderr"""
+    mocker.patch("meristem.run.cli.ModelRun.load", side_effect=RuntimeError("boom"))
+    assert main(["status", "--root", "/tmp/run"]) == 1
+    assert "ERROR: boom" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--create"],  # missing --config
-        ["--submit"],  # missing --root
-        ["--advance", "--root", "/tmp/run"],  # missing --stage
-        ["--fail", "--root", "/tmp/run"],  # missing --stage
-        [
-            "--submit-advance",
-            "--root",
-            "/tmp/run",
-            "--stage",
-            "spinup_ad",
-        ],  # missing --cime-job-id
+        ["create", "--config", "run.yaml"],
+        ["status", "--root", "/tmp/run"],
     ],
 )
-def test_main_argument_errors_exit_with_code_2(argv):
-    """Test that missing arguments error with code 2"""
-    with pytest.raises(SystemExit) as exc:
-        main(argv)
-    assert exc.value.code == 2
-
-
-@pytest.mark.usefixtures("mock_create")
-def test_main_create_exits_zero():
-    """Test that main with create and correct args returns 0"""
-    assert main(["--create", "--config", "run.yaml"]) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_status_exits_zero():
-    """Test that main with print-status and correct args returns 0"""
-    assert main(["--print-status", "--root", "/tmp/run"]) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_submit_exits_zero():
-    """Test that main with submit and correct args returns 0"""
-    assert main(["--submit", "--root", "/tmp/run"]) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_submit_advance_exits_zero():
-    """Test that main with submit-advance and correct args returns 0"""
-    assert (
-        main(
-            [
-                "--submit-advance",
-                "--root",
-                "/tmp/run",
-                "--stage",
-                "spinup_ad",
-                "--cime-job-id",
-                "2003.desched1",
-            ]
-        )
-        == 0
-    )
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_advance_exits_zero():
-    """Test that main with advance and correct args returns 0"""
-    assert main(["--advance", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_fail_exits_zero():
-    """Test that main with fail and correct args returns 0"""
-    assert main(["--fail", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
-
-
-@pytest.mark.usefixtures("mock_load")
-def test_main_retry_exits_zero():
-    """Test that main with retry and correct args returns 0"""
-    assert main(["--retry", "--root", "/tmp/run"]) == 0
-
-
-def test_main_load_missing_root_exits_one(tmp_path):
-    """Test that main load with a missing root gives exit status 1"""
-    result = main(["--print-status", "--root", str(tmp_path / "nonexistent")])
-    assert result == 1
-
-
-def test_main_runtime_error_prints_to_stderr(tmp_path, capsys):
-    """Test that main with a runtime error prints output to stderr"""
-    main(["--print-status", "--root", str(tmp_path / "nonexistent")])
-    assert "ERROR" in capsys.readouterr().err
-
-
-def test_main_keyboard_interrupt_exits_130(mocker):
-    """Test that main with a keyboard interrupt exist with status 130"""
-    mocker.patch("meristem.run.cli.dispatch", side_effect=KeyboardInterrupt)
-    result = main(["--print-status", "--root", "/tmp/run"])
-    assert result == 130
-
-
-def test_main_unexpected_exception_exits_one(mocker):
-    """Test that main with some unexpected exception exist with status 1"""
-    mocker.patch("meristem.run.cli.dispatch", side_effect=RuntimeError("boom"))
-    result = main(["--print-status", "--root", "/tmp/run"])
-    assert result == 1
-
-
-def test_main_unexpected_exception_prints_to_stderr(mocker, capsys):
-    """Test that main with some unexpected exception prints to stderr"""
-    mocker.patch("meristem.run.cli.dispatch", side_effect=RuntimeError("boom"))
-    main(["--print-status", "--root", "/tmp/run"])
-    assert "ERROR: boom" in capsys.readouterr().err
-
-
-def test_main_debug_flag_reraises_exception(mocker):
+def test_main_debug_flag_reraises_exception(mocker, argv):
     """Test that --debug causes exceptions to propagate rather than being caught"""
-    mocker.patch("meristem.run.cli.dispatch", side_effect=RuntimeError("boom"))
+    mocker.patch("meristem.run.cli.ModelRun.create", side_effect=RuntimeError("boom"))
+    mocker.patch("meristem.run.cli.ModelRun.load", side_effect=RuntimeError("boom"))
     with pytest.raises(RuntimeError, match="boom"):
-        main(["--print-status", "--root", "/tmp/run", "--debug"])
+        main(argv + ["--debug"])

@@ -24,7 +24,7 @@ export -f meristem
 
 RUN_ROOT={{ root | shquote }}
 STAGE={{ name | shquote }}
-trap 'meristem run --root "$RUN_ROOT" --fail --stage "$STAGE"' ERR
+trap 'meristem run fail --root "$RUN_ROOT" --stage "$STAGE"' ERR
 
 echo "=== Run: {{ run_id }} / stage: {{ name }} ==="
 echo "=== Started: $(date) ==="
@@ -64,13 +64,13 @@ fi
 FINAL_JOB_ID=${ARCHIVE_JOB_ID:-$RUN_JOB_ID}
 echo "CIME submitted, case.run: $RUN_JOB_ID, final job ID: $FINAL_JOB_ID"
 
-meristem run --root "$RUN_ROOT" --submit-advance --stage "$STAGE" --cime-job-id "$FINAL_JOB_ID"
+meristem run submit-advance --root "$RUN_ROOT" --stage "$STAGE" --cime-job-id "$FINAL_JOB_ID"
 # watch case.run too: if it crashes PBS deletes st_archive and anything
 # waiting on it, so a fail job on st_archive alone never runs
-meristem run --root "$RUN_ROOT" --submit-fail --stage "$STAGE" \
+meristem run submit-fail --root "$RUN_ROOT" --stage "$STAGE" \
     --cime-job-id "$RUN_JOB_ID" --cime-job-id "$FINAL_JOB_ID"
 {% else %}
-meristem run --root "$RUN_ROOT" --advance --stage "$STAGE"
+meristem run advance --root "$RUN_ROOT" --stage "$STAGE"
 {% endif %}
 
 echo "=== Setup complete: $(date) ==="
