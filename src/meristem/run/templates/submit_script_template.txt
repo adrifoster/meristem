@@ -15,7 +15,7 @@
 {% endif %}
 {{ extra }}
 
-set -euo pipefail
+set -eEuo pipefail
 
 {# meristem is already shell-quoted by meristem_cmd(); don't shquote it again #}
 # export so child shells (bash -c commands, setup scripts) can call meristem too
