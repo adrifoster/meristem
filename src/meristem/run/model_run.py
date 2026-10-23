@@ -269,7 +269,7 @@ class ModelRun:
         every later job (including the advance and fail jobs) along with them.
 
         Known gaps (the stage is reported lost while its CIME run is going):
-        a setup job killed between case.submit and --submit-advance, and stages
+        a setup job killed between case.submit and submit-advance, and stages
         submitted before advance/fail job IDs were recorded (old state files).
 
         Args:
@@ -732,7 +732,7 @@ class ModelRun:
         The script:
         1. Runs the user's setup script (creates/configures/builds the CIME case)
         2. Submits the CIME case, captures its final PBS job ID
-        3. Calls meristem run --submit-advance, which writes and submits the
+        3. Calls meristem run submit-advance, which writes and submits the
              advance script in Python with the CIME job ID already baked in
 
         Args:
