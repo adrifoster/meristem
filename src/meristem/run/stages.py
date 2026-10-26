@@ -10,6 +10,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 
+from meristem.utils import to_absolute_path
+
 _WALLTIME_RE = re.compile(r"^\d+(?::\d+)*$")
 _MEMORY_RE = re.compile(r"^\d+(\.\d+)?(B|KB|MB|GB|TB)$", re.IGNORECASE)
 
@@ -358,12 +360,14 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         if self.script is not None and not self.script:
             raise ValueError(f"stage {self.name!r}: script must not be empty.")
 
-        # __setattr__ is required because the dataclass is frozen
-        if self.script is not None:
-            object.__setattr__(self, "script", Path(self.script))
-
-        if self.case_root is not None:
-            object.__setattr__(self, "case_root", Path(self.case_root))
+        # must be absolute because they're used in PBS jobs, which don't run
+        # from the current directory. __setattr__ is required because the
+        # dataclass is frozen
+        for name in ("script", "case_root"):
+            path = to_absolute_path(
+                name, getattr(self, name), where=f" for stage {self.name!r}"
+            )
+            object.__setattr__(self, name, path)
 
         _validate_walltime(self.walltime)
 
@@ -391,17 +395,11 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         Raises:
             ValueError: if there's neither a script nor a command to run
             ValueError: if the script path does not exist
-            ValueError: if case_root is not an absolute path
         """
         if not self.script and not self.command:
             raise ValueError(f"stage {self.name!r} has no setup script.")
         if self.script and not self.script.exists():
             raise ValueError(f"cannot open script {self.script!r}.")
-        if self.case_root is not None and not self.case_root.is_absolute():
-            raise ValueError(
-                f"case_root {str(self.case_root)!r} for stage {self.name!r} "
-                "must be an absolute path."
-            )
 
     def to_dict(self) -> dict:
         """Serialize configuration fields to a plain dictionary"""

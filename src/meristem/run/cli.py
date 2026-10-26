@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-CLI for a single CLM ModelRun (the `meristem run` command).
+CLI for a single ModelRun (the `meristem run` command).
 
-First-time setup: meristem run --create --config run.yaml
+First-time setup: meristem run create --config run.yaml
 
 All other commands (many called automatically by pipeline):
-    meristem run --root /path/to/run --submit [--dry-run]
-    meristem run --root /path/to/run --submit-advance --stage spinup_ad --cime-job-id 2003.desched1
-    meristem run --root /path/to/run --submit-fail --stage spinup_ad \
+    meristem run submit --root /path/to/run [--dry-run] [--debug]
+    meristem run submit-advance --root /path/to/run --stage spinup_ad --cime-job-id 2003.desched1
+    meristem run submit-fail --root /path/to/run --stage spinup_ad \
         --cime-job-id 2002.desched1 --cime-job-id 2003.desched1
-    meristem run --root /path/to/run --advance --stage spinup_ad
-    meristem run --root /path/to/run --fail --stage spinup_ad
-    meristem run --root /path/to/run --retry [--stage spinup_ad] [--skip-script] [--lost]
-    meristem run --root /path/to/run --print-status
-    meristem run --root /path/to/run --check
+    meristem run advance --root /path/to/run --stage spinup_ad
+    meristem run fail --root /path/to/run --stage spinup_ad
+    meristem run retry --root /path/to/run [--stage spinup_ad] [--skip-script] [--lost]
+    meristem run status --root /path/to/run
 """
 
 import argparse
@@ -22,7 +21,7 @@ from pathlib import Path
 
 from .model_run import ModelRun
 
-# exit code from --check when a stage is lost (1 is a runtime error, 2 an argument error)
+# exit code from status when a stage is lost (1 is a runtime error, 2 an argument error)
 EXIT_LOST = 3
 
 
@@ -34,134 +33,131 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="meristem run",
-        description="Drive a single CLM ModelRun",
+        description="Drive a single ModelRun",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    actions = parser.add_mutually_exclusive_group(required=True)
-    actions.add_argument(
-        "--create",
-        action="store_true",
-        help="Initialize a new run from a YAML config (use with --config)",
+
+    # parent parsers
+
+    # debug command, used by all subcommands
+    debug = argparse.ArgumentParser(add_help=False)
+    debug.add_argument(
+        "--debug", action="store_true", help="Show the full traceback on errors."
     )
-    actions.add_argument(
-        "--submit", action="store_true", help="Submit the first stage."
-    )
-    actions.add_argument(
-        "--submit-advance",
+
+    # all subcommands (except create) use this
+    root = argparse.ArgumentParser(add_help=False)
+    root.add_argument("--root", required=True, help="Run root directory.")
+
+    # dry-run command, used by submit, submit-advance, submit-fail, advance, and retry
+    dry_run = argparse.ArgumentParser(add_help=False)
+    dry_run.add_argument(
+        "--dry-run",
         action="store_true",
-        help="Write and submit the advance job (use with --stage and --cime-job-id)",
+        help="Write job scripts but don't submit them with qsub.",
     )
-    actions.add_argument(
-        "--submit-fail",
-        action="store_true",
-        help="Write and submit the fail job (use with --stage and --cime-job-id)",
+
+    # create subparsers
+    subparsers = parser.add_subparsers(
+        dest="command", metavar="COMMAND", help="Available subcommands.", required=True
     )
-    actions.add_argument(
-        "--advance",
-        action="store_true",
-        help="Mark stage done and submit the next stage",
+
+    # meristem run create CONFIG [--debug]
+    create = subparsers.add_parser(
+        "create",
+        parents=[debug],
+        help="Initialize a new run from a YAML config",
     )
-    actions.add_argument("--fail", action="store_true", help="Mark stage as failed")
-    actions.add_argument(
-        "--retry",
-        action="store_true",
-        help="Reset and resubmit a pending or failed stage",
+    create.add_argument("--config", required=True, help="Path to run.yaml")
+    create.set_defaults(handler=cmd_create)
+
+    # meristem run submit --root R [--dry-run] [--debug]
+    submit = subparsers.add_parser(
+        "submit",
+        parents=[debug, root, dry_run],
+        help="Kick off the first stage.",
     )
-    actions.add_argument("--print-status", action="store_true", help="Print run status")
-    actions.add_argument(
-        "--check",
+    submit.set_defaults(handler=cmd_submit)
+
+    # meristem run submit-advance --root R --stage S --cime-job-id ID [--debug] [--dry-run]
+    submit_advance = subparsers.add_parser(
+        "submit-advance",
+        parents=[debug, root, dry_run],
+        help="Write and submit the advance job.",
+    )
+    submit_advance.add_argument("--stage", required=True, help="Stage name.")
+    submit_advance.add_argument(
+        "--cime-job-id",
+        required=True,
+        help="CIME job scheduler ID.",
+    )
+    submit_advance.set_defaults(handler=cmd_submit_advance)
+
+    # meristem run submit-fail --root R --stage S --cime-job-id ID [--debug] [--dry-run]
+    submit_fail = subparsers.add_parser(
+        "submit-fail",
+        parents=[debug, root, dry_run],
+        help="Write and submit the fail job.",
+    )
+    submit_fail.add_argument("--stage", required=True, help="Stage name.")
+    submit_fail.add_argument(
+        "--cime-job-id",
+        required=True,
+        action="append",
+        help="CIME job scheduler ID.",
+    )
+    submit_fail.set_defaults(handler=cmd_submit_fail)
+
+    # meristem run advance --root R --stage S [--debug] [--dry-run]
+    advance = subparsers.add_parser(
+        "advance",
+        parents=[debug, root, dry_run],
+        help="Mark stage done and submit the next stage.",
+    )
+    advance.add_argument("--stage", required=True, help="Stage name.")
+    advance.set_defaults(handler=cmd_advance)
+
+    # meristem run fail --root R --stage S [--debug]
+    fail = subparsers.add_parser(
+        "fail", parents=[debug, root], help="Mark stage as failed."
+    )
+    fail.add_argument("--stage", required=True, help="Stage name.")
+    fail.set_defaults(handler=cmd_fail)
+
+    # meristem run retry --root R [--stage S] [--debug] [--dry-run] [--skip-script] [--lost]
+    retry = subparsers.add_parser(
+        "retry",
+        parents=[debug, root, dry_run],
+        help="Reset and resubmit a pending or failed stage.",
+    )
+    retry.add_argument("--stage", required=False, help="Optional stage name.")
+    retry.add_argument(
+        "--skip-script",
         action="store_true",
+        help="Resubmit without re-running the setup script",
+    )
+    retry.add_argument(
+        "--lost",
+        action="store_true",
+        help=(
+            "Retry a submitted stage that is lost (none of its jobs "
+            "are still queued or running; see meristem run status)"
+        ),
+    )
+    retry.set_defaults(handler=cmd_retry)
+
+    # meristem run status --root R [--debug]
+    status = subparsers.add_parser(
+        "status",
+        parents=[debug, root],
         help=(
             "Query the scheduler and print run status, showing lost stages "
             f"(changes nothing; exits {EXIT_LOST} if a stage is lost)"
         ),
     )
+    status.set_defaults(handler=cmd_status)
 
-    parser.add_argument("--config", help="Path to run.yaml (required with --create)")
-    parser.add_argument(
-        "--root", help="Run root directory (required for all other actions)"
-    )
-    parser.add_argument("--stage", help="Stage name")
-    parser.add_argument(
-        "--cime-job-id",
-        action="append",
-        help=(
-            "CIME PBS job ID (required with --submit-advance and --submit-fail). "
-            "Repeat with --submit-fail to submit one fail job per CIME job"
-        ),
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Write job scripts but don't submit them with qsub",
-    )
-    parser.add_argument(
-        "--skip-script",
-        action="store_true",
-        help="With --retry: resubmit without re-running the setup script",
-    )
-    parser.add_argument(
-        "--lost",
-        action="store_true",
-        help=(
-            "With --retry: retry a submitted stage that is lost (none of its jobs "
-            "are still queued or running; see --check)"
-        ),
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Show the full traceback on errors (useful when reporting bugs)",
-    )
     return parser
-
-
-def validate_args(  # pylint: disable=too-many-branches
-    args: argparse.Namespace, parser: argparse.ArgumentParser
-):
-    """Validate argument combinations.
-
-    Calls parser.error() on failure, which prints usage and exits with code 2
-
-    Args:
-        args (argparse.Namespace): parsed namespace from argparse
-        parser (argparse.ArgumentParser): ArgumentParser
-    """
-    if args.create:
-        if not args.config:
-            parser.error("--config is required with --create")
-        return
-
-    # --root is required for all non-create actions
-    if not args.root:
-        parser.error("--root is required")
-
-    # per-action checks for actions that need additional arguments
-    if args.submit_advance:
-        if not args.stage:
-            parser.error("--stage is required with --submit-advance")
-        if not args.cime_job_id:
-            parser.error("--cime-job-id is required with --submit-advance")
-        if len(args.cime_job_id) > 1:
-            parser.error("--cime-job-id can only be given once with --submit-advance")
-
-    if args.submit_fail:
-        if not args.stage:
-            parser.error("--stage is required with --submit-fail")
-        if not args.cime_job_id:
-            parser.error("--cime-job-id is required with --submit-fail")
-
-    if args.advance and not args.stage:
-        parser.error("--stage is required with --advance")
-
-    if args.fail and not args.stage:
-        parser.error("--stage is required with --fail")
-
-    if args.skip_script and not args.retry:
-        parser.error("--skip-script only to be used with --retry")
-
-    if args.lost and not args.retry:
-        parser.error("--lost only to be used with --retry")
 
 
 def _print_job_id(label: str, job_id: str | None) -> None:
@@ -175,72 +171,136 @@ def _print_job_id(label: str, job_id: str | None) -> None:
         print(f"{label}: {job_id}")
 
 
-def dispatch(args: argparse.Namespace) -> int:
-    """Execute requested action and return an exit code
+def cmd_create(args: argparse.Namespace) -> int:
+    """Execute create action and return a successful exit code
 
     Args:
         args (argparse.Namespace): parsed namespace from argparse
 
     Returns:
-        int: 0 on success, EXIT_LOST if --check found a lost stage
+        int: 0 on success
     """
-    if args.create:
-        run = ModelRun.create(args.config)
-        print(f"Initialised run '{run.run_id}' at {run.root}")
-        print(f"Next step:  meristem run --root {run.root} --submit")
-        return 0
+    run = ModelRun.create(args.config)
+    print(f"Initialised run '{run.run_id}' at {run.root}")
+    print(f"Next step:  meristem run submit --root {run.root}")
+    return 0
 
-    # all remaining actions require an existing run
+
+def cmd_submit(args: argparse.Namespace) -> int:
+    """Execute submit action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
     run = ModelRun.load(Path(args.root))
+    _print_job_id("Submitted", run.submit(dry_run=args.dry_run))
+    return 0
 
-    if args.print_status:
-        print(run.format_status())
 
-    elif args.check:
-        lost = run.lost_stages()
-        print(run.format_status(lost=lost))
-        for name in lost:
-            print(
-                f"Stage {name!r} is lost. Retry with: "
-                f"meristem run --root {run.root} --retry --stage {name} --lost"
-            )
-        if lost:
-            return EXIT_LOST
+def cmd_submit_advance(args: argparse.Namespace) -> int:
+    """Execute submit-advance action and return a successful exit code
 
-    elif args.submit:
-        _print_job_id("Submitted", run.submit(dry_run=args.dry_run))
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
 
-    elif args.submit_advance:
-        _print_job_id(
-            "Advance job submitted",
-            run.submit_advance(args.stage, args.cime_job_id[0], dry_run=args.dry_run),
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    _print_job_id(
+        "Advance job submitted",
+        run.submit_advance(args.stage, args.cime_job_id, dry_run=args.dry_run),
+    )
+    return 0
+
+
+def cmd_submit_fail(args: argparse.Namespace) -> int:
+    """Execute submit-fail action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    job_ids = run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run)
+    print("\n".join(f"Fail job submitted: {job_id}" for job_id in job_ids))
+    return 0
+
+
+def cmd_advance(args: argparse.Namespace) -> int:
+    """Execute advance action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    _print_job_id("Next stage submitted", run.advance(args.stage, dry_run=args.dry_run))
+    return 0
+
+
+def cmd_fail(args: argparse.Namespace) -> int:
+    """Execute fail action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    run.fail(args.stage)
+    return 0
+
+
+def cmd_retry(args: argparse.Namespace) -> int:
+    """Execute retry action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    _print_job_id(
+        "Resubmitted",
+        run.retry(
+            args.stage,
+            dry_run=args.dry_run,
+            skip_script=args.skip_script,
+            lost=args.lost,
+        ),
+    )
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Execute retry action and return an exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success, EXIT_LOST if any lost stages
+    """
+    run = ModelRun.load(Path(args.root))
+    lost = run.lost_stages()
+    print(run.format_status(lost=lost))
+    for name in lost:
+        print(
+            f"Stage {name!r} is lost. Retry with: "
+            f"meristem run retry --root {run.root} --stage {name} --lost"
         )
-
-    elif args.submit_fail:
-        job_ids = run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run)
-        print("\n".join(f"Fail job submitted: {job_id}" for job_id in job_ids))
-
-    elif args.advance:
-        _print_job_id(
-            "Next stage submitted", run.advance(args.stage, dry_run=args.dry_run)
-        )
-
-    elif args.fail:
-        run.fail(args.stage)
-
-    elif args.retry:
-        _print_job_id(
-            "Resubmitted",
-            run.retry(
-                args.stage,
-                dry_run=args.dry_run,
-                skip_script=args.skip_script,
-                lost=args.lost,
-            ),
-        )
-
-    else:
-        raise RuntimeError("Unhandled action — this is a bug in dispatch()")
+    if lost:
+        return EXIT_LOST
     return 0
 
 
@@ -252,14 +312,13 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         int: exit code, 0 on success, 1 on runtime error, 2 on argument error,
-            EXIT_LOST (3) if --check found a lost stage
+            EXIT_LOST (3) if status found a lost stage
     """
     parser = build_parser()
     args = parser.parse_args(argv)
-    validate_args(args, parser)
 
     try:
-        return dispatch(args)
+        return args.handler(args)
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
         return 130

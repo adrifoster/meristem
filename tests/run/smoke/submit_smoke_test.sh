@@ -35,12 +35,12 @@ echo "Config: ${CONFIG}"
 echo "Root:   ${SMOKE_ROOT}"
 echo ""
 
-meristem run --create --config "${CONFIG}"
-meristem run --root "${SMOKE_ROOT}" --submit
+meristem run create --config "${CONFIG}"
+meristem run submit --root "${SMOKE_ROOT}"
 
 echo ""
 echo "Smoke test submitted. Check status with:"
-echo "  meristem run --root ${SMOKE_ROOT} --print-status"
+echo "  meristem run status --root ${SMOKE_ROOT}"
 echo ""
 echo "When complete, verify results with:"
 echo "  python ${SMOKE_DIR}/check_smoke_test.py ${SMOKE_ROOT}"

@@ -92,6 +92,15 @@ def test_init_relative_path_raises(tmp_path, name):
         _config(tmp_path, **{name: "relative/dir"})
 
 
+def test_from_dict_relative_member_stage_script_raises(ensemble_config_dict):
+    """Test that a relative member stage script is rejected when the config is read"""
+    ensemble_config_dict["member_stages"][0]["script"] = "rel_script.sh"
+    with pytest.raises(
+        ValueError, match="script 'rel_script.sh' for stage .* must be an absolute path"
+    ):
+        EnsembleConfig.from_dict(ensemble_config_dict)
+
+
 def test_init_output_root_none_allowed(tmp_path):
     """Test that an unset output_root isn't checked for being absolute"""
     assert _config(tmp_path, output_root=None).output_root is None
@@ -117,11 +126,17 @@ def test_init_valid_ensemble_id(tmp_path, ensemble_id):
     assert _config(tmp_path, ensemble_id=ensemble_id).ensemble_id == ensemble_id
 
 
-@pytest.mark.parametrize("ensemble_id", ["", "my ens", "ens/1", "ens.1", "ens$"])
+@pytest.mark.parametrize("ensemble_id", ["my ens", "ens/1", "ens.1", "ens$"])
 def test_init_invalid_ensemble_id_raises(tmp_path, ensemble_id):
-    """Test that an ensemble_id with other characters (or empty) raises"""
+    """Test that an ensemble_id with other characters raises"""
     with pytest.raises(ValueError, match="invalid characters"):
         _config(tmp_path, ensemble_id=ensemble_id)
+
+
+def test_init_empty_ensemble_id_raises(tmp_path):
+    """Test that an empty ensemble_id says it's empty"""
+    with pytest.raises(ValueError, match=r"^ensemble_id must not be empty\.$"):
+        _config(tmp_path, ensemble_id="")
 
 
 @pytest.mark.parametrize("ensemble_id", [42, 1.5, None, ["ens"]])
@@ -183,6 +198,27 @@ def test_init_no_cime_stage_raises(tmp_path):
     """Test that a no_cime member stage raises"""
     with pytest.raises(ValueError, match="no_cime is not allowed"):
         _config(tmp_path, member_stages=(_stage(no_cime=True),))
+
+
+def test_init_case_root_stage_raises(tmp_path):
+    """Test that a member stage can't set case_root, since the ensemble puts
+    each member's case under case_dir
+    """
+    stage = _stage("ad", case_root="/path/to/case")
+    with pytest.raises(
+        ValueError, match="member stage 'ad': case_root is not allowed; .* case_dir"
+    ):
+        _config(tmp_path, member_stages=(stage,))
+
+
+def test_init_post_command_stage_raises(tmp_path):
+    """Test that a member stage can't set a post_command, since the ensemble sets it"""
+    stage = _stage("ad", post_command="echo hi")
+    with pytest.raises(
+        ValueError,
+        match="member stage 'ad': post_command is not allowed; .* finalize",
+    ):
+        _config(tmp_path, member_stages=(stage,))
 
 
 def test_init_empty_members_raises(tmp_path):
@@ -278,11 +314,35 @@ def test_from_dict_missing_required_key_raises(ensemble_config_dict, key):
 
 
 @pytest.mark.parametrize("key", ["ensemble_id", "root", "member_stages", "paramgen"])
-@pytest.mark.parametrize("empty", ["", None, [], {}])
-def test_from_dict_empty_required_key_raises(ensemble_config_dict, key, empty):
-    """Test that a required key present but empty counts as missing"""
-    ensemble_config_dict[key] = empty
+def test_from_dict_null_required_key_raises(ensemble_config_dict, key):
+    """Test that a required key that's null (e.g. a blank "root:") counts as missing"""
+    ensemble_config_dict[key] = None
     with pytest.raises(ValueError, match=f"missing required key {key}"):
+        EnsembleConfig.from_dict(ensemble_config_dict)
+
+
+@pytest.mark.parametrize(
+    "key, empty, match",
+    [
+        ("ensemble_id", "", r"^ensemble_id must not be empty\.$"),
+        ("ensemble_id", [], "ensemble_id must be a string"),
+        ("root", "", r"^root must not be empty\.$"),
+        ("root", [], r"^root must be a path, got list \[\]\.$"),
+        ("root", {}, r"^root must be a path, got dict \{\}\.$"),
+        ("member_stages", [], r"^member_stages must not be empty\.$"),
+        ("member_stages", "", r"^member_stages must be a list\.$"),
+        ("member_stages", {}, r"^member_stages must be a list\.$"),
+        ("paramgen", "", "paramgen must be a mapping"),
+        ("paramgen", [], "paramgen must be a mapping"),
+        ("paramgen", {}, "missing required key (dir|prefix) .*paramgen"),
+    ],
+)
+def test_from_dict_empty_required_key_raises(ensemble_config_dict, key, empty, match):
+    """Test that a required key present but empty says what's wrong with it,
+    rather than that it's missing
+    """
+    ensemble_config_dict[key] = empty
+    with pytest.raises(ValueError, match=match):
         EnsembleConfig.from_dict(ensemble_config_dict)
 
 
@@ -310,11 +370,39 @@ def test_from_dict_missing_paramgen_key_raises(ensemble_config_dict, key):
 
 
 @pytest.mark.parametrize("key", ["dir", "prefix"])
-def test_from_dict_empty_paramgen_key_raises(ensemble_config_dict, key):
-    """Test that a required paramgen key present but empty counts as missing"""
-    ensemble_config_dict["paramgen"][key] = ""
+def test_from_dict_null_paramgen_key_raises(ensemble_config_dict, key):
+    """Test that a required paramgen key that's null counts as missing"""
+    ensemble_config_dict["paramgen"][key] = None
     with pytest.raises(ValueError, match=f"missing required key {key}.*paramgen"):
         EnsembleConfig.from_dict(ensemble_config_dict)
+
+
+@pytest.mark.parametrize(
+    "key, match",
+    [
+        ("dir", r"^paramgen_dir must not be empty\.$"),
+        ("prefix", r"^paramgen prefix must not be empty\.$"),
+    ],
+)
+def test_from_dict_empty_paramgen_key_raises(ensemble_config_dict, key, match):
+    """Test that a required paramgen key present but empty says what's wrong"""
+    ensemble_config_dict["paramgen"][key] = ""
+    with pytest.raises(ValueError, match=match):
+        EnsembleConfig.from_dict(ensemble_config_dict)
+
+
+@pytest.mark.parametrize(
+    "config, match",
+    [
+        (None, r"^ensemble config is empty\.$"),
+        (["a", "b"], r"^ensemble config must be a mapping .*, got list\.$"),
+        ("text", r"^ensemble config must be a mapping .*, got str\.$"),
+    ],
+)
+def test_from_dict_not_a_mapping_raises(config, match):
+    """Test that a config that isn't a mapping raises a ValueError"""
+    with pytest.raises(ValueError, match=match):
+        EnsembleConfig.from_dict(config)
 
 
 def test_from_dict_unknown_paramgen_key_raises(ensemble_config_dict):
@@ -514,6 +602,15 @@ def test_from_yaml_validation_error_propagates(tmp_path, ensemble_config_dict):
     del ensemble_config_dict["base_case"]
     path = _write_yaml(tmp_path / "ensemble.yaml", ensemble_config_dict)
     with pytest.raises(ValueError, match="missing required key base_case"):
+        EnsembleConfig.from_yaml(path)
+
+
+@pytest.mark.parametrize("text", ["", "# only a comment\n"])
+def test_from_yaml_empty_file_raises(tmp_path, text):
+    """Test that an empty YAML file (or one with only comments) says it's empty"""
+    path = tmp_path / "ensemble.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=r"^ensemble config is empty\.$"):
         EnsembleConfig.from_yaml(path)
 
 

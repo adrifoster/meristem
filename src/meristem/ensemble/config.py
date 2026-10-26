@@ -1,6 +1,7 @@
 """Dataclasses for reading and validating ensemble YAML"""
 
 from __future__ import annotations
+from collections import Counter
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import re
 import yaml
 
 from meristem.run.stages import StageConfig
+from meristem.utils import to_absolute_path
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
@@ -34,40 +36,24 @@ _OPTIONAL_PARAMGEN_KEYS = frozenset({"members"})
 _PARAMFILE_KEYS = frozenset({"paramfile", "fates_paramfile"})
 
 
-def _to_absolute_path(name: str, path: Path | str | None) -> Path | None:
-    """Convert a path field to a Path, checking it's absolute
-
-    Args:
-        name (str): field name, for the error message
-        path (Path | str | None): path; None (an unset optional field) passes
-
-    Raises:
-        ValueError: if path is relative, hinting at an unset environment
-        variable if it still contains a $
-
-    Returns:
-        Path | None: path as a Path, or None
-    """
-    if path is None:
-        return None
-    path = Path(path)
-    if not path.is_absolute():
-        hint = " (is an environment variable unset?)" if "$" in str(path) else ""
-        raise ValueError(f"{name} {str(path)!r} must be an absolute path{hint}.")
-    return path
-
-
 def _validate_member_stage(stage: StageConfig) -> None:
     """Check a member stage can be run by the ensemble
 
     Raises:
         ValueError: if the stage sets no_cime (every member stage runs a CIME
-        case) or command (the ensemble sets it to meristem ensemble prepare)
+        case), case_root (the ensemble puts each case under case_dir), command
+        (the ensemble sets it to meristem ensemble prepare) or post_command
+        (the ensemble sets it to meristem ensemble finalize)
     """
     if stage.no_cime:
         raise ValueError(
             f"member stage {stage.name!r}: no_cime is not allowed; "
             "every member stage runs a CIME case."
+        )
+    if stage.case_root is not None:
+        raise ValueError(
+            f"member stage {stage.name!r}: case_root is not allowed; each member's "
+            "case is put under case_dir."
         )
     if stage.command:
         raise ValueError(
@@ -75,9 +61,33 @@ def _validate_member_stage(stage: StageConfig) -> None:
             "runs meristem ensemble prepare for each stage, then the stage's "
             "script (if any)."
         )
-
     if stage.post_command:
-        raise ValueError(f"member stage {stage.name!r}: post_command is not allowed")
+        raise ValueError(
+            f"member stage {stage.name!r}: post_command is not allowed; the "
+            "ensemble runs meristem ensemble finalize after the stage's script."
+        )
+
+
+def _validate_top_level_keys(config) -> None:
+    """Check that the config is a mapping with every required key (absent or
+    null counts as missing) and no unknown keys
+
+    Raises:
+        ValueError: if any check fails
+    """
+    if config is None:
+        raise ValueError("ensemble config is empty.")
+    if not isinstance(config, dict):
+        raise ValueError(
+            "ensemble config must be a mapping of keys to values, "
+            f"got {type(config).__name__}."
+        )
+    for key in _REQUIRED_KEYS:
+        if config.get(key) is None:
+            raise ValueError(f"missing required key {key} in ensemble config.")
+    unknown = set(config) - _REQUIRED_KEYS - _OPTIONAL_KEYS
+    if unknown:
+        raise ValueError(f"unknown key(s) {sorted(unknown)} in ensemble config.")
 
 
 def _validate_members(members) -> None:
@@ -94,7 +104,7 @@ def _validate_members(members) -> None:
             f"members must be non-empty strings, got {bad}; "
             "quote numeric member names in the YAML."
         )
-    duplicates = sorted({m for m in members if members.count(m) > 1})
+    duplicates = sorted(m for m, n in Counter(members).items() if n > 1)
     if duplicates:
         raise ValueError(f"members must be unique, got duplicates {duplicates}.")
 
@@ -138,6 +148,8 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                 f"ensemble_id must be a string, got {type(self.ensemble_id).__name__} "
                 f"{self.ensemble_id!r}; quote it in the YAML."
             )
+        if not self.ensemble_id:
+            raise ValueError("ensemble_id must not be empty.")
         if not _ID_RE.match(self.ensemble_id):
             raise ValueError(
                 f"ensemble_id {self.ensemble_id!r} contains invalid characters. "
@@ -166,7 +178,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
         # roots, saved parameter file paths), which don't run from the current
         # directory. __setattr__ is required because the dataclass is frozen
         for name in ("root", "base_case", "case_dir", "paramgen_dir", "output_root"):
-            path = _to_absolute_path(name, getattr(self, name))
+            path = to_absolute_path(name, getattr(self, name))
             object.__setattr__(self, name, path)
 
         object.__setattr__(self, "member_stages", tuple(self.member_stages))
@@ -205,21 +217,20 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     def from_dict(cls, config: dict) -> EnsembleConfig:
         """Construct an EnsembleConfig from a config dictionary
 
+        A required key counts as missing if it's absent or null; one that's
+        present but empty (e.g. member_stages: []) is left to __post_init__,
+        which says what's wrong with it
+
         Args:
             config (dict): parsed ensemble YAML
 
         Returns:
             EnsembleConfig: EnsembleConfig instance
         Raises:
-            ValueError: if keys are missing, unknown, or malformed
+            ValueError: if config isn't a mapping, or keys are missing, unknown,
+                or malformed
         """
-        input_dict = dict(config)
-        for key in _REQUIRED_KEYS:
-            if not input_dict.get(key):
-                raise ValueError(f"missing required key {key} in ensemble config.")
-        unknown = set(config) - _REQUIRED_KEYS - _OPTIONAL_KEYS
-        if unknown:
-            raise ValueError(f"unknown key(s) {sorted(unknown)} in ensemble config.")
+        _validate_top_level_keys(config)
 
         paramgen = config["paramgen"]
         if not isinstance(paramgen, dict):
@@ -228,7 +239,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                 f"{sorted(_REQUIRED_PARAMGEN_KEYS)}, got {paramgen!r}."
             )
         for key in _REQUIRED_PARAMGEN_KEYS:
-            if not paramgen.get(key):
+            if paramgen.get(key) is None:
                 raise ValueError(
                     f"missing required key {key} in ensemble config subdict paramgen"
                 )

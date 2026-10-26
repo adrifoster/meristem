@@ -1,4 +1,4 @@
-"""Fixtures shared across all meristem.run tests."""
+"""Fixtures shared across all meristem tests."""
 
 from pathlib import Path
 import pytest

@@ -76,7 +76,7 @@ def test_submit_script_trap_references_run_root(created_run):
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"RUN_ROOT={created_run.root}\n" in content
-    assert 'trap \'meristem run --root "$RUN_ROOT"' in content
+    assert 'trap \'meristem run fail --root "$RUN_ROOT"' in content
 
 
 def test_submit_script_trap_references_stage_name(created_run):
@@ -84,7 +84,7 @@ def test_submit_script_trap_references_stage_name(created_run):
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"STAGE={created_run.stages[0].config.name}\n" in content
-    assert '--fail --stage "$STAGE"\' ERR' in content
+    assert '--stage "$STAGE"\' ERR' in content
 
 
 def test_submit_script_correct_script(created_run):
@@ -353,7 +353,7 @@ def test_submit_skip_script_omits_command_and_script(command_and_script_run):
     assert _setup_calls(job_file) == []
 
 
-@pytest.mark.parametrize("command", ["--submit-advance", "--submit-fail"])
+@pytest.mark.parametrize("command", ["submit-advance", "submit-fail"])
 def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
     Test that ModelRun.submit() creates a PBS file with the correct meristem run commands
@@ -361,11 +361,13 @@ def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
     created_run.submit()
     job_file = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
-    assert f'meristem run --root "$RUN_ROOT" {command} --stage "$STAGE"' in job_file
+    assert f'meristem run {command} --root "$RUN_ROOT" --stage "$STAGE"' in job_file
 
 
 def _run_cime_block(
-    run: ModelRun, job_ids: str
+    run: ModelRun,
+    job_ids: str,
+    fail_on=None,
 ) -> tuple[subprocess.CompletedProcess, Path]:
     """Run the setup script's CIME block (cd case root through the meristem
     calls) against stub case.submit and xmlquery, with meristem recording its
@@ -390,11 +392,17 @@ def _run_cime_block(
     start = next(i for i, line in enumerate(lines) if line.startswith("cd "))
     end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
     calls = run.root / "meristem_calls.txt"
+
+    set_line = next(line for line in lines if line.startswith("set -e"))
+    trap_line = next(line for line in lines if line.startswith("trap "))
+    fail_clause = f'if [[ "$*" == *{fail_on}* ]]; then false; fi; ' if fail_on else ""
+
     script = "\n".join(
         [
-            "set -euo pipefail",
+            set_line,
             "RUN_ROOT=root STAGE=stage",
-            f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; }}',
+            f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; {fail_clause}}}',
+            trap_line,
             *lines[start:end],
         ]
     )
@@ -441,8 +449,8 @@ def test_submit_script_cime_block_uses_case_run_and_archive_ids(
 
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
     assert calls == [
-        f"run --root root --submit-advance --stage stage --cime-job-id {advance_on}",
-        f"run --root root --submit-fail --stage stage --cime-job-id {fail_on}",
+        f"run submit-advance --root root --stage stage --cime-job-id {advance_on}",
+        f"run submit-fail --root root --stage stage --cime-job-id {fail_on}",
     ]
 
 
@@ -471,7 +479,21 @@ def test_submit_script_cime_block_without_case_run_id_fails(created_run):
     result, _ = _run_cime_block(created_run, "")
     assert result.returncode != 0
     assert "No case.run job ID" in result.stderr
-    assert not (created_run.root / "meristem_calls.txt").exists()
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls == ["run fail --root root --stage stage"]
+
+
+def test_submit_script_cime_block_runs_fail_when_advance_errors(created_run):
+    """Test that a failing submit-advance fires the ERR trap"""
+    created_run.submit()
+    result, _ = _run_cime_block(
+        created_run,
+        "case.run:100.desched1, case.st_archive:101.desched1",
+        fail_on="submit-advance",
+    )
+    assert result.returncode != 0
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls[-1] == "run fail --root root --stage stage"
 
 
 def test_submit_stage_status_set_to_submitted(created_run):

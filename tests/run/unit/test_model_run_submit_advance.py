@@ -68,7 +68,7 @@ def test_submit_advance_script_references_run_root(created_run):
     content = (
         created_run.root / f"{created_run.run_id}_spinup_ad_advance.pbs"
     ).read_text()
-    assert f"meristem run --root {created_run.root}" in content
+    assert f"meristem run advance --root {created_run.root}" in content
 
 
 def test_submit_advance_script_references_stage_name(created_run):

@@ -46,7 +46,7 @@ def test_version(capsys):
     "command,module,rest",
     [
         ("paramgen", "meristem.paramgen.cli", ["config.yaml"]),
-        ("run", "meristem.run.cli", ["--root", "/tmp/run", "--print-status"]),
+        ("run", "meristem.run.cli", ["status", "--root", "/tmp/run"]),
     ],
 )
 def test_dispatches_remaining_args_to_subcommand(mocker, command, module, rest):
@@ -61,7 +61,7 @@ def test_returns_subcommand_exit_code(mocker):
     """Test that the subcommand's exit code is returned unchanged"""
     importlib.import_module("meristem.run.cli")
     mocker.patch("meristem.run.cli.main", return_value=1)
-    assert main(["run", "--root", "/tmp/run", "--print-status"]) == 1
+    assert main(["run", "status", "--root", "/tmp/run"]) == 1
 
 
 def test_subcommand_help_reaches_subcommand_parser(capsys):
@@ -71,7 +71,8 @@ def test_subcommand_help_reaches_subcommand_parser(capsys):
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "usage: meristem run" in out
-    assert "--create" in out
+    assert "create" in out
+    assert "submit-advance" in out
 
 
 def test_run_does_not_import_paramgen(mocker):
@@ -81,5 +82,5 @@ def test_run_does_not_import_paramgen(mocker):
         del sys.modules[name]
     importlib.import_module("meristem.run.cli")
     mocker.patch("meristem.run.cli.main", return_value=0)
-    main(["run", "--root", "/tmp/run", "--print-status"])
+    main(["run", "status", "--root", "/tmp/run"])
     assert not any(m.startswith("meristem.paramgen") for m in sys.modules)
