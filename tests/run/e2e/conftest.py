@@ -21,6 +21,7 @@ def fake(tmp_path):
 @pytest.fixture
 def meristem(fake):
     """Fake meristem CLI"""
+
     def _meristem(*args):
         """Runs the meristem CLI a way a user would, but with the fake environment"""
         return subprocess.run(
@@ -37,6 +38,7 @@ def meristem(fake):
 @pytest.fixture
 def stage_script(tmp_path):
     """stage_script factory"""
+
     def _stage_script(body: str = 'fake_create_newcase "$1"', name="stage") -> Path:
         """Create a fake script for a stage
 
