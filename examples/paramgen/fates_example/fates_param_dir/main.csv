@@ -45,7 +45,6 @@ fates_turnover_fnrt,biogeochemistry,phenology,['fates_pft'],uniform,default,,,,,
 fates_stoich_nitr_1,biogeochemistry,allocation,"['fates_plant_organs', 'fates_pft']",uniform,sliced,,0,fates_plant_organs,fates_stoich_nitr,,,0.008,0.047,gN/gC,target nitrogen concentration (ratio with carbon) of organs
 fates_stoich_nitr_2,biogeochemistry,allocation,"['fates_plant_organs', 'fates_pft']",uniform,sliced,,1,fates_plant_organs,fates_stoich_nitr,,,0.008,0.047,gN/gC,target nitrogen concentration (ratio with carbon) of organs
 fates_turnover_leaf_canopy,biogeochemistry,phenology,"['fates_leafage_class', 'fates_pft']",uniform,default,,,,,,,pft,pft,yr,"Leaf longevity (ie turnover timescale) of canopy plants. For drought-deciduous PFTs, this also indicates the maximum length of the growing (i.e., leaves on) season."
-fates_turnover_leaf_ustory,biogeochemistry,phenology,"['fates_leafage_class', 'fates_pft']",uniform,default,,,,,,,pft,pft,yr,Leaf longevity (ie turnover timescale) of understory plants.
 fates_canopy_closure_thresh,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.7,0.9,unitless,tree canopy coverage at which crown area allometry changes from savanna to forest value
 fates_cohort_age_fusion_tol,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.05,0.3,unitless,fates_cohort_age_fusion_tol
 fates_cohort_size_fusion_tol,biogeochemistry,vegetation dynamics,[],uniform,default,,,,,,,0.05,0.3,unitless,fates_cohort_size_fusion_tol
