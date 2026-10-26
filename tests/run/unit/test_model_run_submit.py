@@ -365,7 +365,9 @@ def test_submit_script_correct_clm_run_submit_commands(created_run, command):
 
 
 def _run_cime_block(
-    run: ModelRun, job_ids: str, fail_on=None,
+    run: ModelRun,
+    job_ids: str,
+    fail_on=None,
 ) -> tuple[subprocess.CompletedProcess, Path]:
     """Run the setup script's CIME block (cd case root through the meristem
     calls) against stub case.submit and xmlquery, with meristem recording its
@@ -390,13 +392,11 @@ def _run_cime_block(
     start = next(i for i, line in enumerate(lines) if line.startswith("cd "))
     end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
     calls = run.root / "meristem_calls.txt"
-    
+
     set_line = next(line for line in lines if line.startswith("set -e"))
     trap_line = next(line for line in lines if line.startswith("trap "))
-    fail_clause = (
-        f'if [[ "$*" == *{fail_on}* ]]; then false; fi; ' if fail_on else ""
-    )
-    
+    fail_clause = f'if [[ "$*" == *{fail_on}* ]]; then false; fi; ' if fail_on else ""
+
     script = "\n".join(
         [
             set_line,

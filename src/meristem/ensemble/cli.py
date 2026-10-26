@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .model_ensemble import Ensemble
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="meristem ensemble",
@@ -40,7 +41,5 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_create(args):
     ensemble = Ensemble.create(args.config)
-    #print(f"Initialized run '{run.run_id}' at {run.root}")
-    #print(f"Next step:  meristem run submit --root {run.root}")
-    
-    
+    # print(f"Initialized run '{run.run_id}' at {run.root}")
+    # print(f"Next step:  meristem run submit --root {run.root}")
