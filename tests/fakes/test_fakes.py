@@ -1,5 +1,7 @@
 """Tests for fake PBS"""
 
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import subprocess
@@ -581,12 +583,12 @@ def test_case_submit(tmp_path):
 
     fake.run_until_idle()
     jobs = fake.jobs()
-    assert jobs[0]['state'] == 'F'
-    assert jobs[1]['state'] == 'F'
-    assert jobs[0]['exit'] == 0
-    assert jobs[1]['exit'] == 0
+    assert jobs[0]["state"] == "F"
+    assert jobs[1]["state"] == "F"
+    assert jobs[0]["exit"] == 0
+    assert jobs[1]["exit"] == 0
 
-    log_file = case_dir / 'runs.log'
+    log_file = case_dir / "runs.log"
     log_content = log_file.read_text(encoding="utf-8", errors="ignore")
     assert log_content.splitlines() == ["case.run mycase", "case.st_archive mycase"]
 
@@ -607,13 +609,13 @@ def test_case_submit(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "case.run:3.fakepbs, case.st_archive:4.fakepbs"
-    
-    
+
+
 def test_case_submit_fail(tmp_path):
     """Test that the injected failure into case_submit works"""
     fake = FakePbs(tmp_path / "pbs")
     case_dir = tmp_path / "mycase"
-    
+
     fake.env["FAKE_CIME"] = json.dumps({"case.submit": "fail"})
 
     subprocess.run(
@@ -621,7 +623,7 @@ def test_case_submit_fail(tmp_path):
         env=fake.env,
         check=True,
     )
-    
+
     result = subprocess.run(
         ["./case.submit", "--resubmit-immediate"],
         cwd=case_dir,
@@ -631,7 +633,7 @@ def test_case_submit_fail(tmp_path):
         text=True,
     )
     assert result.returncode == 1
-    assert 'injected' in result.stderr.strip()
+    assert "injected" in result.stderr.strip()
     assert fake.jobs() == []
 
 
@@ -639,7 +641,7 @@ def test_case_run_fail(tmp_path):
     """Test that the injected failure into case.run works"""
     fake = FakePbs(tmp_path / "pbs")
     case_dir = tmp_path / "mycase"
-    
+
     fake.env["FAKE_CIME"] = json.dumps({"case.run": "fail"})
 
     subprocess.run(
@@ -647,7 +649,7 @@ def test_case_run_fail(tmp_path):
         env=fake.env,
         check=True,
     )
-    
+
     result = subprocess.run(
         ["./case.submit", "--resubmit-immediate"],
         cwd=case_dir,
@@ -659,13 +661,13 @@ def test_case_run_fail(tmp_path):
 
     fake.run_until_idle()
     jobs = fake.jobs()
-    assert jobs[0]['state'] == 'F'
-    assert jobs[1]['state'] == 'F'
-    assert jobs[0]['exit'] == 1
-    assert jobs[1]['exit'] is None
-    assert jobs[1]['deleted'] is True
+    assert jobs[0]["state"] == "F"
+    assert jobs[1]["state"] == "F"
+    assert jobs[0]["exit"] == 1
+    assert jobs[1]["exit"] is None
+    assert jobs[1]["deleted"] is True
 
-    log_file = case_dir / 'runs.log'
+    log_file = case_dir / "runs.log"
     log_content = log_file.read_text(encoding="utf-8", errors="ignore")
     assert log_content.splitlines() == ["case.run mycase"]
 
@@ -674,7 +676,7 @@ def test_case_no_archive(tmp_path):
     """Test that the injected no_archive works"""
     fake = FakePbs(tmp_path / "pbs")
     case_dir = tmp_path / "mycase"
-    
+
     fake.env["FAKE_CIME"] = json.dumps({"no_archive": True})
 
     subprocess.run(
@@ -682,7 +684,7 @@ def test_case_no_archive(tmp_path):
         env=fake.env,
         check=True,
     )
-    
+
     result = subprocess.run(
         ["./case.submit", "--resubmit-immediate"],
         cwd=case_dir,
@@ -694,8 +696,8 @@ def test_case_no_archive(tmp_path):
 
     fake.run_until_idle()
     jobs = fake.jobs()
-    assert jobs[0]['state'] == 'F'
-    assert jobs[0]['exit'] == 0
+    assert jobs[0]["state"] == "F"
+    assert jobs[0]["exit"] == 0
 
     result = subprocess.run(
         ["./xmlquery", "--value", "JOB_IDS"],
@@ -708,12 +710,11 @@ def test_case_no_archive(tmp_path):
     assert result.stdout.strip() == "case.run:1.fakepbs"
 
 
-
 def test_case_archive_fail(tmp_path):
     """Test that blank JOB_IDS: submit succeeds, xmlquery returns an empty string"""
     fake = FakePbs(tmp_path / "pbs")
     case_dir = tmp_path / "mycase"
-    
+
     fake.env["FAKE_CIME"] = json.dumps({"st_archive": "fail"})
 
     subprocess.run(
@@ -721,7 +722,7 @@ def test_case_archive_fail(tmp_path):
         env=fake.env,
         check=True,
     )
-    
+
     result = subprocess.run(
         ["./case.submit", "--resubmit-immediate"],
         cwd=case_dir,
@@ -733,16 +734,16 @@ def test_case_archive_fail(tmp_path):
 
     fake.run_until_idle()
     jobs = fake.jobs()
-    assert jobs[0]['state'] == 'F'
-    assert jobs[1]['state'] == 'F'
-    assert jobs[0]['exit'] == 0
-    assert jobs[1]['exit'] == 1
+    assert jobs[0]["state"] == "F"
+    assert jobs[1]["state"] == "F"
+    assert jobs[0]["exit"] == 0
+    assert jobs[1]["exit"] == 1
 
-    log_file = case_dir / 'runs.log'
+    log_file = case_dir / "runs.log"
     log_content = log_file.read_text(encoding="utf-8", errors="ignore")
     assert log_content.splitlines() == ["case.run mycase", "case.st_archive mycase"]
-    
-    
+
+
 def test_xmlquery_blank_job_ids(tmp_path):
     """Test that the job_ids blank inject works"""
     fake = FakePbs(tmp_path / "pbs")

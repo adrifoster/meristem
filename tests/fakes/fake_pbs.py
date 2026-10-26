@@ -174,7 +174,9 @@ class FakePbs:
         Returns:
             Path: path to log file
         """
-        return job["log"] if job["log"] else self.spool / f"{_number(job["id"])}.log"
+        return (
+            Path(job["log"]) if job["log"] else self.spool / f"{_number(job["id"])}.log"
+        )
 
     def _run_job(self, job: dict):
         """Run the job

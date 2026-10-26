@@ -24,10 +24,10 @@ def create_newcase(case_root: Path):
         case_root (Path): path to case_root
     """
     case_root.mkdir(parents=True, exist_ok=True)
-    
+
     faults = json.loads(os.environ.get("FAKE_CIME", "{}"))
     faults_file = case_root / FAULTS_DICT_FILE
-    if not faults_file.is_file(): 
+    if not faults_file.is_file():
         faults_file.write_text(json.dumps(faults, indent=2), encoding="utf-8")
 
     for file in (
@@ -69,7 +69,7 @@ def xmlquery(case_root: Path, args: list[str]) -> int:
     """
 
     faults = _faults(case_root)
-    
+
     parser = argparse.ArgumentParser(description="Internal XML Query Parser")
     parser.add_argument("--value", action="store_true")
     parser.add_argument("key")
@@ -82,10 +82,10 @@ def xmlquery(case_root: Path, args: list[str]) -> int:
         print(f"Accepted keys: {ACCEPTED_KEYS}")
         return 1
 
-    if faults.get("job_ids") == "" and key == 'JOB_IDS':
+    if faults.get("job_ids") == "" and key == "JOB_IDS":
         print("")
         return 0
-        
+
     if not (case_root / CASE_DICT_FILE).is_file():
         print(
             f"Cannot find {CASE_DICT_FILE} in {case_root} " "Run create_newcase first"
@@ -101,14 +101,23 @@ def xmlquery(case_root: Path, args: list[str]) -> int:
     return 0
 
 
-def case_submit(case_root: Path, args: list[str]):
+def case_submit(case_root: Path, args: list[str]) -> int:
+    """Fake case_submit
+
+    Args:
+        case_root (Path): path to case root
+        args (list[str]): input arguments (ignored here)
+
+    Returns:
+        int: return code
+    """
 
     faults = _faults(case_root)
-    
-    if faults.get('case.submit') == 'fail':
+
+    if faults.get("case.submit") == "fail":
         print(f"case_submit: injected failure for {case_root}", file=sys.stderr)
         return 1
-    
+
     parser = argparse.ArgumentParser(description="Internal case_submit parser")
     _, _ = parser.parse_known_args(args)
 
@@ -120,21 +129,27 @@ def case_submit(case_root: Path, args: list[str]):
 
     run_log = case_root / RUN_LOG_FILE
 
-    run_fail = faults.get('case.run') == 'fail'
-    run_script = _write_job_script(case_root, "case.run", run_log, exit_nonzero=run_fail)
+    run_fail = faults.get("case.run") == "fail"
+    run_script = _write_job_script(
+        case_root, "case.run", run_log, exit_nonzero=run_fail
+    )
 
     job_ids = [f"case.run:{_qsub(run_script)}"]
     if not faults.get("no_archive"):
         run_id = job_ids[0].split(":", 1)[1]
 
-        archive_fail = faults.get('st_archive') == 'fail'
-        archive_script = _write_job_script(case_root, "case.st_archive", run_log,
-                                           exit_nonzero=archive_fail)
+        archive_fail = faults.get("st_archive") == "fail"
+        archive_script = _write_job_script(
+            case_root, "case.st_archive", run_log, exit_nonzero=archive_fail
+        )
         job_ids.append(f"case.st_archive:{_qsub(archive_script, depend=run_id)}")
-    
+
     case_dict = json.loads((case_root / CASE_DICT_FILE).read_text(encoding="utf-8"))
     case_dict["JOB_IDS"] = ", ".join(job_ids)
-    (case_root / CASE_DICT_FILE).write_text(json.dumps(case_dict, indent=2), encoding="utf-8")
+    (case_root / CASE_DICT_FILE).write_text(
+        json.dumps(case_dict, indent=2), encoding="utf-8"
+    )
+    return 0
 
 
 def _qsub(script: Path, depend: str | None = None) -> str:
@@ -149,7 +164,9 @@ def _qsub(script: Path, depend: str | None = None) -> str:
     return result.stdout.strip()
 
 
-def _write_job_script(case_root: Path, job: str, run_log: Path, exit_nonzero: bool=False) -> Path:
+def _write_job_script(
+    case_root: Path, job: str, run_log: Path, exit_nonzero: bool = False
+) -> Path:
     """Write a fake case.run / case.st_archive job script."""
     name = case_root.name
 
@@ -163,7 +180,7 @@ def _write_job_script(case_root: Path, job: str, run_log: Path, exit_nonzero: bo
         f"echo {job} {name} >> {run_log}",
     ]
     if exit_nonzero:
-        lines.append('exit 1')
+        lines.append("exit 1")
     file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return file
 
@@ -178,10 +195,11 @@ def xmlchange(case_root: Path, args: list[str]) -> int:
     Returns:
         int: return code
     """
+    # pylint: disable=unused-argument
     return 0
 
 
-def case_setup(case_root: Path) -> int:
+def case_setup(case_root: Path) -> int:  # pylint: disable=unused-argument
     """Fake case_setup
 
     Args:
@@ -193,7 +211,7 @@ def case_setup(case_root: Path) -> int:
     return 0
 
 
-def preview_namelists(case_root: Path) -> int:
+def preview_namelists(case_root: Path) -> int:  # pylint: disable=unused-argument
     """Fake preview_namelists
 
     Args:
@@ -223,11 +241,11 @@ def _faults(case_root: Path):
     Returns:
         dict: faults dict
     """
-    faults_file =  case_root / FAULTS_DICT_FILE
+    faults_file = case_root / FAULTS_DICT_FILE
     if not faults_file.is_file():
         return {}
     return json.loads(faults_file.read_text(encoding="utf-8"))
-    
+
 
 COMMANDS = {
     "create_newcase": create_newcase,

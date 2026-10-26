@@ -43,6 +43,7 @@ addopts = "-m 'not pbs'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "pbs: requires a PBS scheduler (qsub); skipped by default",
+    "e2e: end-to-end with fake PBS/CIME; runs locally in seconds",
 ]
 
 [tool.pylint.main]

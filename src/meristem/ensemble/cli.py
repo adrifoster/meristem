@@ -4,12 +4,12 @@ CLI for a ensemble run (the `meristem ensemble` command).
 """
 
 import argparse
-from pathlib import Path
 
 from .model_ensemble import Ensemble
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser"""
     parser = argparse.ArgumentParser(
         prog="meristem ensemble",
         description="Drive an ensemble of model runs",
@@ -39,7 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_create(args):
-    ensemble = Ensemble.create(args.config)
+def cmd_create(args) -> int:
+    """Execute retry create and return an exit code"""
+    _ = Ensemble.create(args.config)
     # print(f"Initialized run '{run.run_id}' at {run.root}")
     # print(f"Next step:  meristem run submit --root {run.root}")
+    return 0
