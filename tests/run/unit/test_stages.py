@@ -340,9 +340,11 @@ def test_stage_config_empty_script_raises(minimal_stage_config_dict):
         StageConfig.from_dict(config)
 
 
-def test_stage_config_bad_script_raises_on_validate(minimal_stage_config_dict):
+def test_stage_config_bad_script_raises_on_validate(
+    minimal_stage_config_dict, tmp_path
+):
     """Test that StageConfig initiated with a dict with an nonexistant script raises a ValueError"""
-    config = {**minimal_stage_config_dict, "script": Path("doesnt_exist.sh")}
+    config = {**minimal_stage_config_dict, "script": tmp_path / "doesnt_exist.sh"}
     stage = StageConfig.from_dict(config)
     with pytest.raises(ValueError, match="script"):
         stage.validate()
@@ -652,12 +654,24 @@ def test_stage_from_dict_partial_state(minimal_stage_config_dict, partial_state)
     assert stage.state.end_time is None
 
 
-def test_stage_config_relative_case_root_raises_on_validate(minimal_stage_config_dict):
-    """Test that a relative case_root constructs but raises on validate"""
-    config = {**minimal_stage_config_dict, "case_root": "cases/spinup_ad"}
-    stage = StageConfig.from_dict(config)
-    with pytest.raises(ValueError, match="must be an absolute path"):
-        stage.validate()
+@pytest.mark.parametrize("name", ["script", "case_root"])
+def test_stage_config_relative_path_raises(minimal_stage_config_dict, name):
+    """Test that a relative script or case_root is rejected at construction
+    (they're used in PBS jobs, which don't run from the current directory)
+    """
+    config = {**minimal_stage_config_dict, name: "relative/path"}
+    with pytest.raises(
+        ValueError,
+        match=rf"^{name} 'relative/path' for stage 'spinup_ad' must be an absolute path\.$",
+    ):
+        StageConfig.from_dict(config)
+
+
+def test_stage_config_relative_path_env_var_hint(minimal_stage_config_dict):
+    """Test that a relative path still holding a $ hints at an unset variable"""
+    config = {**minimal_stage_config_dict, "script": "$UNSET_VAR/setup.sh"}
+    with pytest.raises(ValueError, match="is an environment variable unset"):
+        StageConfig.from_dict(config)
 
 
 def test_stage_config_absolute_case_root_validates(full_stage_config):

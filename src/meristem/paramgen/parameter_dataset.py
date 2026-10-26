@@ -259,7 +259,7 @@ class FATESJSONParameterVariable(ParameterVariable):
             # single-element list — extract scalar value
             val = data[0] if isinstance(data, list) else data
             return np.asarray(val if val is not None else np.nan)
-        arr = np.array(data)
+        arr = np.array(data, dtype=float)
         if dims:
             expected_shape = tuple(self._dim_sizes[d] for d in dims)
             arr = arr.reshape(expected_shape)

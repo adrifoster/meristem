@@ -3,8 +3,8 @@ Top-level `meristem` command.
 
 Dispatches to the subcommand CLIs, each of which parses its own arguments:
     meristem paramgen config.yaml
-    meristem run --create --config run.yaml
-    meristem run --root /path/to/run --print-status
+    meristem run create --config run.yaml
+    meristem run status --root /path/to/run
 """
 
 from __future__ import annotations

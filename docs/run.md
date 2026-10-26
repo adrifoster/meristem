@@ -67,7 +67,7 @@ stages:
 ### 2. Initialise the run
 
 ```bash
-meristem run --create --config run.yaml
+meristem run create --config run.yaml
 ```
 
 This creates the run directory and writes the initial state file (`run_state.json`).
@@ -75,7 +75,7 @@ This creates the run directory and writes the initial state file (`run_state.jso
 ### 3. Submit the pipeline
 
 ```bash
-meristem run --root /glade/derecho/scratch/user/my_spinup --submit
+meristem run submit --root /glade/derecho/scratch/user/my_spinup 
 ```
 
 This submits the first stage. The rest of the pipeline runs automatically via PBS dependencies.
@@ -83,7 +83,7 @@ This submits the first stage. The rest of the pipeline runs automatically via PB
 ### 4. Check status
 
 ```bash
-meristem run --root /glade/derecho/scratch/user/my_spinup --print-status
+meristem run status --root /glade/derecho/scratch/user/my_spinup
 ```
 
 Output:
@@ -94,8 +94,8 @@ Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
   ... spinup_postad       submitted   [98765.pbs]
 ```
 
-`--print-status` shows what the state file records. If a stage has been `submitted` for longer than
-you'd expect, use `--check` to ask PBS whether it is still running (see [Lost stages](#lost-stages)).
+`status` shows what the state file records. If a stage has been `submitted` for longer than
+you'd expect, use it to ask the job scheduler whether it is still running (see [Lost stages](#lost-stages)).
 
 ----
 
@@ -109,7 +109,7 @@ you'd expect, use `--check` to ask PBS whether it is still running (see [Lost st
 | `stages` | yes | | List of stages, run in order (see below) |
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
-| `email` | no | user email, used for job emails (`#PBS -M`). If omitted, the directive is not added |
+| `email` | no | | User email, used for job emails (`#PBS -M`). If omitted, the directive is not added |
 | `scheduler` | no | `pbs` | Job scheduler used to submit job scripts. Saved in the state file. Only `pbs` is currently supported |
 
 Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded when the run is created,
@@ -139,32 +139,28 @@ own resources come from the CIME case, as usual.
 ## Command line reference
 
 ```text
-meristem run --create --config run.yaml
+meristem run create --config run.yaml
   Initialise a new run from a YAML config file.
 
-meristem run --root <path> --print-status
-  Print the current status of all stages, as recorded in the state file.
-  Doesn't contact PBS.
-
-meristem run --root <path> --check
-  Ask PBS about each submitted stage and print the status, showing any
+meristem status --root <path>
+  Ask the job scheduler about each submitted stage and print the status, showing any
   lost stage as "lost" (see Lost stages below). Changes nothing. Exits 3
   if a stage is lost, 0 otherwise.
 
-meristem run --root <path> --submit [--dry-run]
+meristem run submit --root <path> [--dry-run]
   Submit the first pending stage.
 
-meristem run --root <path> --retry [--stage <name>] [--dry-run] [--skip-script] [--lost]
+meristem run retry --root <path> [--stage <name>] [--dry-run] [--skip-script] [--lost]
   Reset and resubmit a pending or failed stage. If --stage is omitted,
   retries the current (first non-complete) stage. If --skip-script, it
   resubmits without re-running the setup script. With --lost, it instead
   retries a submitted stage that is lost, and refuses if it isn't.
 
-meristem run --root <path> --submit-advance --stage <name> --cime-job-id <id>
+meristem run submit-advance --root <path> --stage <name> --cime-job-id <id>
   Submit the advance job for a stage. Called automatically
   from inside the setup job; not typically run manually.
 
-meristem run --root <path> --submit-fail --stage <name> --cime-job-id <id>
+meristem run submit-fail --root <path> --stage <name> --cime-job-id <id>
   Submit the fail job for a stage, in case the CIME job dies. Called
   automatically from inside the setup job; not typically run manually.
 
@@ -172,7 +168,7 @@ meristem run --root <path> --advance --stage <name>
   Mark a stage complete and submit the next stage. Called
   automatically from inside the advance job.
 
-meristem run --root <path> --fail --stage <name>
+meristem run fail --root <path> --stage <name>
   Mark a stage as failed. Called automatically from the fail job
   and the setup job's error trap, or can be run manually.
 ```
@@ -199,7 +195,7 @@ never lost.
 To find lost stages:
 
 ```bash
-meristem run --root <path> --check
+meristem run status --root <path>
 ```
 
 ```text
@@ -209,14 +205,14 @@ Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
 Stage 'spinup_postad' is lost. Retry with: meristem run --root <path> --retry --stage spinup_postad --lost
 ```
 
-`--check` exits with code 3 when it finds a lost stage, so a script can loop over many runs and
+`status` exits with code 3 when it finds a lost stage, so a script can loop over many runs and
 pick out the ones that need attention. If PBS can't be queried, it exits with code 1 and changes
 nothing.
 
 To retry a lost stage:
 
 ```bash
-meristem run --root <path> --retry --stage <name> --lost
+meristem run retry --root <path> --stage <name> --lost
 ```
 
 This checks PBS again first and refuses if any of the stage's jobs is still queued or running, so it
@@ -234,8 +230,8 @@ Check with `qstat -u $USER` before retrying:
 failed yourself and retry it, without asking PBS:
 
 ```bash
-meristem run --root <path> --fail --stage <name>
-meristem run --root <path> --retry --stage <name>
+meristem run fail --root <path> --stage <name>
+meristem run retry --root <path> --stage <name>
 ```
 
 ----

@@ -12,7 +12,8 @@ import yaml
 
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
-from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case
+from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case, _preview
+from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
 
@@ -228,6 +229,12 @@ def test_prepare_unknown_stage_raises(created_ensemble):
         created_ensemble.prepare(MEMBERS[0], "nope")
 
 
+def test_prepare_unknown_member_raises(created_ensemble):
+    """Test that prepare raises a ValueError for a member not in the ensemble"""
+    with pytest.raises(ValueError, match=r"unknown member\(s\) \['nope'\]"):
+        created_ensemble.prepare("nope", "spinup_ad")
+
+
 def test_create_member_runs_only_requested_members(ready_config_dict):
     """Test that only requested members get a run"""
     ready_config_dict["paramgen"]["members"] = [MEMBERS[1]]
@@ -416,6 +423,30 @@ def test_load_missing_state_file_raises(tmp_path):
         Ensemble.load(tmp_path)
 
 
+def test_load_moved_ensemble_raises(created_ensemble, tmp_path):
+    """Test that loading an ensemble from somewhere other than where it was
+    created raises, naming both locations
+    """
+    moved = created_ensemble.root.rename(tmp_path / "moved")
+    with pytest.raises(ValueError) as excinfo:
+        Ensemble.load(moved)
+    assert str(moved) in str(excinfo.value)
+    assert f"created at {created_ensemble.root}" in str(excinfo.value)
+
+
+def test_load_through_symlink(created_ensemble, tmp_path):
+    """Test that loading through a symlink to the ensemble's root works"""
+    link = tmp_path / "link"
+    link.symlink_to(created_ensemble.root)
+    assert Ensemble.load(link).root == created_ensemble.root
+
+
+def test_load_relative_root(created_ensemble, monkeypatch):
+    """Test that loading with a relative path to the ensemble's root works"""
+    monkeypatch.chdir(created_ensemble.root.parent)
+    assert Ensemble.load(created_ensemble.root.name).root == created_ensemble.root
+
+
 def test_save_writes_config_and_members(created_ensemble):
     """Test that the state file holds the config's to_dict under "config" and
     the member -> parameter file paths (as str) under "members"
@@ -448,6 +479,141 @@ def test_save_leaves_no_tmp_file(created_ensemble):
     """Test that the atomic write doesn't leave its temp file behind"""
     created_ensemble.save()
     assert not (created_ensemble.root / f"{_STATE_FILE}.tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# submit
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def submit_ensemble(created_ensemble, fake_scheduler, monkeypatch) -> Ensemble:
+    """created_ensemble whose member runs load with fake_scheduler, so submit
+    records job files instead of calling qsub
+    """
+    monkeypatch.setattr(model_run, "get_scheduler", lambda name: fake_scheduler)
+    return created_ensemble
+
+
+def _first_status(ensemble: Ensemble, member: str) -> StageStatus:
+    """Status of a member's first stage, as saved on disk"""
+    return _member_run(ensemble, member).stages[0].state.status
+
+
+def _set_first_status(ensemble: Ensemble, member: str, status: StageStatus):
+    """Save a member's first stage with the given status, skipping the
+    transition checks
+    """
+    run = _member_run(ensemble, member)
+    object.__setattr__(run.stages[0].state, "_status", status)
+    run.save()
+
+
+def test_submit_all_pending_members(submit_ensemble, fake_scheduler):
+    """Test that submit submits every member's first stage and returns its job ID"""
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+    for member, job_id in result.items():
+        state = _member_run(submit_ensemble, member).stages[0].state
+        assert state.status is StageStatus.SUBMITTED
+        assert state.job_id == job_id
+
+
+@pytest.mark.parametrize(
+    "status", [StageStatus.SUBMITTED, StageStatus.DONE, StageStatus.FAILED]
+)
+def test_submit_skips_members_not_pending(submit_ensemble, fake_scheduler, status):
+    """Test that a member whose first stage isn't PENDING is left alone"""
+    _set_first_status(submit_ensemble, MEMBERS[0], status)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS[1:]
+    assert len(fake_scheduler.submitted) == len(MEMBERS) - 1
+    assert _first_status(submit_ensemble, MEMBERS[0]) is status
+
+
+def test_submit_limit(submit_ensemble, fake_scheduler):
+    """Test that limit submits the first pending members, in member order"""
+    result = submit_ensemble.submit(limit=2)
+    assert list(result) == MEMBERS[:2]
+    assert len(fake_scheduler.submitted) == 2
+    assert _first_status(submit_ensemble, MEMBERS[2]) is StageStatus.PENDING
+
+
+def test_submit_limit_then_rest(submit_ensemble, fake_scheduler):
+    """Test that a second submit picks up the members a limit left out"""
+    submit_ensemble.submit(limit=2)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS[2:]
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+
+
+def test_submit_limit_counts_only_pending(submit_ensemble):
+    """Test that limit skips over members that aren't pending"""
+    _set_first_status(submit_ensemble, MEMBERS[0], StageStatus.SUBMITTED)
+    result = submit_ensemble.submit(limit=1)
+    assert list(result) == [MEMBERS[1]]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_submit_limit_below_one_raises(submit_ensemble, fake_scheduler, limit):
+    """Test that a limit below 1 raises and submits nothing"""
+    with pytest.raises(ValueError, match=f"limit must be greater than 0, got {limit}"):
+        submit_ensemble.submit(limit=limit)
+    assert not fake_scheduler.submitted
+    for member in MEMBERS:
+        assert _first_status(submit_ensemble, member) is StageStatus.PENDING
+
+
+def test_submit_no_pending_members(submit_ensemble, fake_scheduler, capsys):
+    """Test that submit with nothing pending returns {} and submits nothing"""
+    submit_ensemble.submit()
+    capsys.readouterr()
+    assert submit_ensemble.submit() == {}
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
+    assert "my_ens-1: no pending members" in capsys.readouterr().out
+
+
+def test_submit_missing_param_file_submits_nothing(submit_ensemble, fake_scheduler):
+    """Test that a missing parameter file raises before any member is submitted"""
+    submit_ensemble.param_files[MEMBERS[-1]].unlink()
+    with pytest.raises(FileNotFoundError):
+        submit_ensemble.submit()
+    assert not fake_scheduler.submitted
+    for member in MEMBERS:
+        assert _first_status(submit_ensemble, member) is StageStatus.PENDING
+
+
+def test_submit_checks_only_selected_param_files(submit_ensemble):
+    """Test that a missing parameter file for a member limit leaves out
+    doesn't stop the others being submitted
+    """
+    submit_ensemble.param_files[MEMBERS[-1]].unlink()
+    result = submit_ensemble.submit(limit=2)
+    assert list(result) == MEMBERS[:2]
+
+
+def test_submit_dry_run(submit_ensemble, fake_scheduler):
+    """Test that a dry run writes every member's job script but submits nothing
+    and leaves every member pending
+    """
+    result = submit_ensemble.submit(dry_run=True)
+    assert list(result) == MEMBERS
+    assert not fake_scheduler.submitted
+    stage = submit_ensemble.config.member_stages[0].name
+    for member, job_id in result.items():
+        run = _member_run(submit_ensemble, member)
+        assert job_id.startswith("DRY_")
+        assert (run.root / f"{run.run_id}_{stage}.pbs").is_file()
+        assert run.stages[0].state.status is StageStatus.PENDING
+
+
+def test_submit_after_dry_run(submit_ensemble, fake_scheduler):
+    """Test that a real submit after a dry run submits every member"""
+    submit_ensemble.submit(dry_run=True)
+    result = submit_ensemble.submit()
+    assert list(result) == MEMBERS
+    assert len(fake_scheduler.submitted) == len(MEMBERS)
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +906,59 @@ def test_check_base_case_runs_in_base_case_dir(
 
 
 # ---------------------------------------------------------------------------
+# check_param_files
+# ---------------------------------------------------------------------------
+
+
+def test_check_param_files_all_present(created_ensemble):
+    """Test that check_param_files passes when every parameter file exists"""
+    created_ensemble.check_param_files()
+    created_ensemble.check_param_files([MEMBERS[0]])
+
+
+def test_check_param_files_missing_raises(created_ensemble):
+    """Test that a missing parameter file raises, naming the member and file"""
+    path = created_ensemble.param_files[MEMBERS[1]]
+    path.unlink()
+    with pytest.raises(
+        FileNotFoundError, match=f"{MEMBERS[1]}: {re.escape(str(path))}"
+    ):
+        created_ensemble.check_param_files()
+
+
+def test_check_param_files_only_checks_given_members(created_ensemble):
+    """Test that a missing file for a member not asked about doesn't raise"""
+    created_ensemble.param_files[MEMBERS[1]].unlink()
+    created_ensemble.check_param_files([MEMBERS[0]])
+
+
+def test_check_param_files_unknown_member_raises(created_ensemble):
+    """Test that an unknown member raises a ValueError showing at most three
+    unknown names, the number of members, and the first three members
+    """
+    unknown = ["x1", "x2", "x3", "x4", "x5"]
+    with pytest.raises(ValueError) as excinfo:
+        created_ensemble.check_param_files([MEMBERS[0], *unknown])
+    assert str(excinfo.value) == (
+        "unknown member(s) ['x1', 'x2', 'x3'] and 2 more; the ensemble has "
+        f"{len(MEMBERS)} members, e.g. {MEMBERS[:3]}."
+    )
+
+
+@pytest.mark.parametrize(
+    "names, expected",
+    [
+        ([], "[]"),
+        (["a", "b", "c"], "['a', 'b', 'c']"),
+        (["a", "b", "c", "d"], "['a', 'b', 'c'] and 1 more"),
+    ],
+)
+def test_preview(names, expected):
+    """Test that _preview shows at most three names and counts the rest"""
+    assert _preview(names) == expected
+
+
+# ---------------------------------------------------------------------------
 # check_stage_scripts
 # ---------------------------------------------------------------------------
 
@@ -846,7 +1065,7 @@ def test_is_existing_case_wrong_case_raises(tmp_path):
         _is_existing_case(case_root)
 
 
-def _stage_case_root(ensemble: Ensemble) -> Path:
+def _stage_case_root(ensemble: Ensemble) -> Path | None:
     """The first member's first stage case_root, as stored on its ModelRun"""
     return _member_run(ensemble, MEMBERS[0]).stages[0].config.case_root
 
@@ -1126,6 +1345,12 @@ def test_finalize_unknown_stage_raises(created_ensemble):
         created_ensemble.finalize(MEMBERS[0], "nope")
 
 
+def test_finalize_unknown_member_raises(created_ensemble):
+    """Test that finalize raises a ValueError for a member not in the ensemble"""
+    with pytest.raises(ValueError, match=r"unknown member\(s\) \['nope'\]"):
+        created_ensemble.finalize("nope", "spinup_ad")
+
+
 def test_finalize_unprepared_case_raises(created_ensemble):
     """Test that finalize raises if the stage's case hasn't been made"""
     with pytest.raises(FileNotFoundError, match="run prepare first"):
@@ -1271,6 +1496,34 @@ def test_finalize_check_passes(created_ensemble, line):
     """
     lnd_in = f" a = 1\n{line.format(_param_file(created_ensemble))}\n b = 2\n"
     _write_namelist_case(created_ensemble, lnd_in=lnd_in, body=_KEEP_LND_IN)
+    _finalize(created_ensemble)
+
+
+def test_finalize_check_passes_through_symlink(created_ensemble, tmp_path):
+    """Test that lnd_in naming the parameter file through a symlinked
+    directory passes, since it's the same file
+    """
+    param_file = Path(_param_file(created_ensemble))
+    link = tmp_path / "link"
+    link.symlink_to(param_file.parent)
+    _write_namelist_case(
+        created_ensemble,
+        lnd_in=f" fates_paramfile = '{link / param_file.name}'\n",
+        body=_KEEP_LND_IN,
+    )
+    _finalize(created_ensemble)
+
+
+@pytest.mark.parametrize("spelling", ["{dir}//{name}", "{dir}/./{name}"])
+def test_finalize_check_passes_other_spelling(created_ensemble, spelling):
+    """Test that lnd_in naming the parameter file with a different but
+    equivalent spelling passes
+    """
+    param_file = Path(_param_file(created_ensemble))
+    value = spelling.format(dir=param_file.parent, name=param_file.name)
+    _write_namelist_case(
+        created_ensemble, lnd_in=f" fates_paramfile = '{value}'\n", body=_KEEP_LND_IN
+    )
     _finalize(created_ensemble)
 
 

@@ -123,9 +123,9 @@ stages:
 Then create the run, submit the first stage, and check on it:
 
 ```bash
-meristem run --create --config run.yaml
-meristem run --root /glade/derecho/scratch/user/my_spinup --submit
-meristem run --root /glade/derecho/scratch/user/my_spinup --print-status
+meristem run create --config run.yaml
+meristem run submit --root /glade/derecho/scratch/user/my_spinup
+meristem run status --root /glade/derecho/scratch/user/my_spinup
 ```
 
 Once each stage of a model run finishes successfully, the next stage is automatically submitted.
