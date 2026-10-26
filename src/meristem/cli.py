@@ -21,6 +21,7 @@ from . import __version__
 _COMMANDS = {
     "paramgen": ("meristem.paramgen.cli", "Generate a parameter ensemble"),
     "run": ("meristem.run.cli", "Create, submit and manage one (tethered) model run"),
+    "ensemble": ("meristem.ensemble.cli", "Create, submit, and manage an ensemble of model runs"),
 }
 
 
