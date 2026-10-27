@@ -1007,6 +1007,17 @@ def test_written_config_round_trips_prebuilt(
     np.testing.assert_array_equal(rebuilt.prebuilt, prebuilt)
 
 
+def test_write_config_converts_numpy_scalars(lh_ensemble):
+    """Test that the write_config converts numpy scalars"""
+    lh_ensemble.create_ensemble()
+    lh_ensemble.config.seed = np.int64(42)
+
+    path = lh_ensemble.write_config()
+    loaded = yaml.safe_load(path.read_text())
+
+    assert loaded["seed"] == 42
+    assert isinstance(loaded["seed"], int)
+
 def test_resolved_seed_does_not_modify_input_config(
     ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
 ):
