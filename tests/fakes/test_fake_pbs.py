@@ -1,6 +1,4 @@
-"""Tests for fake PBS"""
-
-# pylint: disable=protected-access
+"""Tests for fake PBS class"""
 
 from __future__ import annotations
 
@@ -10,82 +8,72 @@ import os
 import pytest
 import json
 
-from meristem.run.scheduler import _parse_qstat_states
-from .pbs import qsub, qstat, qdel, _load, _save
 from .fake_pbs import FakePbs, _decide
 
 
-def test_qsub_parses_depend(tmp_path, monkeypatch):
-    """Test qsub"""
-    monkeypatch.setenv("FAKE_PBS_SPOOL", str(tmp_path))
-
-    script = tmp_path / "job.sh"
-    script.write_text(
-        "#!/bin/bash\n#PBS -N mystage\n#PBS -W depend=afterok:5.fakepbs\necho hi\n"
-    )
-
-    qsub([str(script)])
-
-    jobs = _load()
-    assert jobs[0]["name"] == "mystage"
-    assert jobs[0]["depend"] == ["afterok", "5.fakepbs"]
-
-    qsub(["-W depend=afternotok:6.fakepbs", str(script)])
-    jobs = _load()
-    assert jobs[1]["depend"] == ["afternotok", "6.fakepbs"]
+@pytest.fixture
+def pbs(tmp_path):
+    """Mock pbs root"""
+    return FakePbs(tmp_path / "pbs_root")
 
 
-def test_qstat_output_parses_with_real_parser(tmp_path, monkeypatch, capsys):
-    """Test qstat with good input"""
-    monkeypatch.setenv("FAKE_PBS_SPOOL", str(tmp_path))
-    _save([{"id": "1.fakepbs", "state": "Q"}])
+def test_fakepbs_creates_directories(pbs, tmp_path):
+    """Test that fakepbs init creates the required directories"""
+    root = tmp_path / "pbs_root"
 
-    code = qstat(["-x", "-f", "1.fakepbs"])
-
-    assert code == 0
-    assert _parse_qstat_states(capsys.readouterr().out) == {"1": "Q"}
-
-
-def test_qstat_output_parses_return_153_with_missing(tmp_path, monkeypatch, capsys):
-    """Test qstat with bad input"""
-    monkeypatch.setenv("FAKE_PBS_SPOOL", str(tmp_path))
-    _save(
-        [
-            {"id": "1.fakepbs", "state": "Q"},
-            {"id": "3.fakepbs", "state": "R"},
-        ]
-    )
-
-    code = qstat(["-x", "-f", "1", "99", "3"])
-
-    assert code == 153
-
-    parsed = _parse_qstat_states(capsys.readouterr().out)
-    assert parsed == {"1": "Q", "3": "R"}
+    assert pbs.root == root
+    assert pbs.bin_dir == root / "bin_dir" and pbs.bin_dir.is_dir()
+    assert pbs.spool == root / "spool" and pbs.spool.is_dir()
+    assert (pbs.cimeroot / "scripts").is_dir()
 
 
-def test_qdel_marks_job_finished_and_deleted(tmp_path, monkeypatch):
-    """Test qdel with good input"""
-    monkeypatch.setenv("FAKE_PBS_SPOOL", str(tmp_path))
-    _save([{"id": "1.fakepbs", "state": "Q", "deleted": False}])
+def test_fakepbs_env(tmp_path, monkeypatch):
+    """Test that fakepbs env is set correctly"""
+    monkeypatch.setenv("PATH", "/usr/bin")
+    pbs = FakePbs(tmp_path / "pbs_root")
 
-    assert qdel(["1.fakepbs"]) == 0
-
-    job = _load()[0]
-    assert job["state"] == "F"
-    assert job["deleted"] is True
+    assert pbs.env["PATH"] == f"{pbs.bin_dir}{os.pathsep}/usr/bin"
+    assert pbs.env["FAKE_PBS_SPOOL"] == str(pbs.spool)
 
 
-def test_qdel_on_missing_id_errors(tmp_path, monkeypatch):
-    """Test qdel with bad input"""
-    monkeypatch.setenv("FAKE_PBS_SPOOL", str(tmp_path))
-    _save([{"id": "1.fakepbs", "state": "Q", "deleted": False}])
+def test_fakepbs_env_is_a_copy(tmp_path, monkeypatch):
+    """Test that the fakepbs env is actually copy"""
+    monkeypatch.delenv("FAKE_PBS_SPOOL", raising=False)
+    original_path = os.environ["PATH"]
 
-    assert qdel(["5.fakepbs"]) == 153
+    FakePbs(tmp_path / "pbs_root")
 
-    job = _load()[0]
-    assert job["state"] == "Q"
-    assert job["deleted"] is False
+    assert os.environ["PATH"] == original_path
+    assert "FAKE_PBS_SPOOL" not in os.environ
+
+
+def test_fakepbs_control_file(pbs):
+    """Test the control file naming"""
+    assert pbs.control_file == pbs.spool / "control.json"
+    assert not pbs.control_file.exists()
+
+
+def test_fakepbs_json_file(pbs):
+    """Test the json file naming"""
+    assert pbs.json_file == pbs.spool / "jobs.json"
+    assert not pbs.json_file.exists()
+
+
+@pytest.mark.parametrize("name", ["qsub", "qstat", "qdel", "fake_create_newcase"])
+def test_fakepbs_bin_dir_commands(pbs, name):
+    """Test that bin_dir has the commands installed"""
+    assert (pbs.bin_dir / name).is_file()
+
+
+def test_fakepbs_cimeroot_create_clone(pbs):
+    """Test that the fakepbs cimeroot has the create_clone script"""
+    assert (pbs.cimeroot / "scripts" / "create_clone").is_file()
+
+
+def test_fakepbs_can_be_constructed_twice(tmp_path):
+    """Test that fakepbs can be constructed multiple times"""
+    FakePbs(tmp_path / "pbs_root")
+    FakePbs(tmp_path / "pbs_root")
 
 
 def test_wrapper_qsub_runs_via_path(tmp_path):
@@ -233,15 +221,15 @@ def test_decide(depend, dep, expected):
     assert _decide({"id": "2.fakepbs", "depend": depend}, dep) == expected
 
 
-def test_run_job_runs_script(tmp_path):
-    """Test that _run_job runs a script correctly"""
+def test_step_runs_one_job(tmp_path):
+    """Test that step() runs a script correctly"""
     fake = FakePbs(tmp_path / "pbs")
 
     script = tmp_path / "my_script.sh"
     script.write_text("#!/bin/bash\n#PBS -N mystage\necho hello; exit 3\n")
 
     subprocess.run(["qsub", str(script)], env=fake.env, check=True)
-    fake._run_job(fake.jobs()[0])
+    fake.step()
 
     job = fake.jobs()[0]
     assert job["exit"] == 3
@@ -250,8 +238,8 @@ def test_run_job_runs_script(tmp_path):
     assert "hello" in log.read_text(encoding="utf-8")
 
 
-def test_run_job_runs_qsub(tmp_path):
-    """Test that _run_job runs a script correctly when it calls qsub"""
+def test_run_step_runs_qsub(tmp_path):
+    """Test that step() runs a script correctly when it calls qsub"""
     fake = FakePbs(tmp_path / "pbs")
 
     script = tmp_path / "my_script.sh"
@@ -260,7 +248,7 @@ def test_run_job_runs_qsub(tmp_path):
     script.write_text(f"#!/bin/bash\nqsub {child}\n")
 
     subprocess.run(["qsub", str(script)], env=fake.env, check=True)
-    fake._run_job(fake.jobs()[0])
+    fake.step()
 
     assert len(fake.jobs()) == 2
     job = fake.jobs()[0]
@@ -437,7 +425,7 @@ def test_logs(tmp_path):
     subprocess.run(["qsub", str(script1)], env=fake.env, check=True)
     subprocess.run(["qsub", str(script2)], env=fake.env, check=True)
 
-    fake._run_job(fake.jobs()[0])
+    fake.step()
     out = fake.logs()
     assert "1.fakepbs" in out and "2.fakepbs" in out
     assert "hello" in out
@@ -471,10 +459,10 @@ def test_kill(tmp_path):
 
     jobs = fake.jobs()
     assert jobs[0]["exit"] == 271
-    assert not fake._log_path(jobs[0]).is_file()
+    assert not fake._log_path(jobs[0]).is_file()  # pylint: disable=protected-access
 
     assert jobs[1]["deleted"] is True
-    assert not fake._log_path(jobs[1]).is_file()
+    assert not fake._log_path(jobs[1]).is_file()  # pylint: disable=protected-access
 
     assert jobs[2]["state"] == "F"
     assert jobs[2]["exit"] == 0

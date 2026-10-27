@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from dataclasses import replace
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
-from meristem.ensemble.model_ensemble import Ensemble, _is_existing_case, _preview
+from meristem.ensemble.model_ensemble import (
+    Ensemble,
+    _archive_dir,
+    _is_existing_case,
+    _preview,
+)
 from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
@@ -825,6 +832,441 @@ def test_retry_returns_member_to_job_id(created_ensemble, retry_calls):
     result = created_ensemble.retry(failed=True)
     assert result == {member: f"job-{member}" for member in MEMBERS}
     assert [call[0] for call in retry_calls] == MEMBERS
+
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+_STATUS_COLUMNS = [
+    "member",
+    "stage",
+    "status",
+    "job_id",
+    "attempts",
+    "case_root",
+    "submit_time",
+    "end_time",
+]
+
+
+def test_status_columns(created_ensemble):
+    """Test that status returns the documented columns, in order"""
+    assert list(created_ensemble.status().columns) == _STATUS_COLUMNS
+
+
+def test_status_one_row_per_member_and_stage(two_stage_ensemble):
+    """Test that status has a row per member and stage, member by member
+    in stage order
+    """
+    status = two_stage_ensemble.status()
+    assert list(zip(status["member"], status["stage"])) == [
+        (member, stage) for member in MEMBERS for stage in ("spinup_ad", "transient")
+    ]
+
+
+def test_status_new_ensemble_all_pending(created_ensemble):
+    """Test that a new ensemble's stages are pending, unsubmitted, and point at
+    each member's stage case
+    """
+    status = created_ensemble.status()
+    assert (status["status"] == "pending").all()
+    assert status["job_id"].isna().all()
+    assert (status["attempts"] == 0).all()
+    assert status["submit_time"].isna().all()
+    assert status["end_time"].isna().all()
+    assert list(status["case_root"]) == [
+        str(created_ensemble.case_dir / f"base_case_my_ens-1_{member}_spinup_ad")
+        for member in MEMBERS
+    ]
+
+
+def test_status_after_submit(submit_ensemble):
+    """Test that a submitted member shows its job ID, attempt, and submit time"""
+    job_ids = submit_ensemble.submit(limit=1)
+    row = submit_ensemble.status().iloc[0]
+    assert row["status"] == "submitted"
+    assert row["job_id"] == job_ids[MEMBERS[0]]
+    assert row["attempts"] == 1
+    assert row["submit_time"] > 0
+    assert row["end_time"] is None
+
+
+@pytest.mark.parametrize("stage_status", list(StageStatus))
+def test_status_reports_stage_status(created_ensemble, stage_status):
+    """Test that each stage status is reported by its string value"""
+    _set_status(created_ensemble, MEMBERS[1], stage_status)
+    status = created_ensemble.status()
+    assert status.set_index("member").loc[MEMBERS[1], "status"] == stage_status.value
+
+
+def test_status_members_subset(created_ensemble):
+    """Test that members= limits status to those members, in the order given"""
+    status = created_ensemble.status(members=[MEMBERS[2], MEMBERS[0]])
+    assert list(status["member"]) == [MEMBERS[2], MEMBERS[0]]
+
+
+def test_status_no_members(created_ensemble):
+    """Test that members=[] returns an empty frame that still has every column"""
+    status = created_ensemble.status(members=[])
+    assert status.empty
+    assert list(status.columns) == _STATUS_COLUMNS
+
+
+def test_status_unknown_member_raises(created_ensemble):
+    """Test that an unknown member raises"""
+    with pytest.raises(ValueError):
+        created_ensemble.status(members=["nope"])
+
+
+def test_status_missing_param_file_raises(created_ensemble):
+    """Test that a missing parameter file for a selected member raises"""
+    created_ensemble.param_files[MEMBERS[0]].unlink()
+    with pytest.raises(FileNotFoundError):
+        created_ensemble.status()
+
+
+def test_status_doesnt_check_queue_by_default(created_ensemble, lost):
+    """Test that the scheduler isn't queried and nothing is lost by default"""
+    lost(None)
+    status = created_ensemble.status()
+    assert "lost" not in set(status["status"])
+
+
+def test_status_check_queue_marks_lost(two_stage_ensemble, lost):
+    """Test that check_queue reports only the lost stages as lost"""
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.SUBMITTED, index=1)
+    lost({MEMBERS[1]: ["transient"]})
+    status = two_stage_ensemble.status(check_queue=True)
+    lost_rows = status[status["status"] == "lost"]
+    assert list(zip(lost_rows["member"], lost_rows["stage"])) == [
+        (MEMBERS[1], "transient")
+    ]
+
+
+def test_status_without_case_root(created_ensemble):
+    """Test that a stage with no case_root reports a missing value"""
+    run = _member_run(created_ensemble, MEMBERS[0])
+    run.stages[0].config = replace(run.stages[0].config, case_root=None)
+    run.save()
+    status = created_ensemble.status()
+    assert list(status["case_root"].isna()) == [True, False, False]
+
+
+# ---------------------------------------------------------------------------
+# format_status
+# ---------------------------------------------------------------------------
+
+
+def _counts(text: str) -> dict[str, dict[str, int]]:
+    """Parse the counts table out of format_status text as
+    {stage: {status: count}}, keeping the column order
+    """
+    lines = text.splitlines()
+    header = lines[3].split()
+    counts = {}
+    for line in lines[4:]:
+        if not line.strip():
+            break
+        stage, *values = line.split()
+        counts[stage] = dict(zip(header, map(int, values)))
+    return counts
+
+
+def _fake_status(rows: list[tuple[str, str, str]]) -> pd.DataFrame:
+    """A status() frame from (member, stage, status) rows"""
+    return pd.DataFrame(
+        [
+            {
+                "member": member,
+                "stage": stage,
+                "status": status,
+                "job_id": None,
+                "attempts": 0,
+                "case_root": None,
+                "submit_time": None,
+                "end_time": None,
+            }
+            for member, stage, status in rows
+        ],
+        columns=_STATUS_COLUMNS,
+    )
+
+
+def test_format_status_header(created_ensemble):
+    """Test that the text starts with the ensemble ID, root, and member count"""
+    lines = created_ensemble.format_status(created_ensemble.status()).splitlines()
+    assert lines[:3] == [
+        f"Ensemble: my_ens-1 ({created_ensemble.root})",
+        f"{len(MEMBERS)} members",
+        "",
+    ]
+
+
+def test_format_status_counts_all_pending(created_ensemble):
+    """Test that a new ensemble counts every member as pending, with a column
+    for every status but lost
+    """
+    text = created_ensemble.format_status(created_ensemble.status())
+    assert _counts(text) == {
+        "spinup_ad": {"pending": 3, "submitted": 0, "done": 0, "failed": 0}
+    }
+
+
+def test_format_status_counts_per_stage(two_stage_ensemble):
+    """Test that counts are per stage, with stages in config order"""
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.FAILED, index=1)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.SUBMITTED, index=0)
+    text = two_stage_ensemble.format_status(two_stage_ensemble.status())
+    assert _counts(text) == {
+        "spinup_ad": {"pending": 1, "submitted": 1, "done": 1, "failed": 0},
+        "transient": {"pending": 2, "submitted": 0, "done": 0, "failed": 1},
+    }
+
+
+def test_format_status_no_rows(created_ensemble):
+    """Test that an empty status still shows every stage with zero counts"""
+    text = created_ensemble.format_status(created_ensemble.status(members=[]))
+    assert _counts(text) == {
+        "spinup_ad": {"pending": 0, "submitted": 0, "done": 0, "failed": 0}
+    }
+
+
+def test_format_status_lost_column(created_ensemble, lost):
+    """Test that a lost column is added (last) only when a stage is lost"""
+    _set_status(created_ensemble, MEMBERS[2], StageStatus.SUBMITTED)
+    lost({MEMBERS[2]: ["spinup_ad"]})
+    status = created_ensemble.status(check_queue=True)
+    counts = _counts(created_ensemble.format_status(status))
+    assert list(counts["spinup_ad"]) == [
+        "pending",
+        "submitted",
+        "done",
+        "failed",
+        "lost",
+    ]
+    assert counts["spinup_ad"]["lost"] == 1
+    assert counts["spinup_ad"]["submitted"] == 0
+
+
+def test_format_status_nothing_failed_or_lost(created_ensemble):
+    """Test that there's no failed or lost section or retry hint when nothing
+    failed or was lost
+    """
+    text = created_ensemble.format_status(created_ensemble.status())
+    assert "Failed" not in text
+    assert "Lost" not in text
+    assert "retry with" not in text
+
+
+@pytest.mark.parametrize(
+    "state, stage_status", [("failed", StageStatus.FAILED), ("lost", None)]
+)
+def test_format_status_lists_failed_or_lost(
+    created_ensemble, lost, state, stage_status
+):
+    """Test that failed and lost members are listed with a retry hint"""
+    if stage_status is not None:
+        _set_status(created_ensemble, MEMBERS[1], stage_status)
+    lost({MEMBERS[1]: ["spinup_ad"]} if state == "lost" else {})
+    status = created_ensemble.status(check_queue=True)
+    lines = created_ensemble.format_status(status).splitlines()
+    heading = f"{state.capitalize()} (1): ['{MEMBERS[1]}:spinup_ad']"
+    hint = f"  retry with: meristem ensemble retry --root {created_ensemble.root} --{state}"
+    assert lines[lines.index(heading) + 1] == hint
+
+
+def test_format_status_failed_and_lost(created_ensemble):
+    """Test that the failed section comes before the lost section"""
+    status = _fake_status(
+        [
+            (MEMBERS[0], "spinup_ad", "lost"),
+            (MEMBERS[1], "spinup_ad", "failed"),
+            (MEMBERS[2], "spinup_ad", "done"),
+        ]
+    )
+    text = created_ensemble.format_status(status)
+    assert text.index("Failed (1)") < text.index("Lost (1)")
+
+
+def test_format_status_previews_at_most_ten(created_ensemble):
+    """Test that the failed list shows ten members and how many more there are"""
+    names = [f"m{i:02d}" for i in range(12)]
+    status = _fake_status([(name, "spinup_ad", "failed") for name in names])
+    text = created_ensemble.format_status(status)
+    shown = [f"{name}:spinup_ad" for name in names[:10]]
+    assert f"Failed (12): {shown} and 2 more" in text
+
+
+def test_format_status_hides_members_by_default(created_ensemble):
+    """Test that members aren't listed unless show_members is set"""
+    text = created_ensemble.format_status(created_ensemble.status())
+    for member in MEMBERS:
+        assert member not in text
+
+
+def test_format_status_show_members(created_ensemble):
+    """Test that show_members appends a member table without the case root"""
+    _set_status(created_ensemble, MEMBERS[1], StageStatus.FAILED)
+    status = created_ensemble.status()
+    text = created_ensemble.format_status(status, show_members=True)
+    table = text.split("\n\n")[-1].splitlines()
+    assert table[0].split() == ["member", "stage", "status", "job_id", "attempts"]
+    assert [line.split()[:3] for line in table[1:]] == [
+        [MEMBERS[0], "spinup_ad", "pending"],
+        [MEMBERS[1], "spinup_ad", "failed"],
+        [MEMBERS[2], "spinup_ad", "pending"],
+    ]
+    assert "case_root" not in text
+
+
+# ---------------------------------------------------------------------------
+# manifest
+# ---------------------------------------------------------------------------
+
+_STAGE_COLUMNS = [
+    "status",
+    "job_id",
+    "attempts",
+    "case_root",
+    "submit_time",
+    "end_time",
+    "archive_dir",
+]
+
+
+def _write_archive_case(case_root: Path, archive: str, exit_code: int = 0) -> Path:
+    """Make a fake case dir whose xmlquery prints archive (its DOUT_S_ROOT)"""
+    case_root.mkdir(parents=True, exist_ok=True)
+    xmlquery = case_root / "xmlquery"
+    xmlquery.write_text(
+        f"#!/bin/sh\necho {archive}\nexit {exit_code}\n", encoding="utf-8"
+    )
+    xmlquery.chmod(0o755)
+    return case_root
+
+
+def test_manifest_columns(two_stage_ensemble):
+    """Test that the manifest has the key columns, then member, parameter file,
+    and each stage's columns prefixed by its name, in stage order
+    """
+    manifest = two_stage_ensemble.manifest()
+    assert list(manifest.columns) == [
+        "member",
+        "fates_leaf_slatop",
+        "param_file",
+        *[f"spinup_ad_{c}" for c in _STAGE_COLUMNS],
+        *[f"transient_{c}" for c in _STAGE_COLUMNS],
+    ]
+
+
+def test_manifest_one_row_per_member(created_ensemble):
+    """Test that the manifest has one row per member, in member order, with its
+    parameter file
+    """
+    manifest = created_ensemble.manifest()
+    assert list(manifest["member"]) == MEMBERS
+    assert list(manifest["param_file"]) == [
+        str(created_ensemble.param_files[member]) for member in MEMBERS
+    ]
+
+
+def test_manifest_stage_values_match_status(two_stage_ensemble):
+    """Test that each stage's columns hold that member's status() values"""
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.FAILED, index=1)
+    manifest = two_stage_ensemble.manifest().set_index("member")
+    assert list(manifest["spinup_ad_status"]) == ["pending", "done", "pending"]
+    assert list(manifest["transient_status"]) == ["pending", "failed", "pending"]
+    status = two_stage_ensemble.status().set_index(["member", "stage"])
+    for member in MEMBERS:
+        for stage in ("spinup_ad", "transient"):
+            assert (
+                manifest.loc[member, f"{stage}_case_root"]
+                == status.loc[(member, stage), "case_root"]
+            )
+
+
+def test_manifest_key_values(created_ensemble):
+    """Test that each member's paramgen key values are merged in, as strings"""
+    manifest = created_ensemble.manifest()
+    assert list(manifest["fates_leaf_slatop"]) == ["0.0", "0.1", "0.2"]
+    assert "ensemble" not in manifest.columns
+
+
+def test_manifest_key_only_selected_members(ready_config_dict):
+    """Test that key rows for members outside the ensemble are left out"""
+    ready_config_dict["paramgen"]["members"] = [MEMBERS[1]]
+    ensemble = Ensemble.create(ready_config_dict)
+    manifest = ensemble.manifest()
+    assert list(manifest["member"]) == [MEMBERS[1]]
+    assert list(manifest["fates_leaf_slatop"]) == ["0.1"]
+
+
+def test_manifest_without_key_file(created_ensemble):
+    """Test that the manifest is built without key columns when the key file
+    is gone
+    """
+    key_file = created_ensemble.config.paramgen_dir / "ens_key.csv"
+    key_file.unlink()
+    manifest = created_ensemble.manifest()
+    assert list(manifest.columns[:2]) == ["member", "param_file"]
+    assert list(manifest["member"]) == MEMBERS
+
+
+def test_manifest_no_archive_dir_before_cases_exist(created_ensemble):
+    """Test that archive_dir is empty for cases that haven't been cloned yet"""
+    manifest = created_ensemble.manifest()
+    assert manifest["spinup_ad_archive_dir"].isna().all()
+
+
+def test_manifest_archive_dir_from_case(created_ensemble, tmp_path):
+    """Test that archive_dir is the case's DOUT_S_ROOT once the case exists"""
+    archive = tmp_path / "archive" / MEMBERS[0]
+    _write_archive_case(_stage_case_root(created_ensemble), str(archive))
+    manifest = created_ensemble.manifest().set_index("member")
+    assert manifest.loc[MEMBERS[0], "spinup_ad_archive_dir"] == str(archive)
+    assert manifest.loc[MEMBERS[1:], "spinup_ad_archive_dir"].isna().all()
+
+
+def test_manifest_without_case_root(created_ensemble):
+    """Test that a stage with no case_root has no archive_dir"""
+    run = _member_run(created_ensemble, MEMBERS[0])
+    run.stages[0].config = replace(run.stages[0].config, case_root=None)
+    run.save()
+    manifest = created_ensemble.manifest()
+    assert manifest["spinup_ad_archive_dir"].isna().all()
+
+
+@pytest.mark.parametrize("case_root", [None, ""])
+def test_archive_dir_no_case_root(case_root):
+    """Test that there's no archive dir without a case root"""
+    assert _archive_dir(case_root) is None
+
+
+def test_archive_dir_no_xmlquery(tmp_path):
+    """Test that there's no archive dir for a directory that isn't a case"""
+    assert _archive_dir(str(tmp_path)) is None
+
+
+def test_archive_dir_xmlquery_fails(tmp_path):
+    """Test that there's no archive dir when xmlquery fails"""
+    case_root = _write_archive_case(tmp_path / "case", "boom", exit_code=1)
+    assert _archive_dir(str(case_root)) is None
+
+
+def test_archive_dir_xmlquery_not_executable(tmp_path):
+    """Test that there's no archive dir when xmlquery can't be run"""
+    case_root = _write_archive_case(tmp_path / "case", "/scratch/archive/case")
+    (case_root / "xmlquery").chmod(0o644)
+    assert _archive_dir(str(case_root)) is None
+
+
+def test_archive_dir_value(tmp_path):
+    """Test that the archive dir is xmlquery's DOUT_S_ROOT, stripped"""
+    case_root = _write_archive_case(tmp_path / "case", "/scratch/archive/case")
+    assert _archive_dir(str(case_root)) == "/scratch/archive/case"
 
 
 # ---------------------------------------------------------------------------

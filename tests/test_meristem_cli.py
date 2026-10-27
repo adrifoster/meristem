@@ -25,13 +25,14 @@ def test_unknown_command_exits_with_usage_error():
 
 
 def test_help_lists_commands(capsys):
-    """Test that meristem --help lists both commands"""
+    """Test that meristem --help lists every command"""
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "paramgen" in out
     assert "run" in out
+    assert "ensemble" in out
 
 
 def test_version(capsys):
@@ -47,6 +48,7 @@ def test_version(capsys):
     [
         ("paramgen", "meristem.paramgen.cli", ["config.yaml"]),
         ("run", "meristem.run.cli", ["status", "--root", "/tmp/run"]),
+        ("ensemble", "meristem.ensemble.cli", ["status", "--root", "/tmp/ens"]),
     ],
 )
 def test_dispatches_remaining_args_to_subcommand(mocker, command, module, rest):
@@ -73,6 +75,17 @@ def test_subcommand_help_reaches_subcommand_parser(capsys):
     assert "usage: meristem run" in out
     assert "create" in out
     assert "submit-advance" in out
+
+
+def test_ensemble_help_reaches_ensemble_parser(capsys):
+    """Test that `meristem ensemble --help` shows the ensemble command's own options"""
+    with pytest.raises(SystemExit) as exc:
+        main(["ensemble", "--help"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "usage: meristem ensemble" in out
+    for command in ("create", "submit", "prepare", "finalize", "retry", "manifest"):
+        assert command in out
 
 
 def test_run_does_not_import_paramgen(mocker):

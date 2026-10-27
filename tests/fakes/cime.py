@@ -235,8 +235,17 @@ def _write_job_script(
     return file
 
 
+def preview_namelists(case_root: Path) -> int:
+    """Fake preview_namelists: write CaseDocs/lnd_in from user_nl_clm"""
+    docs = case_root / "CaseDocs"
+    docs.mkdir(exist_ok=True)
+    text = (case_root / "user_nl_clm").read_text(encoding="utf-8")
+    (docs / "lnd_in").write_text(text, encoding="utf-8")
+    return 0
+
+
 def xmlchange(case_root: Path, args: list[str]) -> int:
-    """Fake xmlchange
+    """Fake xmlchange. Just a pass through for now.
 
     Args:
         case_root (Path): path to case root
@@ -250,7 +259,7 @@ def xmlchange(case_root: Path, args: list[str]) -> int:
 
 
 def case_setup(case_root: Path) -> int:  # pylint: disable=unused-argument
-    """Fake case_setup
+    """Fake case_setup. Just a pass through for now.
 
     Args:
         case_root (Path): path to case root
@@ -258,15 +267,6 @@ def case_setup(case_root: Path) -> int:  # pylint: disable=unused-argument
     Returns:
         int: return code
     """
-    return 0
-
-
-def preview_namelists(case_root: Path) -> int:
-    """Fake preview_namelists: write CaseDocs/lnd_in from user_nl_clm"""
-    docs = case_root / "CaseDocs"
-    docs.mkdir(exist_ok=True)
-    text = (case_root / "user_nl_clm").read_text(encoding="utf-8")
-    (docs / "lnd_in").write_text(text, encoding="utf-8")
     return 0
 
 
