@@ -12,7 +12,14 @@ import subprocess
 CASE_DICT_FILE = "case.json"
 FAULTS_DICT_FILE = "fake_cime.json"
 RUN_LOG_FILE = "runs.log"
-ACCEPTED_KEYS = ("CASE", "BUILD_COMPLETE", "CIMEROOT", "JOB_IDS")
+ACCEPTED_KEYS = (
+    "CASE",
+    "BUILD_COMPLETE",
+    "CIMEROOT",
+    "JOB_IDS",
+    "PROJECT",
+    "DOUT_S_ROOT",
+)
 
 
 def create_newcase(case_root: Path):
@@ -50,7 +57,50 @@ def create_newcase(case_root: Path):
         "BUILD_COMPLETE": False,
         "CIMEROOT": "",
         "JOB_IDS": None,
+        "DOUT_S_ROOT": str(case_root / "archive"),
     }
+    (case_root / CASE_DICT_FILE).write_text(
+        json.dumps(case_dict, indent=2), encoding="utf-8"
+    )
+    return 0
+
+
+def create_clone(args: list[str]) -> int:
+    """Fake create_clone: make a new case from an existing one
+
+    Args:
+        args (list[str]): arguments as passed by Ensemble._clone
+
+    Returns:
+        int: return code
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--case", required=True)
+    parser.add_argument("--clone", required=True)
+    parser.add_argument("--keepexe", action="store_true")
+    parser.add_argument("--project")
+    parser.add_argument("--cime-output-root")
+    parsed = parser.parse_args(args)
+
+    if json.loads(os.environ.get("FAKE_CIME", "{}")).get("create_clone") == "fail":
+        print("create_clone: injected failure", file=sys.stderr)
+        return 1
+
+    case_root = Path(parsed.case)
+    clone_root = Path(parsed.clone)
+    if case_root.exists():
+        print(f"create_clone: {case_root} already exists", file=sys.stderr)
+        return 1
+
+    create_newcase(case_root)
+    (case_root / "user_nl_clm").write_text(
+        (clone_root / "user_nl_clm").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    base = json.loads((clone_root / CASE_DICT_FILE).read_text(encoding="utf-8"))
+    case_dict = json.loads((case_root / CASE_DICT_FILE).read_text(encoding="utf-8"))
+    case_dict["BUILD_COMPLETE"] = base["BUILD_COMPLETE"]
+    case_dict["CIMEROOT"] = base["CIMEROOT"]
+    case_dict["PROJECT"] = parsed.project
     (case_root / CASE_DICT_FILE).write_text(
         json.dumps(case_dict, indent=2), encoding="utf-8"
     )
@@ -211,15 +261,12 @@ def case_setup(case_root: Path) -> int:  # pylint: disable=unused-argument
     return 0
 
 
-def preview_namelists(case_root: Path) -> int:  # pylint: disable=unused-argument
-    """Fake preview_namelists
-
-    Args:
-        case_root (Path): path to case root
-
-    Returns:
-        int: return code
-    """
+def preview_namelists(case_root: Path) -> int:
+    """Fake preview_namelists: write CaseDocs/lnd_in from user_nl_clm"""
+    docs = case_root / "CaseDocs"
+    docs.mkdir(exist_ok=True)
+    text = (case_root / "user_nl_clm").read_text(encoding="utf-8")
+    (docs / "lnd_in").write_text(text, encoding="utf-8")
     return 0
 
 
@@ -249,6 +296,7 @@ def _faults(case_root: Path):
 
 COMMANDS = {
     "create_newcase": create_newcase,
+    "create_clone": create_clone,
     "xmlquery": xmlquery,
     "xmlchange": xmlchange,
     "case.setup": case_setup,
@@ -265,6 +313,9 @@ def main():
     if name not in COMMANDS:
         print(f"fake cime: unknown command {name!r}", file=sys.stderr)
         sys.exit(2)
+
+    if name == "create_clone":
+        sys.exit(create_clone(sys.argv[2:]))
 
     if name in ("create_newcase", "case.setup", "preview_namelists"):
         code = COMMANDS[name](case_root)

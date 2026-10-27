@@ -617,6 +617,217 @@ def test_submit_after_dry_run(submit_ensemble, fake_scheduler):
 
 
 # ---------------------------------------------------------------------------
+# retry
+# ---------------------------------------------------------------------------
+
+
+def _set_status(ensemble: Ensemble, member: str, status: StageStatus, index: int = 0):
+    """Save a member's stage (by index) with the given status, skipping the
+    transition checks
+    """
+    run = _member_run(ensemble, member)
+    object.__setattr__(run.stages[index].state, "_status", status)
+    run.save()
+
+
+@pytest.fixture
+def retry_calls(monkeypatch) -> list[tuple]:
+    """Record ModelRun.retry calls as (member, stage, dry_run, skip_script, lost)
+    instead of resubmitting; each call returns "job-<member>"
+    """
+    calls = []
+
+    def _retry(self, stage_name, dry_run=False, skip_script=False, lost=False):
+        calls.append((self.root.name, stage_name, dry_run, skip_script, lost))
+        return f"job-{self.root.name}"
+
+    monkeypatch.setattr(ModelRun, "retry", _retry)
+    return calls
+
+
+@pytest.fixture
+def lost(monkeypatch):
+    """Factory that makes ModelRun.lost_stages return {member: [stage, ...]};
+    with None, lost_stages raises so a test can check it's never queried
+    """
+
+    def _set(lost_by_member: dict[str, list[str]] | None):
+        def _lost_stages(self):
+            if lost_by_member is None:
+                raise AssertionError("lost_stages should not be called")
+            return lost_by_member.get(self.root.name, [])
+
+        monkeypatch.setattr(ModelRun, "lost_stages", _lost_stages)
+
+    return _set
+
+
+@pytest.fixture
+def two_stage_ensemble(ready_config_dict) -> Ensemble:
+    """An Ensemble created with two member stages, spinup_ad then transient"""
+    ready_config_dict["member_stages"].append({"name": "transient", "queue": "regular"})
+    return Ensemble.create(ready_config_dict)
+
+
+def test_retry_nothing_selected_raises(created_ensemble, retry_calls):
+    """Test that retry with no flags, members, or stage raises"""
+    with pytest.raises(ValueError, match="nothing selected to retry"):
+        created_ensemble.retry()
+    assert not retry_calls
+
+
+def test_retry_unknown_stage_raises(created_ensemble, retry_calls):
+    """Test that an unknown stage name raises and lists the member stages"""
+    with pytest.raises(ValueError, match="unknown member stage 'nope'"):
+        created_ensemble.retry(failed=True, stage="nope")
+    assert not retry_calls
+
+
+def test_retry_missing_param_file_raises(created_ensemble, retry_calls):
+    """Test that a missing parameter file raises before anything is retried"""
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    created_ensemble.param_files[MEMBERS[-1]].unlink()
+    with pytest.raises(FileNotFoundError):
+        created_ensemble.retry(failed=True)
+    assert not retry_calls
+
+
+def test_retry_checks_only_selected_param_files(created_ensemble, retry_calls):
+    """Test that a missing parameter file for an unselected member doesn't stop
+    the selected ones being retried
+    """
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    created_ensemble.param_files[MEMBERS[-1]].unlink()
+    created_ensemble.retry(failed=True, members=[MEMBERS[0]])
+    assert retry_calls == [(MEMBERS[0], "spinup_ad", False, False, False)]
+
+
+def test_retry_nothing_to_retry(created_ensemble, retry_calls, capsys):
+    """Test that retry with nothing failed returns {} and retries nothing"""
+    assert created_ensemble.retry(failed=True) == {}
+    assert not retry_calls
+    assert "my_ens-1: nothing to retry" in capsys.readouterr().out
+
+
+def test_retry_failed_selects_failed_members(created_ensemble, retry_calls):
+    """Test that failed=True retries only the failed members, not as lost"""
+    _set_status(created_ensemble, MEMBERS[1], StageStatus.FAILED)
+    result = created_ensemble.retry(failed=True)
+    assert list(result) == [MEMBERS[1]]
+    assert retry_calls == [(MEMBERS[1], "spinup_ad", False, False, False)]
+
+
+def test_retry_failed_with_members_subset(created_ensemble, retry_calls):
+    """Test that a failed member outside members= is left alone"""
+    for member in MEMBERS[:2]:
+        _set_status(created_ensemble, member, StageStatus.FAILED)
+    created_ensemble.retry(failed=True, members=[MEMBERS[1]])
+    assert retry_calls == [(MEMBERS[1], "spinup_ad", False, False, False)]
+
+
+def test_retry_failed_with_stage_filter(two_stage_ensemble, retry_calls):
+    """Test that stage= only retries failures of that stage"""
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.FAILED, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.FAILED, index=1)
+    result = two_stage_ensemble.retry(failed=True, stage="transient")
+    assert list(result) == [MEMBERS[1]]
+    assert retry_calls == [(MEMBERS[1], "transient", False, False, False)]
+
+
+def test_retry_lost_selects_lost_stage(created_ensemble, retry_calls, lost):
+    """Test that lost=True retries the lost stages, marked as lost"""
+    _set_status(created_ensemble, MEMBERS[2], StageStatus.SUBMITTED)
+    lost({MEMBERS[2]: ["spinup_ad"]})
+    result = created_ensemble.retry(lost=True)
+    assert list(result) == [MEMBERS[2]]
+    assert retry_calls == [(MEMBERS[2], "spinup_ad", False, False, True)]
+
+
+def test_retry_lost_not_queried_without_flag(created_ensemble, retry_calls, lost):
+    """Test that the scheduler isn't queried for lost stages unless lost=True"""
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    lost(None)
+    created_ensemble.retry(failed=True)
+    assert retry_calls == [(MEMBERS[0], "spinup_ad", False, False, False)]
+
+
+def test_retry_failed_and_lost(created_ensemble, retry_calls, lost):
+    """Test that failed=True and lost=True together retry both kinds"""
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    _set_status(created_ensemble, MEMBERS[2], StageStatus.SUBMITTED)
+    lost({MEMBERS[2]: ["spinup_ad"]})
+    created_ensemble.retry(failed=True, lost=True)
+    assert retry_calls == [
+        (MEMBERS[0], "spinup_ad", False, False, False),
+        (MEMBERS[2], "spinup_ad", False, False, True),
+    ]
+
+
+def test_retry_member_retries_current_stage(two_stage_ensemble, retry_calls):
+    """Test that naming only a member resubmits its current (first not done) stage"""
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.FAILED, index=1)
+    two_stage_ensemble.retry(members=[MEMBERS[0]])
+    assert retry_calls == [(MEMBERS[0], "transient", False, False, False)]
+
+
+def test_retry_member_pending_is_resubmitted(created_ensemble, retry_calls):
+    """Test that a named member's PENDING current stage can be resubmitted"""
+    result = created_ensemble.retry(members=[MEMBERS[0]])
+    assert list(result) == [MEMBERS[0]]
+    assert retry_calls == [(MEMBERS[0], "spinup_ad", False, False, False)]
+
+
+def test_retry_explicit_stage_all_members(created_ensemble, retry_calls):
+    """Test that naming only a stage resubmits it for every member"""
+    _set_status(created_ensemble, MEMBERS[1], StageStatus.FAILED)
+    result = created_ensemble.retry(stage="spinup_ad")
+    assert list(result) == MEMBERS
+    assert [call[1] for call in retry_calls] == ["spinup_ad"] * len(MEMBERS)
+
+
+def test_retry_explicit_done_member_skipped(created_ensemble, retry_calls, capsys):
+    """Test that a named member with every stage done is skipped"""
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.DONE)
+    assert created_ensemble.retry(members=[MEMBERS[0]]) == {}
+    assert not retry_calls
+    assert "my_ens-1: nothing to retry" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("status", [StageStatus.SUBMITTED, StageStatus.DONE])
+def test_retry_explicit_refuses_active_stage_lists_all(
+    created_ensemble, retry_calls, status
+):
+    """Test that explicitly resubmitting a submitted or done stage raises,
+    listing every refused member, and retries nothing
+    """
+    for member in MEMBERS[:2]:
+        _set_status(created_ensemble, member, status)
+    with pytest.raises(ValueError, match="can only resubmit PENDING or FAILED") as err:
+        created_ensemble.retry(stage="spinup_ad")
+    for member in MEMBERS[:2]:
+        assert f"{member}: spinup_ad is {status.value}" in str(err.value)
+    assert not retry_calls
+
+
+def test_retry_forwards_dry_run_and_skip_script(created_ensemble, retry_calls):
+    """Test that dry_run and skip_script are passed to each member's retry"""
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    created_ensemble.retry(failed=True, dry_run=True, skip_script=True)
+    assert retry_calls == [(MEMBERS[0], "spinup_ad", True, True, False)]
+
+
+def test_retry_returns_member_to_job_id(created_ensemble, retry_calls):
+    """Test that retry returns member -> its retry's job ID, in member order"""
+    for member in MEMBERS:
+        _set_status(created_ensemble, member, StageStatus.FAILED)
+    result = created_ensemble.retry(failed=True)
+    assert result == {member: f"job-{member}" for member in MEMBERS}
+    assert [call[0] for call in retry_calls] == MEMBERS
+
+
+# ---------------------------------------------------------------------------
 # find_param_members
 # ---------------------------------------------------------------------------
 

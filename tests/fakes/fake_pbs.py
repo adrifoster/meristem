@@ -36,6 +36,9 @@ class FakePbs:
             _create_file(self.root / "bin_dir", pbs_path, command)
 
         cime_path = Path(__file__).parent / "cime.py"
+        self.cimeroot = self.root / "cimeroot"
+        (self.cimeroot / "scripts").mkdir(parents=True, exist_ok=True)
+        _create_file(self.cimeroot / "scripts", cime_path, "create_clone")
         _create_file(
             self.root / "bin_dir",
             cime_path,

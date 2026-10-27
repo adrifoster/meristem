@@ -10,6 +10,9 @@ import shlex
 from collections import Counter
 from pathlib import Path
 from dataclasses import replace
+import io
+from contextlib import redirect_stdout
+
 import pandas as pd
 
 from meristem.commands import meristem_cmd
@@ -22,6 +25,9 @@ _STATE_FILE = "ensemble_state.json"
 
 # parameter file extensions
 _PARAM_EXTENSIONS = (".nc", ".json")
+
+# status order for printing
+_STATUS_ORDER = [s.value for s in StageStatus] + ["lost"]
 
 
 class Ensemble:
@@ -173,7 +179,255 @@ class Ensemble:
 
         self.check_param_files(pending)
 
-        return {member: runs[member].submit(dry_run=dry_run) for member in pending}
+        with redirect_stdout(io.StringIO()):
+            job_ids = {
+                member: runs[member].submit(dry_run=dry_run) for member in pending
+            }
+        print(f"{self.config.ensemble_id}: submitted {len(job_ids)} members")
+
+        return job_ids
+
+    def retry(
+        self,
+        failed: bool = False,
+        lost: bool = False,
+        members: list[str] | None = None,
+        stage: str | None = None,
+        skip_script: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, str | None]:
+        """Retry the selected stages
+
+        Args:
+            failed (bool, optional): Retry all failed members. Defaults to False.
+            lost (bool, optional): Retry lost members. Defaults to False.
+            members (list[str] | None, optional): list of members to retry. Defaults to None.
+            stage (str | None, optional): stage name to retry. Defaults to None.
+            skip_script (bool, optional): skip the script call and just try resubmitting
+            dry_run (bool, optional): only write pbs scripts and do not submit.
+            Defaults to False.
+
+        Raises:
+            ValueError: unknown member stage
+            ValueError: nothing selected to retry
+
+        Returns:
+            dict[str, str | None]: dictionary of member and the stage name and
+            whether it was lost
+        """
+
+        explicit = not failed and not lost
+        if explicit and members is None and stage is None:
+            raise ValueError(
+                "nothing selected to retry; pass failed=True and/or lost=True "
+                "(--failed / --lost), or name what to resubmit with members=... "
+                "and/or stage=... (--member / --stage)."
+            )
+
+        stage_names = [s.name for s in self.config.member_stages]
+        if stage is not None and stage not in stage_names:
+            raise ValueError(
+                f"unknown member stage {stage!r}; member stages are {stage_names}."
+            )
+
+        selected = list(self.param_files) if members is None else members
+        self.check_param_files(selected)
+
+        runs = {member: self.member_run(member) for member in selected}
+        to_retry = self._find_retries(runs, stage, lost, failed)
+        if not to_retry:
+            print(f"{self.config.ensemble_id}: nothing to retry")
+            return {}
+
+        return {
+            member: runs[member].retry(
+                name, dry_run=dry_run, skip_script=skip_script, lost=was_lost
+            )
+            for member, (name, was_lost) in to_retry.items()
+        }
+
+    def status(
+        self, members: list[str] | None = None, check_queue: bool = False
+    ) -> pd.DataFrame:
+        """Get the status of every member stage
+
+        Args:
+            members (list[str] | None, optional): List of members to check.
+                Defaults to None (all).
+            check_queue (bool, optional): also query job scheduler and report lost stages.
+                as 'lost'. Defaults to False.
+
+        Returns:
+            pd.DataFrame: one row per member and stage, with columns member, stage,
+            status, job_id, and attempts
+        """
+
+        rows = []
+        selected = list(self.param_files) if members is None else members
+        self.check_param_files(selected)
+
+        for member in selected:
+            run = self.member_run(member)
+            lost = set(run.lost_stages()) if check_queue else set()
+            for run_stage in run.stages:
+                name = run_stage.config.name
+                rows.append(
+                    {
+                        "member": member,
+                        "stage": name,
+                        "status": (
+                            "lost" if name in lost else run_stage.state.status.to_str()
+                        ),
+                        "job_id": run_stage.state.job_id,
+                        "attempts": run_stage.state.attempts,
+                        "case_root": (
+                            str(run_stage.config.case_root)
+                            if run_stage.config.case_root
+                            else None
+                        ),
+                        "submit_time": run_stage.state.submit_time,
+                        "end_time": run_stage.state.end_time,
+                    }
+                )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "member",
+                "stage",
+                "status",
+                "job_id",
+                "attempts",
+                "case_root",
+                "submit_time",
+                "end_time",
+            ],
+        )
+
+    def format_status(self, status: pd.DataFrame, show_members: bool = False) -> str:
+        """Format status() for printing: counts per stage, then the failed and
+        lost members
+
+        Args:
+            status (pd.DataFrame): output of status()
+            show_members (bool, optional): print every member and stage too.
+                Defaults to False
+
+        Returns:
+            str: status text
+        """
+        stages = [s.name for s in self.config.member_stages]
+        columns = [
+            c for c in _STATUS_ORDER if c != "lost" or "lost" in set(status["status"])
+        ]
+        counts = (
+            status.groupby(["stage", "status"])
+            .size()
+            .unstack(fill_value=0)
+            .reindex(index=stages, columns=columns, fill_value=0)
+            .rename_axis(index=None, columns=None)
+        )
+        lines = [
+            f"Ensemble: {self.config.ensemble_id} ({self.root})",
+            f"{len(self.param_files)} members",
+            "",
+            counts.to_string(),
+        ]
+        for state in ("failed", "lost"):
+            rows = status[status["status"] == state]
+            if not rows.empty:
+                names = [f"{r.member}:{r.stage}" for r in rows.itertuples()]
+                lines += [
+                    "",
+                    f"{state.capitalize()} ({len(names)}): {_preview(names, 10)}",
+                ]
+                lines.append(
+                    f"  retry with: meristem ensemble retry --root {self.root} --{state}"
+                )
+        if show_members:
+            cols = ["member", "stage", "status", "job_id", "attempts"]
+            lines += ["", status[cols].to_string(index=False)]
+        return "\n".join(lines)
+
+    def manifest(self) -> pd.DataFrame:
+        """One row per member: paramgen key values, parameter file, and for each
+        stage its status, job ID, attempts, case root, archive directory and times
+
+        Returns:
+            pd.DataFrame: the manifest
+        """
+        status = self.status()
+        wide = pd.DataFrame({"member": list(self.param_files)})
+        wide["param_file"] = [str(p) for p in self.param_files.values()]
+        for stage in [s.name for s in self.config.member_stages]:
+            part = status[status["stage"] == stage].drop(columns="stage")
+            part = part.set_index("member")
+            part.columns = [f"{stage}_{c}" for c in part.columns]
+            part[f"{stage}_archive_dir"] = part[f"{stage}_case_root"].map(_archive_dir)
+            wide = wide.merge(part, left_on="member", right_index=True, how="left")
+
+        key_file = self.config.paramgen_dir / f"{self.config.paramgen_prefix}_key.csv"
+        if key_file.is_file():
+            key = pd.read_csv(key_file, dtype=str).rename(
+                columns={"ensemble": "member"}
+            )
+            wide = key.merge(wide, on="member", how="right")
+        return wide
+
+    def _find_retries(
+        self, runs: dict[str, ModelRun], stage: str | None, lost: bool, failed: bool
+    ) -> dict[str, tuple[str, bool]]:
+        """Pick the stage to retry for each member
+
+        With neither failed nor lost, the named member and/or stage is resubmitted
+        as it is (its current stage if only a member is named). Otherwise stages
+        are selected by status.
+
+        Args:
+            runs (dict[str, ModelRun]): member name: run
+            stage (str | None): only this member stage
+            lost (bool): select lost stages
+            failed (bool): select failed stages
+
+        Raises:
+            ValueError: an explicitly named stage is running or done
+
+        Returns:
+            dict[str, tuple[str, bool]]: member : (stage name, whether it was lost)
+        """
+        explicit = not failed and not lost
+        to_retry: dict[str, tuple[str, bool]] = {}
+        refused: list[str] = []
+
+        for member, run in runs.items():
+            if explicit:
+                target = (
+                    next((s for s in run.stages if s.config.name == stage), None)
+                    if stage
+                    else run.current_stage
+                )
+                if target is None:
+                    continue
+                status = target.state.status
+                if status not in (StageStatus.PENDING, StageStatus.FAILED):
+                    refused.append(f" {member}: {target.config.name} is {status.value}")
+                    continue
+                to_retry[member] = (target.config.name, False)
+
+            lost_names = set(run.lost_stages()) if lost else set()
+            for run_stage in run.stages:
+                name = run_stage.config.name
+                if stage is not None and name != stage:
+                    continue
+                if name in lost_names:
+                    to_retry[member] = (name, True)
+                elif failed and run_stage.state.status == StageStatus.FAILED:
+                    to_retry[member] = (name, False)
+        if refused:
+            raise ValueError(
+                "can only resubmit PENDING or FAILED stages (use --lost for a lost "
+                "one):\n" + "\n".join(refused)
+            )
+        return to_retry
 
     def prepare(self, member: str, stage: str):
         """Clone and configure one member's case
@@ -706,6 +960,16 @@ def _preview(names: list[str], n: int = 3) -> str:
     """
     more = f" and {len(names) - n} more" if len(names) > n else ""
     return f"{names[:n]}{more}"
+
+
+def _archive_dir(case_root: str | None) -> str | None:
+    """DOUT_S_ROOT of a case, or None if the case doesn't exist yet"""
+    if not case_root or not (Path(case_root) / "xmlquery").is_file():
+        return None
+    try:
+        return _run(["./xmlquery", "DOUT_S_ROOT", "--value"], Path(case_root))
+    except RuntimeError:
+        return None
 
 
 def _to_config(config: EnsembleConfig | dict | Path | str) -> EnsembleConfig:
