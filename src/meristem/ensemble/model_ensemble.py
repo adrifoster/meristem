@@ -964,11 +964,15 @@ def _preview(names: list[str], n: int = 3) -> str:
 
 def _archive_dir(case_root: str | None) -> str | None:
     """DOUT_S_ROOT of a case, or None if the case doesn't exist yet"""
-    if not case_root or not (Path(case_root) / "xmlquery").is_file():
+    if (
+        pd.isna(case_root)
+        or not case_root
+        or not (Path(case_root) / "xmlquery").is_file()
+    ):
         return None
     try:
         return _run(["./xmlquery", "DOUT_S_ROOT", "--value"], Path(case_root))
-    except RuntimeError:
+    except (RuntimeError, OSError):
         return None
 
 
