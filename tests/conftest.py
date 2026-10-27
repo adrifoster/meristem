@@ -1,10 +1,13 @@
 """Fixtures shared across all meristem tests."""
 
 from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from meristem.run.scheduler import JobState
-
+from tests.fakes.fake_pbs import FakePbs
 
 class FakeScheduler:
     """In-memory Scheduler that records submitted job files instead of calling qsub
@@ -36,3 +39,26 @@ class FakeScheduler:
 def fake_scheduler() -> FakeScheduler:
     """A fresh FakeScheduler"""
     return FakeScheduler()
+
+
+@pytest.fixture
+def fake(tmp_path):
+    """Fake PBS fixture"""
+    return FakePbs(tmp_path / "pbs")
+
+
+@pytest.fixture
+def meristem(fake):
+    """Fake meristem CLI"""
+
+    def _meristem(*args):
+        """Runs the meristem CLI a way a user would, but with the fake environment"""
+        return subprocess.run(
+            [sys.executable, "-m", "meristem", *args],
+            env=fake.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    return _meristem

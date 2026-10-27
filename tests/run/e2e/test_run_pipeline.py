@@ -1,4 +1,4 @@
-"""E2E tests"""
+"""E2E tests for mermistem run"""
 
 # pylint: disable=protected-access
 
