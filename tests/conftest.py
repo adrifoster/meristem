@@ -9,6 +9,7 @@ import pytest
 from meristem.run.scheduler import JobState
 from tests.fakes.fake_pbs import FakePbs
 
+
 class FakeScheduler:
     """In-memory Scheduler that records submitted job files instead of calling qsub
 

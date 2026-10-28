@@ -24,7 +24,7 @@ from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
 from meristem.run.stages import StageStatus
 
-from .conftest import MEMBERS
+from tests.ensemble.conftest import MEMBERS
 
 _STATE_FILE = "ensemble_state.json"
 

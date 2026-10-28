@@ -3,6 +3,7 @@
 import runpy
 import pytest
 
+
 def test_python_m_meristem_calls_main(monkeypatch):
     """Simple test that CLI works"""
     monkeypatch.setattr("meristem.cli.main", lambda: 3)

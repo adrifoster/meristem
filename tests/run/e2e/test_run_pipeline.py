@@ -14,7 +14,7 @@ pytestmark = pytest.mark.e2e
 
 
 def test_dry_run_submits_nothing(make_run, fake, meristem):
-    """Test make_run with --dry-run does nothing"""
+    """Test submit with --dry-run does nothing"""
     root = make_run([{"name": "stage1"}])
     result = meristem("run", "submit", "--root", str(root), "--dry-run")
     assert result.returncode == 0, result.stderr

@@ -1018,6 +1018,7 @@ def test_write_config_converts_numpy_scalars(lh_ensemble):
     assert loaded["seed"] == 42
     assert isinstance(loaded["seed"], int)
 
+
 def test_resolved_seed_does_not_modify_input_config(
     ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
 ):
