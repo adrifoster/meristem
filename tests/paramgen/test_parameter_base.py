@@ -279,6 +279,18 @@ def test_from_row_array_indices_out_of_bounds_raises(
         Parameter.from_row(joint_param_row, param_dataset, posterior_config=config)
 
 
+def test_from_row_non_broadcast_sources_within_bounds_pass(
+    joint_param_row, param_dataset, multi_source_posterior_config
+):
+    """from_row accepts several non-broadcast posterior sources whose
+    array_indices all fit the parameter, checking every source
+    """
+    param = Parameter.from_row(
+        joint_param_row, param_dataset, posterior_config=multi_source_posterior_config
+    )
+    assert [s.array_indices for s in param.sampler.sources] == [[0, 1], [2]]
+
+
 # ===========================================================================
 # Parameter free dims
 # ===========================================================================
@@ -477,6 +489,20 @@ def test_sample_passes_active_index_to_context(default_param, param_dataset, moc
     default_param.sample(0.5, param_dataset)
     ctx = mock_sample.call_args[0][1]
     assert ctx.array_index == 1
+
+
+@pytest.mark.parametrize("method, value", [("sample", 0.5), ("normalize", 0.02)])
+def test_active_index_on_unknown_dim_raises(
+    default_param, param_dataset, method, value
+):
+    """sample() and normalize() raise when the parameter is expanded along a
+    dimension it doesn't have
+    """
+    default_param.active_index = DimIndex("not_a_dim", 1)
+    with pytest.raises(
+        ValueError, match="expanded dimension 'not_a_dim' is not one of its dimensions"
+    ):
+        getattr(default_param, method)(value, param_dataset)
 
 
 def test_default_parameter_sample(default_param, param_dataset):

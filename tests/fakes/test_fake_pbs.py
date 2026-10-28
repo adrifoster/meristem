@@ -53,6 +53,15 @@ def test_fakepbs_control_file(pbs):
     assert not pbs.control_file.exists()
 
 
+def test_fakepbs_faults_accumulate_in_control_file(pbs):
+    """Test that injecting a second fault keeps the first (each injection
+    reads the existing control file before writing it)
+    """
+    pbs.fail_qsub(r"_advance\.pbs$")
+    pbs.break_qstat()
+    assert pbs.control() == {"qsub_fail": r"_advance\.pbs$", "qstat_broken": True}
+
+
 def test_fakepbs_json_file(pbs):
     """Test the json file naming"""
     assert pbs.json_file == pbs.spool / "jobs.json"
@@ -221,6 +230,21 @@ def test_decide(depend, dep, expected):
     assert _decide({"id": "2.fakepbs", "depend": depend}, dep) == expected
 
 
+def test_decide_missing_dependency_raises():
+    """Test that _decide raises for a job whose dependency doesn't exist"""
+    job = {"id": "2.fakepbs", "depend": ["afterok", "9.fakepbs"]}
+    with pytest.raises(ValueError, match=r"2\.fakepbs depends on .* doesn't exist"):
+        _decide(job, None)
+
+
+def test_decide_unexpected_dependency_state_raises():
+    """Test that _decide raises for a dependency in a state it doesn't know"""
+    job = {"id": "2.fakepbs", "depend": ["afterok", "1.fakepbs"]}
+    dep = {"state": "H", "exit": None, "deleted": False}
+    with pytest.raises(ValueError, match="unexpected dependency state 'H'"):
+        _decide(job, dep)
+
+
 def test_step_runs_one_job(tmp_path):
     """Test that step() runs a script correctly"""
     fake = FakePbs(tmp_path / "pbs")
@@ -306,6 +330,47 @@ def test_run_until_idle_runs_one_job(tmp_path):
     assert jobs[1]["exit"] is None
     assert jobs[1]["deleted"] is True
     assert jobs[0]["state"] == "F"
+
+
+def test_run_until_idle_stops_a_looping_chain(tmp_path):
+    """Test that run_until_idle gives up on a job chain that never ends
+    (here a job that resubmits itself) once it passes max_jobs
+    """
+    fake = FakePbs(tmp_path / "pbs")
+    script = tmp_path / "loop.sh"
+    # each run queues another copy of itself, so the queue never empties
+    script.write_text('#!/bin/bash\n#PBS -N loop\nqsub "$0"\n')
+    subprocess.run(["qsub", str(script)], env=fake.env, check=True)
+
+    with pytest.raises(RuntimeError, match="more than 5 jobs run or deleted"):
+        fake.run_until_idle(max_jobs=5)
+
+    jobs = fake.jobs()
+    # 6 ran (the 6th tripped the limit) and each queued the next
+    assert [j["state"] for j in jobs] == ["F"] * 6 + ["Q"]
+
+
+def test_run_until_idle_skips_a_waiting_job(tmp_path):
+    """Test that a queued job waiting on its dependency is skipped so a later
+    job can run, and then runs once the dependency is done
+    """
+    fake = FakePbs(tmp_path / "pbs")
+    order = tmp_path / "order.txt"
+
+    first = tmp_path / "first.sh"
+    first.write_text(
+        "#!/bin/bash\n#PBS -N first\n#PBS -W depend=afterok:2.fakepbs\n"
+        f"echo first >> {order}\n"
+    )
+    second = tmp_path / "second.sh"
+    second.write_text(f"#!/bin/bash\n#PBS -N second\necho second >> {order}\n")
+    subprocess.run(["qsub", str(first)], env=fake.env, check=True)
+    subprocess.run(["qsub", str(second)], env=fake.env, check=True)
+
+    fake.run_until_idle()
+
+    assert order.read_text().split() == ["second", "first"]
+    assert all(j["state"] == "F" and j["exit"] == 0 for j in fake.jobs())
 
 
 def test_run_until_idle_runs_dependencies(tmp_path):

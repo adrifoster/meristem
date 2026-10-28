@@ -127,7 +127,7 @@ class FakePbs:
             return False
         if action == "run":
             self._run_job(job)
-        elif action == "delete":
+        else:
             self._update_job(_number(job["id"]), state="F", deleted=True)
         return True
 

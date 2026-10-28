@@ -14,21 +14,21 @@ from .cime import (
     create_newcase,
     create_clone,
     xmlquery,
+    xmlchange,
     case_submit,
+    case_setup,
     CASE_DICT_FILE,
     preview_namelists,
+    _qsub,
 )
 
 
-@pytest.fixture(autouse=True)
-def fake_qsub(monkeypatch):
-    """Mock qsub"""
-    counter = iter(range(1000, 2000))
-
-    def _fake_qsub(script, depend=None):  # pylint: disable=unused-argument
-        return str(next(counter))
-
-    monkeypatch.setattr(cime, "_qsub", _fake_qsub)
+@pytest.fixture
+def fake_pbs_env(fake, monkeypatch):
+    """Point PATH and FAKE_PBS_SPOOL at the fake PBS, so qsub is the fake one"""
+    monkeypatch.setenv("PATH", fake.env["PATH"])
+    monkeypatch.setenv("FAKE_PBS_SPOOL", fake.env["FAKE_PBS_SPOOL"])
+    return fake
 
 
 @pytest.fixture
@@ -56,8 +56,8 @@ def clone_source(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def make_case(tmp_path, monkeypatch):
-    """Make case fixture"""
+def make_case(tmp_path, monkeypatch, fake_pbs_env):  # pylint: disable=unused-argument
+    """Make case fixture; case_submit on the case submits to the fake PBS"""
 
     def _make(faults=None):
         if faults is None:
@@ -77,6 +77,14 @@ def job_ids(root):
     return dict(item.split(":", 1) for item in value.split(", "))
 
 
+def _run_main(monkeypatch, *argv) -> int:
+    """Run cime.main() with argv as the command line and return its exit code"""
+    monkeypatch.setattr(sys, "argv", ["cime.py", *argv])
+    with pytest.raises(SystemExit) as exc:
+        cime.main()
+    return exc.value.code
+
+
 def test_create_newcase_makes_case_files(tmp_path, monkeypatch):
     """Test create_newcase basic behavior"""
     monkeypatch.delenv("FAKE_CIME", raising=False)
@@ -90,6 +98,30 @@ def test_create_newcase_makes_case_files(tmp_path, monkeypatch):
     assert case_dict["CASE"] == "case"
     assert case_dict["BUILD_COMPLETE"] is False
     assert case_dict["DOUT_S_ROOT"] == str(case_root / "archive")
+
+
+def test_create_newcase_writes_faults_from_env(tmp_path, monkeypatch):
+    """Test that create_newcase bakes FAKE_CIME into the case's faults file"""
+    monkeypatch.setenv("FAKE_CIME", json.dumps({"st_archive": "fail"}))
+    case_root = tmp_path / "case"
+
+    create_newcase(case_root)
+    faults = json.loads((case_root / cime.FAULTS_DICT_FILE).read_text())
+    assert faults == {"st_archive": "fail"}
+
+
+def test_create_newcase_refuses_existing_case(tmp_path, monkeypatch, capsys):
+    """Test that, like CIME, create_newcase refuses a case_root that already
+    exists, and leaves it as it was
+    """
+    monkeypatch.delenv("FAKE_CIME", raising=False)
+    case_root = tmp_path / "case"
+    case_root.mkdir()
+    (case_root / "keep.txt").write_text("mine\n")
+
+    assert create_newcase(case_root) == 1
+    assert "already exists" in capsys.readouterr().err
+    assert sorted(p.name for p in case_root.iterdir()) == ["keep.txt"]
 
 
 WRAPPER_FILES = (
@@ -199,6 +231,18 @@ def test_xmlquery_prints_false_value(case_root, capsys):
     assert capsys.readouterr().out.strip() == "False"
 
 
+def test_xmlchange_passes(case_root):
+    """Make sure xmlchange returns 0"""
+    rc = xmlchange(case_root, ["args"])
+    assert rc == 0
+
+
+def test_case_setup_passes(case_root):
+    """Make sure case_setup returns 0"""
+    rc = case_setup(case_root)
+    assert rc == 0
+
+
 def test_xmlquery_unknown_key(case_root, capsys):
     """Test that xmlquery fails with an unknown key"""
     rc = xmlquery(case_root, ["NOT_A_KEY"])
@@ -244,8 +288,10 @@ def test_xmlquery_requires_key(case_root):
         xmlquery(case_root, [])
 
 
-def test_case_submit_records_run_and_archive(make_case):
-    """Test that case_submit records the run and st.archive"""
+def test_case_submit_records_run_and_archive(make_case, fake_pbs_env):
+    """Test that case_submit queues case.run then st_archive (after case.run
+    succeeds) and records both job IDs
+    """
     root = make_case()
 
     rc = case_submit(root, [])
@@ -253,7 +299,10 @@ def test_case_submit_records_run_and_archive(make_case):
     assert rc == 0
     ids = job_ids(root)
     assert list(ids) == ["case.run", "case.st_archive"]
-    assert all(ids.values())  # both have a non-empty job id
+    jobs = {j["id"]: j for j in fake_pbs_env.jobs()}
+    assert sorted(jobs) == sorted(ids.values())
+    assert jobs[ids["case.run"]]["depend"] is None
+    assert jobs[ids["case.st_archive"]]["depend"] == ["afterok", ids["case.run"]]
 
 
 def test_case_submit_no_archive(make_case):
@@ -274,6 +323,17 @@ def test_case_submit_injected_failure(make_case, capsys):
     assert "injected failure" in capsys.readouterr().err
     case_dict = json.loads((root / CASE_DICT_FILE).read_text())
     assert case_dict["JOB_IDS"] is None  # returned before anything was submitted
+
+
+def test_case_submit_without_faults_file_has_no_faults(make_case):
+    """Test that deleting a case's faults file clears its faults (how the e2e
+    tests clear an injected failure before a retry)
+    """
+    root = make_case({"case.submit": "fail"})
+    (root / cime.FAULTS_DICT_FILE).unlink()
+
+    assert case_submit(root, []) == 0
+    assert "case.run" in job_ids(root)
 
 
 def test_case_submit_missing_case_json(make_case, capsys):
@@ -303,6 +363,37 @@ def test_case_submit_job_faults_do_not_fail_submit(make_case, fault):
     assert "JOB_IDS" in json.loads((root / CASE_DICT_FILE).read_text())
 
 
+def _job_script(tmp_path: Path, name: str = "job") -> Path:
+    """Write a minimal PBS job script"""
+    script = tmp_path / f"{name}.sh"
+    script.write_text(f"#!/bin/bash\n#PBS -N {name}\necho hi\n", encoding="utf-8")
+    return script
+
+
+def test_qsub_submits_to_fake_pbs(fake_pbs_env, tmp_path):
+    """Test that _qsub submits a script with the fake qsub and returns its job ID"""
+    job_id = _qsub(_job_script(tmp_path))
+    [job] = fake_pbs_env.jobs()
+    assert job["id"] == job_id
+    assert job["depend"] is None
+
+
+def test_qsub_with_depend(fake_pbs_env, tmp_path):
+    """Test that _qsub passes depend as an afterok dependency"""
+    first = _qsub(_job_script(tmp_path, "first"))
+    second = _qsub(_job_script(tmp_path, "second"), depend=first)
+    job = next(j for j in fake_pbs_env.jobs() if j["id"] == second)
+    assert job["depend"] == ["afterok", first]
+
+
+def test_qsub_failure_raises(fake_pbs_env, tmp_path):
+    """Test that a failed qsub raises with qsub's error"""
+    fake_pbs_env.fail_qsub(r"job\.sh$")
+    with pytest.raises(RuntimeError, match="qsub failed for .*injected failure"):
+        _qsub(_job_script(tmp_path))
+    assert not fake_pbs_env.jobs()
+
+
 def test_preview_namelists_writes_lnd_in(case_root):
     """Test that preview_namelists writes the lnd_in file"""
     (case_root / "user_nl_clm").write_text("hist_nhtfrq = -24\n", encoding="utf-8")
@@ -330,3 +421,33 @@ def test_preview_namelists_requires_user_nl_clm(case_root):
 
     with pytest.raises(FileNotFoundError):
         preview_namelists(case_root)
+
+
+def test_main_unknown_command_exits_2(monkeypatch, tmp_path, capsys):
+    """Test that main rejects an unknown command"""
+    assert _run_main(monkeypatch, "bogus", str(tmp_path)) == 2
+    assert "unknown command 'bogus'" in capsys.readouterr().err
+
+
+def test_main_create_newcase_gets_case_root(monkeypatch, tmp_path):
+    """Test that main passes create_newcase just the case root"""
+    monkeypatch.delenv("FAKE_CIME", raising=False)
+    case_root = tmp_path / "case"
+    assert _run_main(monkeypatch, "create_newcase", str(case_root)) == 0
+    assert (case_root / CASE_DICT_FILE).is_file()
+
+
+def test_main_xmlquery_gets_case_root_and_args(monkeypatch, case_root, capsys):
+    """Test that main passes other commands the case root and the rest of argv"""
+    assert _run_main(monkeypatch, "xmlquery", str(case_root), "--value", "CASE") == 0
+    assert capsys.readouterr().out.strip() == "case"
+
+
+def test_main_create_clone_gets_its_flags(monkeypatch, tmp_path, clone_source):
+    """Test that main passes create_clone its --case/--clone flags"""
+    case = tmp_path / "clone"
+    code = _run_main(
+        monkeypatch, "create_clone", "--case", str(case), "--clone", str(clone_source)
+    )
+    assert code == 0
+    assert (case / CASE_DICT_FILE).is_file()

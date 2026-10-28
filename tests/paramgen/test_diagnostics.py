@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import numpy as np
 import pytest
 import pandas as pd
@@ -318,6 +319,39 @@ def test_read_ensemble_values_matches_member_files(lh_ensemble):
             ds["fates_leaf_slatop"].values[:2],
         )
         ds.close()
+
+
+def test_read_ensemble_values_skips_non_numeric(json_param_file, tmp_path):
+    """Non-numeric variables are skipped when variables is None, but are read
+    if requested explicitly.
+    """
+    with open(json_param_file, encoding="utf-8") as f:
+        data = json.load(f)
+
+    data["parameters"]["fates_pftname"] = {
+        "dtype": "string",  # use whatever dtype ParameterDataset expects for text
+        "dims": ["fates_pft"],
+        "long_name": "PFT name",
+        "units": "unitless",
+        "data": ["pft_a", "pft_b", "pft_c"],
+    }
+
+    ens_dir = tmp_path / "string_ensemble"
+    ens_dir.mkdir()
+    with open(ens_dir / "member_0000.json", "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    (ens_dir / "test.txt").write_text("member_0000\n")
+
+    # variables=None: the string variable is skipped, numeric ones are kept
+    df = read_ensemble_values(ens_dir, "test", drop_constant=False)
+    assert not any(col.startswith("fates_pftname") for col in df.columns)
+    assert "fates_leaf_slatop_0" in df.columns
+
+    # explicit request bypasses the skip
+    df_explicit = read_ensemble_values(
+        ens_dir, "test", variables=["fates_pftname"], drop_constant=False
+    )
+    assert "fates_pftname_0" in df_explicit.columns
 
 
 def test_read_ensemble_values_variables_and_keep_constant(lh_ensemble):

@@ -209,5 +209,5 @@ def main():
     sys.exit(COMMANDS[name](sys.argv[2:]))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

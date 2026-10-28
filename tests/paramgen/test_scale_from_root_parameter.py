@@ -47,7 +47,7 @@ def test_scale_from_root_validate_multiple_base_params_raises(
     """ScaleFromRootParam raises for multiple base_params"""
 
     default_row["parameter_name"] = "fates_leaf_vcmax25top"
-    default_row["parameter_name"] = "['fates_leafage_class', 'fates_pft']"
+    default_row["coord"] = "['fates_leafage_class', 'fates_pft']"
     default_row["param_type"] = "scale_from_root"
     default_row["param_min"] = "20.0"
     default_row["param_max"] = "90.0"
@@ -56,6 +56,23 @@ def test_scale_from_root_validate_multiple_base_params_raises(
 
     with pytest.raises(ValueError, match="Too many base_params"):
         Parameter.from_row(default_row, param_dataset)
+
+
+def test_scale_from_root_variables_to_validate(scale_from_root_row, param_dataset):
+    """Both the base param and the root param are checked against the dataset"""
+    param = Parameter.from_row(scale_from_root_row, param_dataset)
+    # pylint: disable=protected-access
+    assert param._variables_to_validate() == [
+        "fates_nonhydro_smpsc",
+        "fates_nonhydro_smpso",
+    ]
+
+
+def test_scale_from_root_root_is_base_raises(scale_from_root_row, param_dataset):
+    """ScaleFromRootParam raises if its root_param is also its base_param"""
+    scale_from_root_row["base_params"] = "fates_nonhydro_smpso"
+    with pytest.raises(ValueError, match="can't scale from itself"):
+        Parameter.from_row(scale_from_root_row, param_dataset)
 
 
 def test_scale_from_root_get_default(scale_from_root_row, param_dataset):

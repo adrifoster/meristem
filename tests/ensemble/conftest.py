@@ -9,10 +9,12 @@ import pytest
 # members written by write_paramgen by default, as paramgen names them
 MEMBERS = ["ens_0000", "ens_0001", "ens_0002"]
 
+
 @pytest.fixture
 def members():
     """ensemble members fixture"""
     return MEMBERS
+
 
 @pytest.fixture
 def member_stage_dict() -> dict:

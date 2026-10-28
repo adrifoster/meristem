@@ -355,7 +355,7 @@ class ModelRun:
         """
         try:
             idx = self.stage_names.index(after)
-        except ValueError as exc:
+        except ValueError as exc:  # pragma: no cover
             # this branch is theoretically unreachable via the public API since callers
             # first go through _stage() which raises the same error so this is defensive
             # in case we ever call this without _stage first
@@ -378,7 +378,9 @@ class ModelRun:
         """
         try:
             idx = self.stage_names.index(before)
-        except ValueError as exc:
+        except ValueError as exc:  # pragma: no cover
+            # defensive, like _next_stage: the only caller passes the name of
+            # one of this run's own stages
             raise ValueError(
                 f"No stage named {before!r}. " f"Known stages: {self.stage_names}"
             ) from exc
@@ -592,7 +594,21 @@ class ModelRun:
         if next_stage is None:
             print(f" {self.run_id}: all stages complete!")
             return None
-        return self._submit_stage(next_stage, dry_run=dry_run)
+        try:
+            return self._submit_stage(next_stage, dry_run=dry_run)
+        except Exception:
+            # the next stage couldn't be submitted (e.g. its script is missing,
+            # or qsub failed); mark it FAILED so the stall shows in status and a
+            # plain retry resubmits it. A stage that isn't PENDING (already
+            # submitted, done, or failed) is left as it is
+            if next_stage.state.status is StageStatus.PENDING:
+                next_stage.state.status = StageStatus.FAILED
+                self.save()
+                print(
+                    f"  {self.run_id} / {next_stage.config.name}: FAILED "
+                    "(couldn't be submitted)"
+                )
+            raise
 
     def retry(
         self,
@@ -683,11 +699,7 @@ class ModelRun:
 
         # validation and submission
         stage.config.validate()
-        if stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
-            raise ValueError(
-                f"Stage {stage.config.name!r} is {stage.state.status.value} "
-                "- can only submit PENDING or FAILED stages."
-            )
+        _check_submittable(stage)
         if dry_run:
             return self._dry_run_stage(stage, depend_job_id, skip_script)
         job_file = self._write_job_script(stage, depend_job_id, skip_script)
@@ -846,6 +858,22 @@ class ModelRun:
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
+
+
+def _check_submittable(stage: Stage) -> None:
+    """Check a stage can be submitted
+
+    Args:
+        stage (Stage): stage
+
+    Raises:
+        ValueError: stage isn't PENDING or FAILED
+    """
+    if stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
+        raise ValueError(
+            f"Stage {stage.config.name!r} is {stage.state.status.value} "
+            "- can only submit PENDING or FAILED stages."
+        )
 
 
 def _validate_config(config: dict) -> None:

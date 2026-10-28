@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import pytest
 
+from tests.run.e2e.conftest import CREATE_CASE
+
 pytestmark = pytest.mark.e2e
 
 
@@ -74,7 +76,7 @@ def test_three_stages_plus_final(
     record = tmp_path / "args.txt"
     # $2/$3 don't exist for the first stage, so ${2:-} avoids a set -u error
     log_args = f'echo "$1|${{2:-}}|${{3:-}}" >> {record}'
-    cime_body = f'{log_args}\nfake_create_newcase "$1"'
+    cime_body = f"{log_args}\n{CREATE_CASE}"
 
     root = make_run(
         [
@@ -351,6 +353,43 @@ def test_advance_qsub_fails_then_retry(make_run, stage_script, fake, meristem):
     assert "✓" in next(l for l in lines if "stage1" in l), result.stdout + fake.logs()
     assert "✓" in next(l for l in lines if "stage2" in l), result.stdout + fake.logs()
     assert "attempts=2" in next(l for l in lines if "stage1" in l), result.stdout
+
+
+def test_next_stage_script_missing_fails_it_then_retry(
+    make_run, fake, meristem, tmp_path
+):
+    """Test that when the advance job can't submit the next stage (its script
+    was removed), the finished stage is done and the next stage failed, and a
+    plain retry resubmits only the next stage
+    """
+    root = make_run([{"name": "stage1"}, {"name": "stage2"}])
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    script = tmp_path / "stage2.sh"
+    body = script.read_text(encoding="utf-8")
+    script.unlink()
+    fake.run_until_idle()
+
+    result = meristem("run", "status", "--root", str(root))
+    lines = result.stdout.splitlines()[1:]
+    assert "✓" in next(l for l in lines if "stage1" in l), result.stdout + fake.logs()
+    assert "✗" in next(l for l in lines if "stage2" in l), result.stdout + fake.logs()
+    advance = next(j for j in fake.jobs() if j["name"] == "e2e_test_stage1_advance")
+    assert advance["exit"] != 0, fake.logs()
+    assert "cannot open script" in fake.logs()
+
+    script.write_text(body, encoding="utf-8")
+    result = meristem("run", "retry", "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+
+    result = meristem("run", "status", "--root", str(root))
+    lines = result.stdout.splitlines()[1:]
+    for name in ("stage1", "stage2"):
+        line = next(l for l in lines if name in l)
+        # status only shows attempts once a stage has been submitted twice
+        assert "✓" in line and "attempts=" not in line, result.stdout + fake.logs()
+    state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
+    assert [s["attempts"] for s in state["stages"]] == [1, 1], state
 
 
 def test_killed_setup_job_is_lost_then_retry(make_run, fake, meristem):

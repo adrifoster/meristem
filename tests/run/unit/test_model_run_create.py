@@ -217,6 +217,22 @@ def test_model_run_create_null_command_raises(run_config_dict):
         ModelRun.create(run_config_dict)
 
 
+@pytest.mark.parametrize("post_command", ["echo hi", None])
+def test_model_run_create_post_command_raises(run_config_dict, post_command):
+    """Test that a run config can't set a stage post_command (even an empty
+    one), naming the stage, and writes nothing
+    """
+    second = {
+        **run_config_dict["stages"][0],
+        "name": "later",
+        "post_command": post_command,
+    }
+    run_config_dict["stages"].append(second)
+    with pytest.raises(ValueError, match=r"stage\(s\) \['later'\] set 'post_command'"):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
 def test_model_run_create_no_script_raises(run_config_dict):
     """Test that a stage with no script is rejected at create, writing nothing"""
     del run_config_dict["stages"][0]["script"]

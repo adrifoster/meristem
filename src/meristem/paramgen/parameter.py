@@ -619,7 +619,9 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
     """
 
     def _validate_specs(self) -> None:
-        """Require root_param and base_params to both be set. Also len(base_params) == 1."""
+        """Require root_param and base_params to both be set, len(base_params) == 1,
+        and root_param not to be the base param (a parameter can't scale from itself).
+        """
         missing = []
         if self.spec.root_param is None:
             missing.append("root_param")
@@ -636,13 +638,16 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
                 "Shouldn't have more than one base_param for SlicedParameters. "
                 f"Got {len(self.spec.base_params)}: {self.spec.base_params}"
             )
+        if self.spec.root_param in self.spec.base_params:
+            raise ValueError(
+                f"Parameter '{self.spec.name}' has root_param "
+                f"'{self.spec.root_param}' as its base_param; a scale_from_root "
+                "parameter can't scale from itself."
+            )
 
     def _variables_to_validate(self) -> list[str]:
         """Include both base_params and root_param in dataset validation."""
-        variables = list(self.spec.base_params)
-        if self.spec.root_param not in variables and self.spec.root_param is not None:
-            variables.append(self.spec.root_param)
-        return variables
+        return [*self.spec.base_params, self.spec.root_param]
 
     def _full_default(self, default_ds: ParameterDataset) -> np.ndarray:
         return default_ds[self.spec.base_params[0]].values

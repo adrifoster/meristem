@@ -22,20 +22,26 @@ ACCEPTED_KEYS = (
 )
 
 
-def create_newcase(case_root: Path):
+def create_newcase(case_root: Path) -> int:
     """Fake create_newcase
     Creates the case_root and writes exectuables that are wrappers
-    bake to fake/cime.py
+    bake to fake/cime.py. Like CIME, refuses a case_root that already exists
 
     Args:
         case_root (Path): path to case_root
+
+    Returns:
+        int: return code
     """
-    case_root.mkdir(parents=True, exist_ok=True)
+    if case_root.exists():
+        print(f"create_newcase: {case_root} already exists", file=sys.stderr)
+        return 1
+    case_root.mkdir(parents=True)
 
     faults = json.loads(os.environ.get("FAKE_CIME", "{}"))
-    faults_file = case_root / FAULTS_DICT_FILE
-    if not faults_file.is_file():
-        faults_file.write_text(json.dumps(faults, indent=2), encoding="utf-8")
+    (case_root / FAULTS_DICT_FILE).write_text(
+        json.dumps(faults, indent=2), encoding="utf-8"
+    )
 
     for file in (
         "case.submit",
@@ -324,5 +330,5 @@ def main():
     sys.exit(code)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

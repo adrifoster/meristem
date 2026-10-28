@@ -217,6 +217,38 @@ def test_json_save_and_reload(json_dataset, tmp_path):
     )
 
 
+def test_json_string_variable_loads_as_strings(json_param_file, tmp_path):
+    """A string-typed variable in a JSON file loads as a string array with
+    the declared shape, and float variables still load as float.
+    """
+    with open(json_param_file, encoding="utf-8") as f:
+        data = json.load(f)
+
+    data["parameters"]["fates_pftname"] = {
+        "dtype": "string",
+        "dims": ["fates_pft"],
+        "long_name": "PFT name",
+        "units": "unitless",
+        "data": ["pft_a", "pft_b", "pft_c"],
+    }
+
+    path = tmp_path / "with_strings.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    ds = ParameterDataset.from_path(path)
+    try:
+        names = ds["fates_pftname"].values
+        assert names.dtype.kind == "U"
+        assert names.shape == (3,)
+        assert list(names) == ["pft_a", "pft_b", "pft_c"]
+
+        # the float path is unchanged
+        assert ds["fates_leaf_slatop"].values.dtype.kind == "f"
+    finally:
+        ds.close()
+
+
 def test_json_save_preserves_modified_values(json_dataset, tmp_path):
     """FATESJSONParameterDataset.save() writes modified values correctly."""
     json_dataset["fates_leaf_slatop"].values = np.array([1.0, 2.0, 3.0])

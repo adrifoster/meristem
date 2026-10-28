@@ -13,6 +13,8 @@ import json
 import numpy as np
 import xarray as xr
 
+_STRING_DTYPES = {"string", "char"}
+
 # ---------------------------------------------------------------------------
 # ParameterVariable
 # ---------------------------------------------------------------------------
@@ -259,7 +261,10 @@ class FATESJSONParameterVariable(ParameterVariable):
             # single-element list — extract scalar value
             val = data[0] if isinstance(data, list) else data
             return np.asarray(val if val is not None else np.nan)
-        arr = np.array(data, dtype=float)
+        if self._entry.get("dtype") in _STRING_DTYPES:
+            arr = np.array(data, dtype=str)
+        else:
+            arr = np.array(data, dtype=float)
         if dims:
             expected_shape = tuple(self._dim_sizes[d] for d in dims)
             arr = arr.reshape(expected_shape)

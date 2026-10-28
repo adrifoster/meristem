@@ -158,3 +158,86 @@ def test_advance_non_pending_or_failed_rases(created_run, cant_advance_status):
     object.__setattr__(created_run.stages[0].state, "_status", cant_advance_status)
     with pytest.raises(ValueError, match="advance"):
         created_run.advance("spinup_ad")
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("next_status", [StageStatus.SUBMITTED, StageStatus.DONE])
+def test_advance_next_stage_already_started_raises(
+    two_stage_run, fake_scheduler, next_status, dry_run
+):
+    """Test that advance() won't resubmit a next stage that's already been
+    submitted or done (only possible with an inconsistent state file): it
+    submits nothing and leaves the next stage as it was, on disk too. A real
+    advance still marks the completed stage DONE, since its run finished
+    """
+    object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.SUBMITTED)
+    object.__setattr__(two_stage_run.stages[0].state, "_submit_time", time.time() - 100)
+    object.__setattr__(two_stage_run.stages[1].state, "_status", next_status)
+    two_stage_run.save()
+    with pytest.raises(
+        ValueError,
+        match=f"Stage 'spinup_sasu' is {next_status.value} - can only submit "
+        "PENDING or FAILED stages",
+    ):
+        two_stage_run.advance("spinup_ad", dry_run=dry_run)
+    assert not fake_scheduler.submitted
+    completed = StageStatus.SUBMITTED if dry_run else StageStatus.DONE
+    loaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
+    for run in (two_stage_run, loaded):
+        assert run.stages[0].state.status is completed
+        assert run.stages[1].state.status is next_status
+
+
+@pytest.mark.parametrize("cause", ["script_missing", "qsub_fails"])
+def test_advance_next_stage_not_submitted_marks_it_failed(
+    two_stage_run, script_file, fake_scheduler, monkeypatch, cause
+):
+    """Test that when advance() can't submit the next stage (its script is
+    missing, or qsub fails), the completed stage is DONE (its run finished)
+    and the next stage is FAILED, on disk too, and the error is re-raised
+    """
+    two_stage_run.submit()
+    if cause == "script_missing":
+        script_file.unlink()
+        error, match = ValueError, "cannot open script"
+    else:
+
+        def _fail(job_file):
+            raise RuntimeError(f"qsub failed for {job_file}")
+
+        monkeypatch.setattr(fake_scheduler, "submit", _fail)
+        error, match = RuntimeError, "qsub failed"
+
+    with pytest.raises(error, match=match):
+        two_stage_run.advance("spinup_ad")
+
+    loaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
+    for run in (two_stage_run, loaded):
+        assert run.stages[0].state.status is StageStatus.DONE
+        sasu = run.stages[1].state
+        assert sasu.status is StageStatus.FAILED
+        assert sasu.job_id is None
+        assert sasu.submit_time is None
+        assert sasu.end_time is None
+        assert sasu.attempts == 0
+
+
+def test_advance_next_stage_not_submitted_then_retry(two_stage_run, script_file):
+    """Test that a next stage advance() couldn't submit is picked up by a plain
+    retry, without resubmitting the completed stage
+    """
+    two_stage_run.submit()
+    script = script_file.read_text(encoding="utf-8")
+    script_file.unlink()
+    with pytest.raises(ValueError):
+        two_stage_run.advance("spinup_ad")
+
+    script_file.write_text(script, encoding="utf-8")
+    job_id = two_stage_run.retry(None)
+
+    ad, sasu = two_stage_run.stages
+    assert ad.state.status is StageStatus.DONE
+    assert ad.state.attempts == 1
+    assert sasu.state.status is StageStatus.SUBMITTED
+    assert sasu.state.job_id == job_id
+    assert sasu.state.attempts == 1

@@ -7,16 +7,20 @@ from pathlib import Path
 import yaml
 import pytest
 
+# create the stage's case unless it already exists: like CIME, the fake
+# create_newcase refuses an existing case, and a retried stage reruns its script
+CREATE_CASE = '[[ -d "$1" ]] || fake_create_newcase "$1"'
+
 
 @pytest.fixture
 def stage_script(tmp_path):
     """stage_script factory"""
 
-    def _stage_script(body: str = 'fake_create_newcase "$1"', name="stage") -> Path:
+    def _stage_script(body: str = CREATE_CASE, name="stage") -> Path:
         """Create a fake script for a stage
 
         Args:
-            body (str, optional): body of script. Defaults to 'fake_create_newcase "_summary_"'.
+            body (str, optional): body of script. Defaults to CREATE_CASE.
             name (str, optional): name of file. Defaults to "stage".
 
         Returns:

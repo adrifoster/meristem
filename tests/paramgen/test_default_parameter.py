@@ -276,6 +276,28 @@ def test_default_set_value_all_positions_fixed_returns_original(
     )
 
 
+@pytest.mark.parametrize(
+    "fixed_indices",
+    [
+        {"fates_leafage_class": [0]},  # a dimension this parameter doesn't have
+        {"fates_pft": []},  # nothing fixed on its dimension
+    ],
+)
+def test_default_set_value_ignored_fixed_indices_hold_nothing(
+    default_row, param_dataset, working_param_dataset, fixed_indices
+):
+    """DefaultParameter.set_value writes every position when fixed_indices
+    names another dimension or lists no indices
+    """
+    param = Parameter.from_row(default_row, param_dataset)
+    working_param_dataset["fates_leaf_slatop"].values = np.array([1.0, 2.0, 3.0])
+    param.set_value(working_param_dataset, param_dataset, 9.0, fixed_indices)
+    np.testing.assert_equal(
+        working_param_dataset["fates_leaf_slatop"].values,
+        [9.0, 9.0, 9.0],
+    )
+
+
 def test_default_set_value_shape_mismatch_raises(
     default_row, param_dataset, working_param_dataset
 ):

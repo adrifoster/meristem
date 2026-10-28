@@ -47,11 +47,11 @@ def sort_params(params: list[Parameter]) -> list[Parameter]:
     for param in params:
         if isinstance(param, ScaleFromRootParameter):
             root = param.spec.root_param
+            # a param's root is never one of its own base_params (_validate_specs)
             if root in var_to_param:
                 root_param_name = var_to_param[root].spec.name
-                if root_param_name != param.spec.name:
-                    dependents[root_param_name].append(param.spec.name)
-                    in_degree[param.spec.name] += 1
+                dependents[root_param_name].append(param.spec.name)
+                in_degree[param.spec.name] += 1
 
     # Kahn's algorithm: seed with all zero-in-degree nodes in original order
     queue: deque[str] = deque(
@@ -64,7 +64,9 @@ def sort_params(params: list[Parameter]) -> list[Parameter]:
         sorted_names.append(name)
         for dependent in dependents[name]:
             in_degree[dependent] -= 1
-            if in_degree[dependent] == 0:
+            # each param has at most one root, so this is always true for now;
+            # kept so the sort stays correct if a multi-root param type is added
+            if in_degree[dependent] == 0:  # pragma: no branch
                 queue.append(dependent)
 
     if len(sorted_names) != len(params):
