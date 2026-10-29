@@ -197,6 +197,50 @@ def test_json_variable_values_setter(json_dataset):
     np.testing.assert_allclose(json_dataset["fates_leaf_slatop"].values, new_values)
 
 
+def test_json_whole_number_data_loads_as_float(tmp_path):
+    """Whole-number JSON data (e.g. [50, 60, 70]) loads as a float array, so
+    decimals written into it later aren't truncated
+    """
+    path = tmp_path / "whole.json"
+    data = {
+        "dimensions": {"fates_pft": 3, "fates_leafage_class": 2},
+        "parameters": {
+            "vec": {"dtype": "float", "dims": ["fates_pft"], "data": [50, 60, 70]},
+            "mat": {
+                "dtype": "float",
+                "dims": ["fates_leafage_class", "fates_pft"],
+                "data": [[50, 60, 70], [40, 50, 60]],
+            },
+        },
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    ds = FATESJSONParameterDataset.load(path)
+
+    for name in ("vec", "mat"):
+        values = ds[name].values
+        assert values.dtype == np.float64
+        values[0] = 10.37
+        np.testing.assert_allclose(ds[name].values[0], 10.37)
+
+
+def test_json_whole_number_scalar_loads_as_float():
+    """A whole-number JSON scalar (e.g. [5]) loads as a float, so a decimal
+    written into it isn't truncated
+    """
+    ds = FATESJSONParameterDataset(
+        {
+            "dimensions": {},
+            "parameters": {
+                "sc": {"dtype": "float", "dims": ["scalar"], "data": [5]},
+            },
+        }
+    )
+    values = ds["sc"].values
+    assert values.dtype == np.float64
+    values[()] = 10.37
+    np.testing.assert_allclose(ds["sc"].values, 10.37)
+
+
 def test_json_copy_is_independent(json_dataset):
     """FATESJSONParameterDataset.copy() produces an independent working copy."""
     copy = json_dataset.copy()
@@ -247,6 +291,21 @@ def test_json_string_variable_loads_as_strings(json_param_file, tmp_path):
         assert ds["fates_leaf_slatop"].values.dtype.kind == "f"
     finally:
         ds.close()
+
+
+def test_json_string_scalar_loads_as_string():
+    """A string-typed scalar loads as a string, not as a float"""
+    ds = FATESJSONParameterDataset(
+        {
+            "dimensions": {},
+            "parameters": {
+                "name": {"dtype": "string", "dims": ["scalar"], "data": ["grass"]},
+            },
+        }
+    )
+    value = ds["name"].values
+    assert value.dtype.kind == "U"
+    assert value == "grass"
 
 
 def test_json_save_preserves_modified_values(json_dataset, tmp_path):

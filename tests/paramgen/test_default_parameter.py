@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from meristem.paramgen.parameter import DimIndex, Parameter
+from meristem.paramgen.parameter_dataset import FATESJSONParameterDataset
 
 
 def test_default_validate_specs_passes(default_row, param_dataset):
@@ -296,6 +297,42 @@ def test_default_set_value_ignored_fixed_indices_hold_nothing(
         working_param_dataset["fates_leaf_slatop"].values,
         [9.0, 9.0, 9.0],
     )
+
+
+@pytest.mark.parametrize(
+    "active_index, fixed_indices, expected",
+    [
+        # expanded parameter: writes one PFT into the default array
+        (DimIndex("fates_pft", 1), None, [50.0, 10.37, 70.0]),
+        # fixed PFT held at its default while the others are written
+        (None, {"fates_pft": [0]}, [50.0, 10.37, 10.37]),
+    ],
+)
+def test_default_set_value_whole_number_json_default_keeps_decimals(
+    default_row, active_index, fixed_indices, expected
+):
+    """A sampled value written into a JSON default of whole numbers (which
+    used to load as an int array) keeps its decimals
+    """
+    default_ds = FATESJSONParameterDataset(
+        {
+            "dimensions": {"fates_pft": 3},
+            "parameters": {
+                "fates_leaf_slatop": {
+                    "dtype": "float",
+                    "dims": ["fates_pft"],
+                    "data": [50, 60, 70],
+                }
+            },
+        }
+    )
+    param = Parameter.from_row(default_row, default_ds)
+    param.active_index = active_index
+    working = default_ds.copy()
+
+    param.set_value(working, default_ds, 10.37, fixed_indices)
+
+    np.testing.assert_allclose(working["fates_leaf_slatop"].values, expected)
 
 
 def test_default_set_value_shape_mismatch_raises(

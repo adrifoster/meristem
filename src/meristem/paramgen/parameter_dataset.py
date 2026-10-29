@@ -257,11 +257,15 @@ class FATESJSONParameterVariable(ParameterVariable):
     def _load_values(self) -> np.ndarray:
         data = self._entry["data"]
         dims = self._entry.get("dims", [])
+        is_string = self._entry.get("dtype") in _STRING_DTYPES
         if dims == ["scalar"]:
             # single-element list — extract scalar value
             val = data[0] if isinstance(data, list) else data
-            return np.asarray(val if val is not None else np.nan)
-        if self._entry.get("dtype") in _STRING_DTYPES:
+            if is_string:
+                return np.asarray(val, dtype=str)
+            # float, so whole numbers (e.g. [5]) don't load as int
+            return np.asarray(val if val is not None else np.nan, dtype=float)
+        if is_string:
             arr = np.array(data, dtype=str)
         else:
             arr = np.array(data, dtype=float)
