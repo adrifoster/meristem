@@ -183,12 +183,14 @@ class Parameter(ABC):
                 )
 
     def _validate_pft_dim(self) -> None:
-        """Check that the PFT dimension can be identified where it's needed.
+        """Check that the PFT dimension can be identified where it's needed, and
+        that per-PFT bounds fit it.
 
         Raises:
             ValueError: If spec.pft_dim is not a free dimension, or if a
                 non-scalar parameter has per-PFT bounds but no single PFT
                 dimension can be identified.
+            ValueError: If the PFT sheet lists a pft_index past the last PFT.
         """
         dims = self.free_dims or []
         if self.spec.pft_dim is not None and self.spec.pft_dim not in dims:
@@ -206,6 +208,25 @@ class Parameter(ABC):
                 f"dimension can't be identified from its dimensions {dims}. "
                 "Set 'pft_dim' in main.csv to name it."
             )
+        if has_pft_bounds and self.pft_axis is not None:
+            pft_dim = dims[self.pft_axis]
+            n_pfts = self._dim_sizes[pft_dim]
+            # 1-based, as written in the PFT sheet
+            too_big = sorted(
+                {
+                    int(index) + 1
+                    for stat in (self.sampler.min_stat, self.sampler.max_stat)
+                    if isinstance(stat, PFTStat)
+                    for index in stat.indices
+                    if index >= n_pfts
+                }
+            )
+            if too_big:
+                raise ValueError(
+                    f"Parameter '{self.spec.name}': its PFT sheet lists pft_index "
+                    f"{too_big}, but '{pft_dim}' has only {n_pfts} PFTs (1 to "
+                    f"{n_pfts})."
+                )
 
     def _validate_posterior(self):
         if not isinstance(self.sampler, PosteriorSampler):

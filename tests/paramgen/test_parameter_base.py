@@ -741,3 +741,23 @@ def test_pft_bounds_on_1d_non_pft_dim_raises(default_row, pft_sheet):
     ds = NetCDFParameterDataset(xr.Dataset({"v": (("leafage",), np.ones(3))}))
     with pytest.raises(ValueError, match="Set 'pft_dim'"):
         Parameter.from_row(default_row, ds, pft_sheet=pft_sheet)
+
+
+def test_pft_bounds_index_past_last_pft_raises(pft_row, param_dataset, pft_sheet):
+    """A PFT sheet listing a pft_index past the last PFT raises when the
+    parameter is built, naming the indices and the number of PFTs, instead of
+    an IndexError while sampling
+    """
+    pft_sheet["pft_index"] = [1, 4, 5]  # param_dataset has 3 PFTs
+    with pytest.raises(
+        ValueError,
+        match=r"'fates_leaf_slatop'.*pft_index \[4, 5\].*'fates_pft' has only 3",
+    ):
+        Parameter.from_row(pft_row, param_dataset, pft_sheet=pft_sheet)
+
+
+def test_pft_bounds_index_on_last_pft_accepted(pft_row, param_dataset, pft_sheet):
+    """A PFT sheet whose highest pft_index is the last PFT is accepted"""
+    pft_sheet["pft_index"] = [1, 2, 3]
+    param = Parameter.from_row(pft_row, param_dataset, pft_sheet=pft_sheet)
+    np.testing.assert_allclose(param.sample(0.0, param_dataset), [0.005, 0.004, 0.008])

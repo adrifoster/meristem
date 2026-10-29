@@ -29,6 +29,7 @@ Usage
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
@@ -277,9 +278,10 @@ class PFTStat(DistributionStat):
 
         Raises:
             ValueError
-                PFT sheet missing "pft_index" column
+                PFT sheet missing "pft_index" column, or a bad pft_index (see
+                _pft_index)
                 PFT sheet missing requested parameter stat column
-                PFT-specific stats must be fixed numbers
+                PFT-specific stats must be fixed, finite numbers
 
         Returns:
             PFTStat: PFT stat
@@ -290,14 +292,7 @@ class PFTStat(DistributionStat):
                 f"Found columns: {list(sheet.columns)}"
             )
         sheet = sheet.sort_values(by="pft_index", ascending=True)
-
-        # convert pft_index from 1-based to 0-based
-        try:
-            indices = sheet["pft_index"].to_numpy(dtype=int) - 1
-        except (ValueError, TypeError) as exc:
-            raise ValueError(
-                f"PFT sheet 'pft_index' column contains non-integer values: {exc}"
-            ) from exc
+        pft_index = _pft_index(sheet)
 
         row = sheet.get(col)
         if row is None:
@@ -318,7 +313,59 @@ class PFTStat(DistributionStat):
                     f"'{v}' in row {i} of column '{col}'. "
                     "Use a plain number for per-PFT stats."
                 ) from exc
+            # nan (e.g. a blank cell) and inf would pass the bounds checks
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"PFT-specific stats must be finite numbers, but column "
+                    f"'{col}' has '{v}' for pft_index {pft_index[i]} (a blank cell "
+                    "reads as nan)."
+                )
 
             values.append(value)
 
-        return cls(values=np.array(values, dtype=float), indices=indices)
+        # convert pft_index from 1-based to 0-based
+        return cls(values=np.array(values, dtype=float), indices=pft_index - 1)
+
+
+def _pft_index(sheet: pd.DataFrame) -> np.ndarray:
+    """Read and check a PFT sheet's 1-based pft_index column
+
+    Args:
+        sheet (pd.DataFrame): the per-parameter sheet
+
+    Raises:
+        ValueError: pft_index has non-integer values (including blanks and e.g. 1.5)
+        ValueError: pft_index has values below 1
+        ValueError: pft_index lists a PFT more than once
+
+    Returns:
+        np.ndarray: the pft_index values (still 1-based)
+    """
+    try:
+        raw = sheet["pft_index"].to_numpy(dtype=float)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"PFT sheet 'pft_index' column contains non-integer values: {exc}"
+        ) from exc
+    # converting to int would silently truncate e.g. 1.5 to 1 (and fail on a blank)
+    not_whole = [v for v in raw.tolist() if not (np.isfinite(v) and v == int(v))]
+    if not_whole:
+        raise ValueError(
+            f"PFT sheet 'pft_index' column contains non-integer values: {not_whole}"
+        )
+    pft_index = raw.astype(int)
+    # pft_index is 1-based: 0 would become -1 and silently set the last PFT
+    below_one = sorted(set(pft_index[pft_index < 1].tolist()))
+    if below_one:
+        raise ValueError(
+            f"PFT sheet 'pft_index' values must be 1 or more (the first PFT is "
+            f"1), but found {below_one}."
+        )
+    counts = Counter(pft_index.tolist())
+    repeated = sorted(i for i, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"PFT sheet lists pft_index {repeated} more than once; each PFT "
+            "can have only one row."
+        )
+    return pft_index

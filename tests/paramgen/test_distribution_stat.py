@@ -9,6 +9,8 @@ Scope
 - PFTStat.resolve and PFTStat.from_sheet
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -327,6 +329,80 @@ def test_pft_stat_from_sheet_non_integer_pft_index_raises():
     )
     with pytest.raises(ValueError, match="non-integer"):
         PFTStat.from_sheet(bad_sheet, "param_min")
+
+
+@pytest.mark.parametrize(
+    "pft_index, bad",
+    [
+        ([1.5, 2, 3], "[1.5]"),  # would be truncated to PFT 1
+        ([1, np.nan, 3], "[nan]"),  # a blank pft_index cell
+    ],
+)
+def test_pft_stat_from_sheet_fractional_or_blank_index_raises(pft_index, bad):
+    """PFTStat.from_sheet() rejects a pft_index that isn't a whole number,
+    instead of truncating it
+    """
+    sheet = pd.DataFrame({"pft_index": pft_index, "param_min": [0.005, 0.004, 0.008]})
+    with pytest.raises(ValueError, match=rf"non-integer values: {re.escape(bad)}"):
+        PFTStat.from_sheet(sheet, "param_min")
+
+
+def test_pft_stat_from_sheet_whole_float_index():
+    """A whole-number pft_index stored as float (e.g. 2.0) is accepted"""
+    sheet = pd.DataFrame(
+        {"pft_index": [1.0, 2.0, 3.0], "param_min": [0.005, 0.004, 0.008]}
+    )
+    stat = PFTStat.from_sheet(sheet, "param_min")
+    np.testing.assert_array_equal(stat.indices, [0, 1, 2])
+    assert stat.indices.dtype.kind == "i"
+
+
+@pytest.mark.parametrize(
+    "pft_index, bad",
+    [
+        ([0, 1, 2], [0]),  # a 0-based sheet: 0 would wrap to the last PFT
+        ([-1, 1, 2], [-1]),
+        ([0, -2, 3], [-2, 0]),
+    ],
+)
+def test_pft_stat_from_sheet_index_below_one_raises(pft_index, bad):
+    """PFTStat.from_sheet() rejects pft_index values below 1 (it's 1-based),
+    listing them, instead of wrapping around to the last PFTs
+    """
+    sheet = pd.DataFrame({"pft_index": pft_index, "param_min": [0.005, 0.004, 0.008]})
+    with pytest.raises(
+        ValueError, match=rf"must be 1 or more .* found {re.escape(str(bad))}"
+    ):
+        PFTStat.from_sheet(sheet, "param_min")
+
+
+def test_pft_stat_from_sheet_duplicate_index_raises():
+    """PFTStat.from_sheet() rejects a PFT listed in more than one row, instead
+    of silently keeping the last row
+    """
+    sheet = pd.DataFrame(
+        {"pft_index": [2, 1, 2, 3, 3], "param_min": [0.1, 0.2, 0.3, 0.4, 0.5]}
+    )
+    with pytest.raises(ValueError, match=r"pft_index \[2, 3\] more than once"):
+        PFTStat.from_sheet(sheet, "param_min")
+
+
+@pytest.mark.parametrize("value", [np.nan, "nan", np.inf, "inf", "-inf"])
+def test_pft_stat_from_sheet_non_finite_value_raises(value):
+    """PFTStat.from_sheet() rejects a blank (nan) or infinite stat, naming the
+    PFT, since it would pass the bounds checks
+    """
+    sheet = pd.DataFrame({"pft_index": [1, 2, 3], "param_min": [0.005, value, 0.008]})
+    with pytest.raises(ValueError, match="finite numbers.*pft_index 2"):
+        PFTStat.from_sheet(sheet, "param_min")
+
+
+def test_pft_stat_from_sheet_blank_cell_from_csv_raises(tmp_path):
+    """A blank cell in a PFT sheet CSV is rejected, not used as nan"""
+    path = tmp_path / "sheet.csv"
+    path.write_text("pft_index,param_min\n1,0.005\n2,\n3,0.008\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="finite numbers.*pft_index 2"):
+        PFTStat.from_sheet(pd.read_csv(path), "param_min")
 
 
 def test_pft_stat_from_sheet_sorts_by_pft_index():
