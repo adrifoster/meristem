@@ -399,6 +399,33 @@ def test_create_invalid_member_run_id_raises(
     assert not Path(ensemble_config_dict["root"]).exists()
 
 
+def test_create_job_names_too_long_raises(ready_config_dict):
+    """Test that an ensemble ID long enough to make a member's PBS job names too
+    long is rejected at create, before anything is written
+    """
+    ready_config_dict["ensemble_id"] = "e" * 220
+    with pytest.raises(ValueError, match="make job names longer than PBS allows"):
+        Ensemble.create(ready_config_dict)
+    assert not Path(ready_config_dict["root"]).exists()
+
+
+@pytest.mark.parametrize(
+    "key, value, match",
+    [
+        ("project", "P123\ntouch PWNED", "project .* contains invalid characters"),
+        ("email", "me@ucar.edu -m abe", "email .* must be an email address"),
+    ],
+)
+def test_create_unsafe_project_or_email_raises(ready_config_dict, key, value, match):
+    """Test that an ensemble project or email that could break out of the job
+    scripts' #PBS lines is rejected at create, before anything is written
+    """
+    ready_config_dict[key] = value
+    with pytest.raises(ValueError, match=match):
+        Ensemble.create(ready_config_dict)
+    assert not Path(ready_config_dict["root"]).exists()
+
+
 def test_create_relative_case_dir_raises(ready_config_dict):
     """Test that a relative case_dir (which would give relative member
     case_roots) raises before anything is written

@@ -5,13 +5,10 @@ from collections import Counter
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import re
 import yaml
 
 from meristem.run.stages import StageConfig
-from meristem.utils import to_absolute_path
-
-_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+from meristem.utils import check_id, to_absolute_path
 
 _REQUIRED_KEYS = frozenset(
     {
@@ -148,13 +145,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
                 f"ensemble_id must be a string, got {type(self.ensemble_id).__name__} "
                 f"{self.ensemble_id!r}; quote it in the YAML."
             )
-        if not self.ensemble_id:
-            raise ValueError("ensemble_id must not be empty.")
-        if not _ID_RE.match(self.ensemble_id):
-            raise ValueError(
-                f"ensemble_id {self.ensemble_id!r} contains invalid characters. "
-                "Only letters, digits, hyphens, and underscores are allowed."
-            )
+        check_id("ensemble_id", self.ensemble_id)
         if not self.paramgen_prefix:
             raise ValueError("paramgen prefix must not be empty.")
         if self.paramfile_key not in _PARAMFILE_KEYS:

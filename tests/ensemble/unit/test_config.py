@@ -498,6 +498,17 @@ def test_from_dict_invalid_stage_raises(ensemble_config_dict, member_stage_dict)
         EnsembleConfig.from_dict(ensemble_config_dict)
 
 
+def test_from_dict_unsafe_member_stage_name_raises(
+    ensemble_config_dict, member_stage_dict
+):
+    """Test that a member stage name that isn't safe in job and case names is
+    rejected
+    """
+    member_stage_dict["name"] = "spin up"
+    with pytest.raises(ValueError, match="stage name 'spin up' contains invalid"):
+        EnsembleConfig.from_dict(ensemble_config_dict)
+
+
 def test_from_dict_stage_with_script(ensemble_config_dict, member_stage_dict):
     """Test that a member stage can have a script (it runs after prepare)"""
     member_stage_dict["script"] = "/path/to/setup.sh"

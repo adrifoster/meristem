@@ -8,13 +8,14 @@ import json
 from pathlib import Path
 import re
 import shlex
+from collections import Counter
 from collections.abc import Collection
 
 from jinja2 import Environment, FileSystemLoader
 import yaml
 
 from meristem.commands import meristem_cmd
-from meristem.utils import to_absolute_path
+from meristem.utils import check_email, check_id, to_absolute_path
 from .scheduler import DEFAULT_SCHEDULER, JobState, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
@@ -46,7 +47,8 @@ _ENV.filters["shquote"] = _shquote
 _STATE_FILE = "run_state.json"
 
 # characters that are safe in a run_id (used as a directory component).
-_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+# longest job name (#PBS -N) PBS Pro accepts
+_MAX_JOB_NAME_LENGTH = 236
 
 # the job ID in each "job:ID" entry of a case's JOB_IDS
 _CIME_JOB_ID_RE = re.compile(r"[^\s,:]+:([^\s,]+)")
@@ -93,23 +95,46 @@ class ModelRun:
         self.stages: tuple[Stage, ...] = tuple(stages)
         self.email = email
         self.project = project if project else os.getenv("PROJECT", "")
+        self._project_from_env = not project
         self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
         self._validate()
 
     def _validate(self):
-        if not self.run_id:
-            raise ValueError("run_id must not be empty")
-        if not _RUN_ID_RE.match(self.run_id):
-            raise ValueError(
-                f"run_id {self.run_id!r} contains invalid characters. "
-                "Only letters, digits, hyphens, and underscores are allowed."
-            )
+        check_id("run_id", self.run_id)
         if not self.project:
             raise ValueError(
                 "project must not be empty and $PROJECT environment variable not set."
             )
+        # project and email go into #PBS lines of every job script, so nothing
+        # in them may break out of the line
+        check_id(
+            "project",
+            self.project,
+            where=" (from $PROJECT)" if self._project_from_env else "",
+        )
+        if self.email is not None:
+            check_email("email", self.email)
         if not self.stages:
             raise ValueError("stages must not be empty")
+        # stages are looked up by name, and share job scripts and case roots by it
+        counts = Counter(stage.config.name for stage in self.stages)
+        repeated = sorted(name for name, count in counts.items() if count > 1)
+        if repeated:
+            raise ValueError(f"stage names must be unique, got duplicates {repeated}.")
+        # each stage's longest job name is its advance job's (see
+        # _write_advance_script); check it now rather than at qsub
+        too_long = [
+            f"{self.run_id}_{stage.config.name}_advance"
+            for stage in self.stages
+            if len(f"{self.run_id}_{stage.config.name}_advance") > _MAX_JOB_NAME_LENGTH
+        ]
+        if too_long:
+            raise ValueError(
+                f"run_id {self.run_id!r} and its stage names make job names longer "
+                f"than PBS allows ({_MAX_JOB_NAME_LENGTH} characters), e.g. "
+                f"{too_long[0]!r} ({len(too_long[0])}); shorten the run ID or stage "
+                "names."
+            )
         # the PBS log file (#PBS -o) lives under root, and PBS directives can't
         # reliably hold paths with whitespace
         if any(char.isspace() for char in str(self.root)):

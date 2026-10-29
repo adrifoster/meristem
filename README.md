@@ -31,8 +31,6 @@ meristem has three parts:
 3. **`meristem.ensemble`** *(in progress)*: run an ensemble. One run per paramgen parameter file,
    each with one or more stages, submitted and tracked together.
 
-`paramgen` and `run` can each be used on their own. `ensemble` builds on both.
-
 ## Installation
 
 meristem requires Python 3.12 or newer. It is not yet on PyPI or conda-forge, so install it from source.
@@ -75,7 +73,7 @@ meristem paramgen lh_config.yaml
 
 ```yaml
 ensemble_type: LatinHypercube
-param_dir: clm_param_dir              # main.csv (+ per-PFT CSVs) describing the parameters to vary
+param_dir: clm_param_dir  # main.csv (+ per-PFT CSVs) describing the parameters to vary
 default_param_file: default_clm_param.nc
 ensemble_dir: output_LH
 file_prefix: clm_lh
@@ -139,7 +137,7 @@ open an issue first to discuss the change.
 To run the tests and linters:
 
 ```bash
-pytest                       # unit tests (PBS tests are skipped by default)
+pytest  # unit tests (PBS tests are skipped by default)
 pylint src/meristem
 black --check src tests
 ```

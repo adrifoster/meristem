@@ -10,7 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 
-from meristem.utils import to_absolute_path
+from meristem.utils import check_id, to_absolute_path
 
 _WALLTIME_RE = re.compile(r"^\d+(?::\d+)*$")
 _MEMORY_RE = re.compile(r"^\d+(\.\d+)?(B|KB|MB|GB|TB)$", re.IGNORECASE)
@@ -364,8 +364,9 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     submit_args: str | None = None
 
     def __post_init__(self):
-        if not self.name:
-            raise ValueError("name must not be empty.")
+        # the name goes into PBS job names, file and case directory names, and
+        # job scripts, so it must be safe in all of them
+        check_id("stage name", self.name)
 
         # checked before the Path conversion below, which would turn "" into "."
         if self.script is not None and not self.script:

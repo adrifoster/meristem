@@ -1,6 +1,6 @@
-# run: tethered multi-stage runs on a job scheduler
+# run: tethered multi-stage runs with a job scheduler
 
-`meristem.run` manages multi-stage runs on clusters.
+`meristem.run` manages multi-stage runs on a cluster.
 
 A CLM run often needs several stages in order (for example accelerated-decomposition spinup, then
 post-AD spinup, then a transient run), and each stage is normally set up and submitted by hand once the
@@ -127,7 +127,6 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 | `memory` | no | `10GB` | Memory for the setup job, e.g. `16GB` |
 | `no_cime` | no | `false` | If true, the stage isn't a CIME case: run the script, then advance directly |
 | `extra_pbs` | no | `[]` | Extra raw PBS directives, e.g. `["-l place=group=rack"]` |
-| `spinup_check` | no | `false` | Reserved for future use. Currently has no effect |
 
 The resource keys (`walltime`, `select`, `ncpus`, `memory`) apply to the setup job only. The model run's
 own resources come from the CIME case, as usual.
@@ -138,7 +137,7 @@ own resources come from the CIME case, as usual.
 
 ```text
 meristem run create --config run.yaml
-  Initialise a new run from a YAML config file.
+  Initialize a new run from a YAML config file.
 
 meristem status --root <path>
   Ask the job scheduler about each submitted stage and print the status, showing any
@@ -216,13 +215,11 @@ meristem run retry --root <path> --stage <name> --lost
 This checks PBS again first and refuses if any of the stage's jobs is still queued or running, so it
 can't start a second copy of a stage that is still going.
 
-**Known gaps.** In two cases a stage can be reported lost while its model run is still going.
+**Known gaps.** In one case a stage can be reported lost while its model run is still going.
 Check with `qstat -u $USER` before retrying:
 
 - The setup job was killed in the few seconds between submitting the case and submitting the
   advance and fail jobs.
-- The run was created with a meristem version from before advance and fail job IDs were recorded,
-  so only the setup job is known.
 
 **Retrying by hand.** If you're sure nothing is still running for a stage, you can also mark it
 failed yourself and retry it, without asking PBS:

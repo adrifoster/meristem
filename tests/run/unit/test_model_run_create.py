@@ -219,6 +219,20 @@ def test_model_run_create_relative_case_root_raises(run_config_dict):
     assert not Path(run_config_dict["root"]).exists()
 
 
+def test_model_run_create_duplicate_stage_names_raises(run_config_dict):
+    """Test that two stages with the same name are rejected, naming it, and
+    nothing is written (they'd share a job script and case root, and only the
+    first could be found by name)
+    """
+    stage = run_config_dict["stages"][0]
+    run_config_dict["stages"] = [stage, {**stage, "queue": "develop"}]
+    with pytest.raises(
+        ValueError, match=r"stage names must be unique, got duplicates \['spinup_ad'\]"
+    ):
+        ModelRun.create(run_config_dict)
+    assert not Path(run_config_dict["root"]).exists()
+
+
 @pytest.mark.parametrize("with_script", [False, True])
 def test_model_run_create_command_raises(run_config_dict, with_script):
     """Test that a run config can't set a stage command (with or without a

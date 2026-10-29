@@ -1,11 +1,9 @@
 # ensemble: submit and manage ensembles of CLM cases
 
-`meristem.ensemble` manages ensembles of runs on clusters.
+`meristem.ensemble` manages ensembles of runs on a cluster.
 
-A CLM run often needs several stages in order (for example accelerated-decomposition spinup, then
-post-AD spinup, then a transient run), and each stage is normally set up and submitted by hand once the
-previous one finishes. `meristem.run` *tethers* these stages together: each stage automatically
-submits the next when it completes, using job scheduler dependencies to ensure correct ordering.
+After generating a suite of parameter files, `meristem.ensemble` can be used to generate
+and manage an ensemble of CLM/CLM-FATES runs that use those parameter files.
 
 ----
 

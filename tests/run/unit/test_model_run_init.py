@@ -153,3 +153,64 @@ def test_model_run_load_relative_root_writes_absolute_job_script(
     )
     assert root_line == f"RUN_ROOT={run.root}"
     assert Path(root_line.split("=", 1)[1]).is_absolute()
+
+
+def _run_id_for_job_name_length(stage_name: str, length: int) -> str:
+    """A run ID making the stage's advance job name (the longest) this long"""
+    return "r" * (length - len(f"_{stage_name}_advance"))
+
+
+def test_model_run_longest_job_name_at_limit_accepted(tmp_path, ad_stage):
+    """Test that job names exactly at PBS's limit (236) are accepted"""
+    run_id = _run_id_for_job_name_length(ad_stage.config.name, 236)
+    run = ModelRun(root=tmp_path, run_id=run_id, stages=[ad_stage], project="PROJ")
+    assert len(f"{run.run_id}_{ad_stage.config.name}_advance") == 236
+
+
+def test_model_run_job_name_too_long_raises(tmp_path, ad_stage):
+    """Test that a run ID and stage name making a job name longer than PBS
+    allows are rejected up front, showing the name and its length
+    """
+    run_id = _run_id_for_job_name_length(ad_stage.config.name, 237)
+    with pytest.raises(
+        ValueError,
+        match=r"make job names longer than PBS allows \(236 characters\), "
+        r"e\.g\. 'r+_spinup_ad_advance' \(237\); shorten",
+    ):
+        ModelRun(root=tmp_path, run_id=run_id, stages=[ad_stage], project="PROJ")
+
+
+@pytest.mark.parametrize("project", ["P123\ntouch PWNED", "P 123", "P123;ls", "$(id)"])
+def test_model_run_unsafe_project_raises(tmp_path, ad_stage, project):
+    """Test that a project that could break out of the job scripts' #PBS -A
+    line is rejected
+    """
+    with pytest.raises(ValueError, match=r"^project .* contains invalid characters"):
+        ModelRun(root=tmp_path, run_id="run", stages=[ad_stage], project=project)
+
+
+def test_model_run_unsafe_project_from_env_raises(tmp_path, ad_stage, monkeypatch):
+    """Test that an unsafe $PROJECT is rejected, saying it came from $PROJECT"""
+    monkeypatch.setenv("PROJECT", "P123\ntouch PWNED")
+    with pytest.raises(ValueError, match=r"\(from \$PROJECT\) contains invalid"):
+        ModelRun(root=tmp_path, run_id="run", stages=[ad_stage], project="")
+
+
+@pytest.mark.parametrize(
+    "email", ["me@ucar.edu -l select=100", "me@ucar.edu\nls", "me"]
+)
+def test_model_run_unsafe_email_raises(tmp_path, ad_stage, email):
+    """Test that an email that isn't a plain address list is rejected"""
+    with pytest.raises(ValueError, match="email .* must be an email address"):
+        ModelRun(
+            root=tmp_path, run_id="run", stages=[ad_stage], project="P", email=email
+        )
+
+
+@pytest.mark.parametrize("email", [None, "me@ucar.edu", "me@ucar.edu,you@ucar.edu"])
+def test_model_run_valid_email_accepted(tmp_path, ad_stage, email):
+    """Test that no email, one address, or a list of them is accepted"""
+    run = ModelRun(
+        root=tmp_path, run_id="run", stages=[ad_stage], project="P", email=email
+    )
+    assert run.email == email

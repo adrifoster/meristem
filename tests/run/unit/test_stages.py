@@ -352,6 +352,40 @@ def test_stage_config_empty_name_raises(minimal_stage_config_dict):
         StageConfig.from_dict(config)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        'x"; touch PWNED; echo "',  # shell code in the job script's echo
+        "$(whoami)",
+        "../escaped",  # case root outside the run
+        "a/b",  # job script path
+        "a b",  # #PBS -N
+        "a.b",
+    ],
+)
+def test_stage_config_unsafe_name_raises(minimal_stage_config_dict, name):
+    """Test that a stage name with characters that aren't safe in a PBS job
+    name, a file name, or a job script is rejected
+    """
+    config = {**minimal_stage_config_dict, "name": name}
+    with pytest.raises(ValueError, match="stage name .* contains invalid characters"):
+        StageConfig.from_dict(config)
+
+
+@pytest.mark.parametrize("name", ["spinup_ad", "AD-1", "transient2"])
+def test_stage_config_safe_name_accepted(minimal_stage_config_dict, name):
+    """Test that letters, digits, hyphens and underscores are allowed"""
+    config = {**minimal_stage_config_dict, "name": name}
+    assert StageConfig.from_dict(config).name == name
+
+
+def test_stage_config_non_string_name_raises(minimal_stage_config_dict):
+    """Test that a non-string name (e.g. an unquoted number in YAML) is rejected"""
+    config = {**minimal_stage_config_dict, "name": 1}
+    with pytest.raises(ValueError, match="stage name must be a string"):
+        StageConfig.from_dict(config)
+
+
 def test_stage_config_empty_script_raises(minimal_stage_config_dict):
     """Test that StageConfig initiated with a dict with an empty script raises a ValueError"""
     config = {**minimal_stage_config_dict, "script": ""}
