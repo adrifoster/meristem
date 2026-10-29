@@ -7,6 +7,7 @@ normalizing a concrete parameter to a normalized value
 """
 
 from __future__ import annotations
+from collections import Counter
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -32,7 +33,8 @@ class SampleContext:
     default_value : float | np.ndarray | list[np.ndarray] | None
         Default value(s) for this parameter from the dataset.
         Required by UniformSampler to resolve percent bounds.
-        Ignored by PosteriorSampler.
+        Used by PosteriorSampler in broadcast mode as the starting values, so
+        positions no source covers keep their defaults.
     array_index : int | None
         The active array index when sampling an expanded (per-index) parameter.
         None when sampling all free indices together (broadcast mode).
@@ -288,7 +290,22 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
             )
             for file_entry in posterior_config["files"]
         ]
+        _check_sources(row.get("parameter_name"), sources)
         self.sources = sources
+
+    def covers(self, array_index: int) -> bool:
+        """Whether some source has draws for an array index
+
+        Args:
+            array_index (int): array index
+
+        Returns:
+            bool: True if a source covers array_index
+        """
+        return any(
+            source.is_broadcast or array_index in source.array_indices
+            for source in self.sources
+        )
 
     def sample(
         self,
@@ -298,7 +315,7 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
         """Generate a sample for a parameter"""
         if context.array_index is not None:
             return self._draw_for_index(normalized_value, context.array_index)
-        return self._draw_broadcast(normalized_value, context.n_indices)
+        return self._draw_broadcast(normalized_value, context)
 
     def normalize(
         self,
@@ -375,8 +392,8 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
         n_indices: list[int] | None,
         clip_to_bounds: bool = False,
     ) -> list[np.ndarray]:
-        result = [np.zeros(n_indices) for _ in self.parameters]
         if len(self.sources) == 1 and self.sources[0].is_broadcast:
+            result = [np.zeros(n_indices) for _ in self.parameters]
             sort_idx = self.sources[0].sort_param_index
             if isinstance(value, list):
                 sort_value = float(value[sort_idx].flat[0])
@@ -388,12 +405,12 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
             for k, _ in enumerate(self.parameters):
                 result[k][:] = unscaled
         else:
+            # index-specific sources (_check_sources: none is broadcast). A position
+            # no source covers isn't sampled, so it has no normalized value
+            result = [np.full(n_indices, np.nan) for _ in self.parameters]
             for source in self.sources:
                 sort_idx = source.sort_param_index
-                indices = (
-                    range(n_indices) if source.is_broadcast else source.array_indices
-                )
-                for array_idx in indices:
+                for array_idx in source.array_indices:
                     if isinstance(value, list):
                         sort_value = float(value[sort_idx][array_idx])
                     else:
@@ -404,25 +421,73 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
         return result
 
     def _draw_broadcast(
-        self, normalized_value: float, n_indices: list[int] | None
+        self, normalized_value: float, context: SampleContext
     ) -> list[np.ndarray]:
-        result = [np.zeros(n_indices) for _ in self.parameters]
-
         if len(self.sources) == 1 and self.sources[0].is_broadcast:
+            result = [np.zeros(context.n_indices) for _ in self.parameters]
             row = self.sources[0].draw_row(normalized_value)
             for k, var in enumerate(self.parameters):
                 result[k][:] = row[var]
         else:
+            # index-specific sources (_check_sources: none is broadcast). Start
+            # from the defaults so a position no source covers keeps its default
+            result = self._starting_values(context)
             for source in self.sources:
                 row = source.draw_row(normalized_value)
-                indices = (
-                    range(n_indices) if source.is_broadcast else source.array_indices
-                )
-                for array_idx in indices:
+                for array_idx in source.array_indices:
                     for k, var in enumerate(self.parameters):
                         result[k][array_idx] = row[var]
 
         return result
+
+    def _starting_values(self, context: SampleContext) -> list[np.ndarray]:
+        """Each parameter's default values as a float array, or nan where there
+        are no defaults, to fill in from the sources
+
+        Args:
+            context (SampleContext): sampling context
+
+        Returns:
+            list[np.ndarray]: one array per parameter, shaped n_indices
+        """
+        if context.default_value is None:
+            return [np.full(context.n_indices, np.nan) for _ in self.parameters]
+        defaults = context.default_value
+        if not isinstance(defaults, list):
+            defaults = [defaults]
+        return [
+            np.array(default, dtype=float).reshape(context.n_indices)
+            for default in defaults
+        ]
+
+
+def _check_sources(name: str | None, sources: list[PosteriorSource]) -> None:
+    """Check a parameter's posterior sources say unambiguously where each index's
+    draws come from
+
+    Args:
+        name (str | None): parameter name, for errors
+        sources (list[PosteriorSource]): the parameter's posterior sources
+
+    Raises:
+        ValueError: a broadcast source (array_indices 'all') isn't the only source
+        ValueError: an array index is listed by more than one source
+    """
+    if len(sources) > 1 and any(source.is_broadcast for source in sources):
+        raise ValueError(
+            f"Parameter '{name}': a posterior file with array_indices 'all' must "
+            f"be its only file, but it has {len(sources)}. List the indices each "
+            "file covers instead."
+        )
+    counts = Counter(
+        i for source in sources if not source.is_broadcast for i in source.array_indices
+    )
+    repeated = sorted(i for i, count in counts.items() if count > 1)
+    if repeated:
+        raise ValueError(
+            f"Parameter '{name}': array indices {repeated} are listed by more than "
+            "one posterior file; each index can come from only one file."
+        )
 
 
 def _at_array_index(

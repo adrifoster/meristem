@@ -19,6 +19,7 @@ from SALib.sample import morris as sample_morris
 from .. import __version__
 from .parameter_dataset import ParameterDataset
 from .parameter import Parameter
+from .sampler import PosteriorSampler
 from .ensemble_config import (
     EnsembleConfig,
     LatinHypercubeConfig,
@@ -981,4 +982,7 @@ def _expand_one_param(
         )
     fixed_for_dim = fixed_indices.get(expand_dim, [])
     active = [i for i in full_index_map[expand_dim] if i not in fixed_for_dim]
+    if isinstance(param.sampler, PosteriorSampler):
+        # an index no posterior source covers stays at its default, like a fixed one
+        active = [i for i in active if param.sampler.covers(i)]
     return [param.for_index(expand_dim, idx) for idx in active]

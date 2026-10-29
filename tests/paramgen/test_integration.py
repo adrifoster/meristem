@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import numpy as np
 import pandas as pd
+import yaml
 
 from meristem.paramgen.param_ensemble import LatinHypercubeEnsemble, OneAtATimeEnsemble
 from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
@@ -46,6 +47,49 @@ def _make_oat_ensemble(param_dir, param_file, tmp_path, posterior_sources=None):
         posterior_sources=posterior_sources,
     )
     return OneAtATimeEnsemble(config)
+
+
+# ===========================================================================
+# Posterior parameter calibrated for only some PFTs
+# ===========================================================================
+
+
+def test_lh_posterior_uncovered_pfts_keep_defaults(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_file
+):
+    """A posterior parameter whose files cover only PFTs 0 and 1 is drawn for
+    those PFTs and left at its default for PFT 2 in every written member
+    """
+    sources = tmp_path / "partial_posterior.yaml"
+    sources.write_text(
+        yaml.dump(
+            {
+                "fates_leafn_vert_scaler": {
+                    "parameters": [
+                        "fates_leafn_vert_scaler_coeff1",
+                        "fates_leafn_vert_scaler_coeff2",
+                    ],
+                    "files": [{"path": str(posterior_file), "array_indices": [0, 1]}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    ensemble = _make_lh_ensemble(
+        ensemble_param_dir, default_param_file, tmp_path, sources
+    )
+    ensemble.create_ensemble()
+
+    default_ds = ParameterDataset.from_path(default_param_file)
+    members = sorted((tmp_path / "ensemble").glob(f"test_*{default_param_file.suffix}"))
+    assert len(members) == 5
+    for path in members:
+        ds = ParameterDataset.from_path(path)
+        for var in ("fates_leafn_vert_scaler_coeff1", "fates_leafn_vert_scaler_coeff2"):
+            default = default_ds[var].values
+            values = ds[var].values
+            assert values[2] == pytest.approx(default[2]), (path.name, var)
+            assert not np.allclose(values[:2], default[:2]), (path.name, var)
 
 
 # ===========================================================================

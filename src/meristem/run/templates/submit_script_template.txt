@@ -41,10 +41,10 @@ bash -c {{ ("set -euo pipefail; " ~ command) | shquote }}
 # strict mode is enforced even if the user's script doesn't set it
 bash -c 'set -euo pipefail; source "$0" "$@"' {{ script | shquote }} {{ case_root | shquote }}{% if previous_case %} {{ previous_case | shquote }} {{ previous_case_root | shquote }}{% endif +%}
 {% endif %}
+{% endif %}
 {% if post_command %}
 # built-in step after the setup script (e.g. meristem ensemble finalize), so the script can't undo it
 bash -c {{ ("set -euo pipefail; " ~ post_command) | shquote }}
-{% endif %}
 {% endif %}
 
 {% if cime %}

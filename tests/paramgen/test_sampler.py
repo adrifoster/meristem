@@ -465,6 +465,130 @@ def test_posterior_sampler_multi_source_fills_correct_indices(
     assert 1.0 <= result[0][2] <= 1.95
 
 
+_COEFFS = ["fates_leafn_vert_scaler_coeff1", "fates_leafn_vert_scaler_coeff2"]
+_COEFF_DEFAULTS = [np.array([0.012, 0.015, 0.005]), np.array([2.1, 2.5, 2.6])]
+
+
+def _partial_config(posterior_file) -> dict:
+    """A posterior config whose one file covers PFTs 0 and 1 but not 2"""
+    return {
+        "parameters": _COEFFS,
+        "files": [{"path": str(posterior_file), "array_indices": [0, 1]}],
+    }
+
+
+def test_posterior_sampler_partial_coverage_keeps_defaults(
+    joint_param_row, posterior_file
+):
+    """sample() leaves an index no source covers at its default, instead of 0"""
+    sampler = PosteriorSampler(
+        joint_param_row, posterior_config=_partial_config(posterior_file)
+    )
+    ctx = SampleContext(n_indices=[3], default_value=_COEFF_DEFAULTS)
+    result = sampler.sample(0.5, ctx)
+
+    # PFTs 0 and 1 are drawn from posterior_file (coeff1 in [0, 0.95])
+    assert all(0.0 <= v <= 0.95 for v in result[0][:2])
+    # PFT 2 keeps each coefficient's default
+    assert result[0][2] == pytest.approx(0.005)
+    assert result[1][2] == pytest.approx(2.6)
+    # the defaults themselves are untouched
+    np.testing.assert_allclose(_COEFF_DEFAULTS[0], [0.012, 0.015, 0.005])
+
+
+def test_posterior_sampler_partial_coverage_single_parameter_default(tmp_path):
+    """A single-parameter posterior keeps its (array, not list) default at an
+    uncovered index
+    """
+    f = tmp_path / "posterior.txt"
+    f.write_text("leaf_cn\n10.0\n20.0\n30.0\n")
+    config = {
+        "parameters": ["leaf_cn"],
+        "files": [{"path": str(f), "array_indices": [0]}],
+    }
+    row = pd.Series({"parameter_name": "leaf_cn", "strategy": "posterior"})
+    sampler = PosteriorSampler(row, posterior_config=config)
+
+    ctx = SampleContext(n_indices=[3], default_value=np.array([25, 35, 45]))
+    [result] = sampler.sample(0.5, ctx)
+
+    assert 10.0 <= result[0] <= 30.0
+    np.testing.assert_allclose(result[1:], [35.0, 45.0])
+
+
+def test_posterior_sampler_partial_coverage_without_defaults_is_nan(
+    joint_param_row, posterior_file
+):
+    """With no defaults to fall back on, an uncovered index is nan, not 0"""
+    sampler = PosteriorSampler(
+        joint_param_row, posterior_config=_partial_config(posterior_file)
+    )
+    result = sampler.sample(0.5, SampleContext(n_indices=[3]))
+    assert all(np.isnan(r[2]) for r in result)
+    assert not any(np.isnan(r[:2]).any() for r in result)
+
+
+def test_posterior_sampler_partial_coverage_normalize_is_nan(
+    joint_param_row, posterior_file
+):
+    """normalize() has no normalized value for an index no source covers"""
+    sampler = PosteriorSampler(
+        joint_param_row, posterior_config=_partial_config(posterior_file)
+    )
+    result = sampler.normalize(_COEFF_DEFAULTS, SampleContext(n_indices=[3]))
+    assert all(np.isnan(r[2]) for r in result)
+    assert all(0.0 <= v <= 1.0 for r in result for v in r[:2])
+
+
+def test_posterior_sampler_covers(joint_param_row, posterior_file, posterior_config):
+    """covers() is True only for indices some source lists, or any index for a
+    broadcast source
+    """
+    partial = PosteriorSampler(
+        joint_param_row, posterior_config=_partial_config(posterior_file)
+    )
+    assert [partial.covers(i) for i in range(3)] == [True, True, False]
+
+    broadcast = PosteriorSampler(joint_param_row, posterior_config=posterior_config)
+    assert all(broadcast.covers(i) for i in range(3))
+
+
+def test_posterior_sampler_broadcast_with_other_sources_raises(
+    joint_param_row, posterior_file, posterior_file_2
+):
+    """A broadcast ('all') source mixed with another source is rejected, naming
+    the parameter
+    """
+    config = {
+        "parameters": _COEFFS,
+        "files": [
+            {"path": str(posterior_file), "array_indices": "all"},
+            {"path": str(posterior_file_2), "array_indices": [2]},
+        ],
+    }
+    with pytest.raises(
+        ValueError, match="'fates_leafn_vert_scaler'.*'all' must be its only file"
+    ):
+        PosteriorSampler(joint_param_row, posterior_config=config)
+
+
+def test_posterior_sampler_overlapping_sources_raises(
+    joint_param_row, posterior_file, posterior_file_2
+):
+    """An index listed by two sources is rejected, naming the indices"""
+    config = {
+        "parameters": _COEFFS,
+        "files": [
+            {"path": str(posterior_file), "array_indices": [0, 1]},
+            {"path": str(posterior_file_2), "array_indices": [1, 2, 0]},
+        ],
+    }
+    with pytest.raises(
+        ValueError, match=r"array indices \[0, 1\] are listed by more than one"
+    ):
+        PosteriorSampler(joint_param_row, posterior_config=config)
+
+
 # ===========================================================================
 # PosteriorSampler.sample
 # ===========================================================================

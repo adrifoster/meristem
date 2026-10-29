@@ -19,6 +19,7 @@ from meristem.paramgen.param_ensemble import (
     ParameterSample,
     ParamGroup,
     _existing_outputs,
+    _expand_one_param,
 )
 
 from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
@@ -1150,3 +1151,31 @@ def test_create_ensemble_ignores_and_keeps_other_prefixes(
     _lh_with_members(*args, members=3).create_ensemble(overwrite=True)
     for name in others:
         assert (ens_dir / name).read_text() == "keep"
+
+
+@pytest.mark.parametrize(
+    "fixed_indices, expected",
+    [
+        ({}, [0, 1]),  # PFT 2 has no posterior draws
+        ({"fates_pft": [0]}, [1]),  # and PFT 0 is fixed
+    ],
+)
+def test_expand_posterior_param_skips_uncovered_indices(
+    joint_param_row, param_dataset, posterior_file, fixed_indices, expected
+):
+    """An expanded posterior parameter gets no clone for an index its posterior
+    files don't cover: like a fixed index, it stays at its default
+    """
+    joint_param_row["expand_dim"] = "fates_pft"
+    config = {
+        "parameters": [
+            "fates_leafn_vert_scaler_coeff1",
+            "fates_leafn_vert_scaler_coeff2",
+        ],
+        "files": [{"path": str(posterior_file), "array_indices": [0, 1]}],
+    }
+    param = Parameter.from_row(joint_param_row, param_dataset, posterior_config=config)
+
+    clones = _expand_one_param(param, fixed_indices, {"fates_pft": [0, 1, 2]})
+
+    assert [c.active_index.index for c in clones] == expected
