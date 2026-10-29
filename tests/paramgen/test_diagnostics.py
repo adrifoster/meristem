@@ -221,6 +221,39 @@ def test_normalize_defaults_clips_out_of_bounds_defaults(tmp_path, default_param
     assert df["normalized_value"].iloc[2] == pytest.approx(0.2)
 
 
+def test_normalize_defaults_scale_from_root_uses_default_delta(
+    tmp_path, default_param_file
+):
+    """normalize_defaults places a scale_from_root parameter's default delta
+    (base minus root) within its delta bounds, not the base's absolute default
+    """
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "smpsc_delta",
+                "long_name": "smpsc relative to smpso",
+                "category": "stomatal",
+                "subcategory": "vegetation water",
+                "units": "mm",
+                "coord": "['fates_pft']",
+                "param_type": "scale_from_root",
+                "strategy": "uniform",
+                "param_min": "-600000",
+                "param_max": "-20000",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": "fates_nonhydro_smpso",
+                "base_params": "fates_nonhydro_smpsc",
+            }
+        ]
+    ).to_csv(tmp_path / "main.csv", index=False)
+
+    df = normalize_defaults(tmp_path, default_param_file)
+    # default delta is -100000 - -50000 = -50000 at every PFT (and so on)
+    expected = (-50000 - -600000) / (-20000 - -600000)
+    np.testing.assert_allclose(df["normalized_value"], [expected] * 3)
+
+
 def test_normalize_defaults_filters_nan_values(tmp_path, default_param_file):
     """normalize_defaults filters out nan default values."""
     pd.DataFrame(

@@ -19,6 +19,7 @@ from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
 from meristem.run.stages import Stage, StageStatus
 from meristem.run.model_run import ModelRun
+from meristem.utils import write_atomically
 
 # state file name
 _STATE_FILE = "ensemble_state.json"
@@ -478,16 +479,15 @@ class Ensemble:
     def save(self):
         """Atomically write current state to ``<root>/ensemble_state.json``.
 
-        Uses a write-to-temp-then-rename pattern so the state file is
-        never left in a partially written state if the process is killed.
+        Written via a uniquely named temporary file and a rename
+        (write_atomically), so the state file is never left partially written,
+        even if the process is killed or another process saves at the same time.
         """
         state = {
             "config": self.config.to_dict(),
             "members": {member: str(path) for member, path in self.param_files.items()},
         }
-        tmp = self.root / f"{_STATE_FILE}.tmp"
-        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp.rename(self.root / _STATE_FILE)
+        write_atomically(self.root / _STATE_FILE, json.dumps(state, indent=2))
 
     def find_param_members(self) -> list[str]:
         """Get the list of parameter members that will be used in this ensemble

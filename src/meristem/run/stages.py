@@ -329,7 +329,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: unique identifier, e.g., "spinup_ad"
     walltime: PBS walltime string, e.g., "06:00:00"
     queue: PBS queue name
-    spinup_check: if True, advance() reads runs spinup_stability before proceeding
     ncpus: CPUs per node requested from PBS
     select: number of nodes
     memory: memory requested string, e.g. "1GB"
@@ -351,7 +350,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
     name: str
     queue: str
     walltime: str = "01:00:00"
-    spinup_check: bool = False
     ncpus: int = 1
     select: int = 1
     memory: str = "10GB"
@@ -424,7 +422,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             "post_command": self.post_command,
             "walltime": self.walltime,
             "queue": self.queue,
-            "spinup_check": self.spinup_check,
             "ncpus": self.ncpus,
             "select": self.select,
             "memory": self.memory,

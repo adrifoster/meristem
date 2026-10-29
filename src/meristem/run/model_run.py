@@ -15,7 +15,7 @@ from jinja2 import Environment, FileSystemLoader
 import yaml
 
 from meristem.commands import meristem_cmd
-from meristem.utils import check_email, check_id, to_absolute_path
+from meristem.utils import check_email, check_id, to_absolute_path, write_atomically
 from .scheduler import DEFAULT_SCHEDULER, JobState, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
@@ -257,8 +257,9 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
     def save(self):
         """Atomically write current state to ``<root>/run_state.json``.
 
-        Uses a write-to-temp-then-rename pattern so the state file is
-        never left in a partially written state if the process is killed.
+        Written via a uniquely named temporary file and a rename
+        (write_atomically), so the state file is never left partially written,
+        even if the process is killed or another process saves at the same time.
         """
         state = {
             "run_id": self.run_id,
@@ -268,9 +269,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             "scheduler": self.scheduler.name,
             "stages": [stage.to_dict() for stage in self.stages],
         }
-        tmp = self.root / f"{_STATE_FILE}.tmp"
-        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp.rename(self.root / _STATE_FILE)
+        write_atomically(self.root / _STATE_FILE, json.dumps(state, indent=2))
 
     @property
     def stage_names(self) -> list[str]:

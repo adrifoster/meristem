@@ -75,11 +75,19 @@ def test_scale_from_root_root_is_base_raises(scale_from_root_row, param_dataset)
         Parameter.from_row(scale_from_root_row, param_dataset)
 
 
-def test_scale_from_root_get_default(scale_from_root_row, param_dataset):
-    """ScaleFromRootParameter.get_default returns root parameter values."""
+def test_scale_from_root_get_default(
+    scale_from_root_row, param_dataset, working_param_dataset
+):
+    """ScaleFromRootParameter.get_default returns the default delta (base minus
+    root), the parameter's own value, not the base's absolute default
+    """
     param = Parameter.from_row(scale_from_root_row, param_dataset)
-    result = param.get_default(param_dataset)
-    np.testing.assert_allclose(result, [-100000.0, -110000.0, -120000.0])
+    # smpsc stays [-100000, -110000, -120000]; give smpso a different value per PFT
+    working_param_dataset["fates_nonhydro_smpso"].values = np.array(
+        [-50000.0, -70000.0, -90000.0]
+    )
+    result = param.get_default(working_param_dataset)
+    np.testing.assert_allclose(result, [-50000.0, -40000.0, -30000.0])
 
 
 def test_scale_from_root_set_value_no_fixed(
@@ -251,14 +259,19 @@ def test_param_dataset_not_mutated(scale_param, working_param_dataset, param_dat
 
 
 def test_scale_from_root_get_default_returns_scalar_when_expanded(
-    scale_from_root_row, param_dataset
+    scale_from_root_row, param_dataset, working_param_dataset
 ):
-    """get_default returns a scalar when active_index is set."""
+    """get_default returns the default delta at the active PFT, as a scalar,
+    when active_index is set
+    """
     param = Parameter.from_row(scale_from_root_row, param_dataset)
     param.active_index = DimIndex("fates_pft", 1)
-    result = param.get_default(param_dataset)
+    working_param_dataset["fates_nonhydro_smpso"].values = np.array(
+        [-50000.0, -70000.0, -90000.0]
+    )
+    result = param.get_default(working_param_dataset)
     assert np.ndim(result) == 0
-    assert float(result) == pytest.approx(-110000.0)
+    assert float(result) == pytest.approx(-40000.0)  # -110000 - -70000
 
 
 def test_scale_from_root_get_default_returns_array_when_not_expanded(
@@ -269,3 +282,41 @@ def test_scale_from_root_get_default_returns_array_when_not_expanded(
     result = param.get_default(param_dataset)
     assert isinstance(result, np.ndarray)
     assert result.shape == (3,)
+
+
+@pytest.mark.parametrize(
+    "u, delta, smpsc",
+    [
+        # default delta -50000 at every PFT; 20percent of it is 10000
+        (0.0, -60000.0, [-110000.0, -120000.0, -130000.0]),
+        (1.0, -40000.0, [-90000.0, -100000.0, -110000.0]),
+    ],
+)
+def test_scale_from_root_percent_bounds_are_percent_of_default_delta(
+    scale_from_root_row, param_dataset, working_param_dataset, u, delta, smpsc
+):
+    """Test that percent bounds on a scale_from_root parameter are a percent of
+    its default delta, so the written base values surround the base's default
+    """
+    scale_from_root_row["param_min"] = "20percent"
+    scale_from_root_row["param_max"] = "20percent"
+    param = Parameter.from_row(scale_from_root_row, param_dataset)
+    sampled = param.sample(u, param_dataset)
+    np.testing.assert_allclose(sampled, [delta] * 3)
+    param.set_value(working_param_dataset, param_dataset, sampled)
+    np.testing.assert_allclose(
+        working_param_dataset["fates_nonhydro_smpsc"].values, smpsc
+    )
+
+
+def test_scale_from_root_percent_bounds_default_normalizes_to_middle(
+    scale_from_root_row, param_dataset
+):
+    """Test that with symmetric percent bounds the default delta normalizes to
+    0.5 (the middle of its range)
+    """
+    scale_from_root_row["param_min"] = "20percent"
+    scale_from_root_row["param_max"] = "20percent"
+    param = Parameter.from_row(scale_from_root_row, param_dataset)
+    normalized = param.normalize(param.get_default(param_dataset), param_dataset)
+    np.testing.assert_allclose(normalized, [0.5] * 3)

@@ -683,6 +683,82 @@ def test_expand_params_unknown_expand_dim_raises(tmp_path, default_param_file):
         LatinHypercubeEnsemble(config)
 
 
+def _slatop_main_csv(param_dir: Path, expand_dim: str | None):
+    """Write a main.csv with just fates_leaf_slatop (dims ['fates_pft'])"""
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "long_name": "SLA",
+                "category": "stomatal",
+                "subcategory": "photosynthesis",
+                "units": "m^2/gC",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "uniform",
+                "param_min": "0.005",
+                "param_max": "0.05",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": None,
+                "base_params": "",
+                "expand_dim": expand_dim,
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+
+
+def _slatop_lh_config(tmp_path, default_param_file) -> LatinHypercubeConfig:
+    """An LH config over the main.csv written by _slatop_main_csv"""
+    return LatinHypercubeConfig(
+        param_dir=tmp_path,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        default_param_file=default_param_file,
+        ensemble_members=3,
+    )
+
+
+def test_expand_params_expand_dim_not_on_parameter_raises(tmp_path, default_param_file):
+    """Test that an expand_dim that's in default_ds but isn't one of the
+    parameter's own dimensions raises when the ensemble is built, naming them
+    """
+    _slatop_main_csv(tmp_path, expand_dim="fates_leafage_class")
+    with pytest.raises(
+        ValueError,
+        match=r"'fates_leaf_slatop': expand_dim 'fates_leafage_class' is not one "
+        r"of its dimensions \['fates_pft'\]",
+    ):
+        LatinHypercubeEnsemble(_slatop_lh_config(tmp_path, default_param_file))
+
+
+def test_bad_expand_dim_leaves_earlier_ensemble(tmp_path, default_param_file):
+    """Test that a bad expand_dim is caught before an earlier ensemble's outputs
+    could be deleted by an overwrite
+    """
+    _slatop_main_csv(tmp_path, expand_dim=None)
+    LatinHypercubeEnsemble(
+        _slatop_lh_config(tmp_path, default_param_file)
+    ).create_ensemble()
+    before = sorted(p.name for p in (tmp_path / "ensemble").iterdir())
+
+    _slatop_main_csv(tmp_path, expand_dim="fates_leafage_class")
+    with pytest.raises(ValueError, match="is not one of its dimensions"):
+        LatinHypercubeEnsemble(
+            _slatop_lh_config(tmp_path, default_param_file)
+        ).create_ensemble(overwrite=True)
+    assert sorted(p.name for p in (tmp_path / "ensemble").iterdir()) == before
+
+
+def test_expand_params_expand_dim_on_parameter(tmp_path, default_param_file):
+    """Test that an expand_dim that is one of the parameter's dimensions still
+    expands it into one parameter per index
+    """
+    _slatop_main_csv(tmp_path, expand_dim="fates_pft")
+    ensemble = LatinHypercubeEnsemble(_slatop_lh_config(tmp_path, default_param_file))
+    assert [p.active_index.index for p in ensemble.params] == [0, 1, 2]
+
+
 def test_grouped_params_num_sampling_units(
     grouped_param_dir, default_param_file, tmp_path
 ):

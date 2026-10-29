@@ -629,7 +629,16 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
 
 
 class OneAtATimeEnsemble(ParamEnsemble, ensemble_type="OAT"):
-    """Concrete class for the One-at-a-time (OAT) ensemble class"""
+    """Concrete class for the One-at-a-time (OAT) ensemble class
+
+    Each member sets one parameter (or group) to its minimum or maximum and
+    leaves every other variable at its value in the default file. So when a
+    scale_from_root parameter's root is perturbed, its dependent is not
+    re-applied on top of the new root: the base variable stays at its absolute
+    default (unlike a Latin hypercube member, where it's root + its sampled
+    delta). If a root's bounds reach past its dependent's default, such a member
+    can break the order scale_from_root normally keeps (e.g. smpso below smpsc).
+    """
 
     def __init__(
         self,
@@ -979,6 +988,14 @@ def _expand_one_param(
         raise ValueError(
             f"Parameter '{param.spec.name}': expand_dim '{expand_dim}' "
             f"not found in default_ds. Available: {sorted(full_index_map)}"
+        )
+    # checked here, when the ensemble is built: sampling would only find out in
+    # create_ensemble, after an earlier ensemble may have been deleted
+    dims = param.free_dims or []
+    if expand_dim not in dims:
+        raise ValueError(
+            f"Parameter '{param.spec.name}': expand_dim '{expand_dim}' is not one of "
+            f"its dimensions {dims}."
         )
     fixed_for_dim = fixed_indices.get(expand_dim, [])
     active = [i for i in full_index_map[expand_dim] if i not in fixed_for_dim]

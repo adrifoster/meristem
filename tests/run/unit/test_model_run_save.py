@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import pytest
 import yaml
 
@@ -26,10 +27,9 @@ def test_model_run_load_root_as_string(created_run):
 
 
 def test_model_run_save_is_atomic(created_run):
-    """Test that temp file must not persist after save."""
+    """Test that no temp file persists after save."""
     created_run.save()
-    tmp_file = created_run.root / "run_state.json.tmp"
-    assert not tmp_file.exists()
+    assert not [p.name for p in created_run.root.iterdir() if p.name.endswith(".tmp")]
 
 
 def test_model_run_state_file_does_not_contain_root(created_run):
@@ -114,3 +114,30 @@ def test_model_run_load_unknown_scheduler_raises(created_run):
     """Test that ModelRun.load raises for a scheduler name it doesn't know"""
     with pytest.raises(ValueError, match="fake"):
         ModelRun.load(created_run.root)
+
+
+def test_model_run_concurrent_saves_never_corrupt(created_run, fake_scheduler):
+    """Test that two processes saving the same run at once (e.g. a job and a
+    command) never fail or leave the state file unreadable
+    """
+    runs = [ModelRun.load(created_run.root, scheduler=fake_scheduler) for _ in range(4)]
+    errors = []
+
+    def _save(run):
+        try:
+            for _ in range(100):
+                run.save()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_save, args=(run,)) for run in runs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert ModelRun.load(created_run.root, scheduler=fake_scheduler).run_id == (
+        created_run.run_id
+    )
+    assert not [p.name for p in created_run.root.iterdir() if p.name.endswith(".tmp")]

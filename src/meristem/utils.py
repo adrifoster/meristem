@@ -1,6 +1,8 @@
 """Utility methods"""
 
+import os
 import re
+import tempfile
 from pathlib import Path
 
 # identifiers (run IDs, ensemble IDs, stage names) end up in PBS job names,
@@ -93,3 +95,38 @@ def to_absolute_path(
         hint = " (is an environment variable unset?)" if "$" in str(path) else ""
         raise ValueError(f"{name} {str(path)!r}{where} must be an absolute path{hint}.")
     return path
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Write text to path so that readers only ever see the old or the new
+    contents, even if the process is killed or another process writes the same
+    file at the same time
+
+    The text goes to a uniquely named temporary file in the same directory,
+    which then replaces path in one rename. A fixed temporary name would let two
+    writers overwrite each other's temporary file mid-write.
+
+    Args:
+        path (Path): file to write
+        text (str): its new contents
+
+    Raises:
+        OSError: if the file can't be written; path is left as it was
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        # mkstemp makes the file private (0600); use the usual permissions
+        os.chmod(tmp, 0o666 & ~_umask())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def _umask() -> int:
+    """The process's current umask (os.umask can only be read by setting it)"""
+    current = os.umask(0)
+    os.umask(current)
+    return current

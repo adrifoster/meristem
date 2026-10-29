@@ -553,7 +553,8 @@ def test_save_writes_current_param_files(created_ensemble):
 def test_save_leaves_no_tmp_file(created_ensemble):
     """Test that the atomic write doesn't leave its temp file behind"""
     created_ensemble.save()
-    assert not (created_ensemble.root / f"{_STATE_FILE}.tmp").exists()
+    root = created_ensemble.root
+    assert not [p.name for p in root.iterdir() if p.name.endswith(".tmp")]
 
 
 # ---------------------------------------------------------------------------

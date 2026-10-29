@@ -671,7 +671,15 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
         return [*self.spec.base_params, self.spec.root_param]
 
     def _full_default(self, default_ds: ParameterDataset) -> np.ndarray:
-        return default_ds[self.spec.base_params[0]].values
+        """The default delta (base - root): the sampled value is the delta added
+        to the root, so its default, percent bounds (e.g. 20percent of the
+        default delta) and normalized default are all in delta units
+        """
+        # root_param has the same dims as base_param (checked by _validate_params)
+        return (
+            default_ds[self.spec.base_params[0]].values
+            - default_ds[self.spec.root_param].values
+        )
 
     def _write_at_index(
         self,

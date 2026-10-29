@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import os
+import stat
+import threading
 from pathlib import Path
 
 import pytest
 
-from meristem.utils import check_email, check_id, to_absolute_path
+from meristem.utils import (
+    check_email,
+    check_id,
+    to_absolute_path,
+    write_atomically,
+)
 
 
 def test_to_absolute_path_none_passes():
@@ -143,3 +152,68 @@ def test_check_email_non_string_raises():
     """Test that a non-string email is rejected"""
     with pytest.raises(ValueError, match="email must be a string"):
         check_email("email", ["name@ucar.edu"])
+
+
+def test_write_atomically_writes_and_replaces(tmp_path):
+    """Test that write_atomically creates the file, then replaces its contents"""
+    path = tmp_path / "state.json"
+    write_atomically(path, "first")
+    assert path.read_text(encoding="utf-8") == "first"
+    write_atomically(path, "second")
+    assert path.read_text(encoding="utf-8") == "second"
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+
+
+def test_write_atomically_uses_umask_permissions(tmp_path):
+    """Test that the file gets the usual permissions (not the temp file's 0600),
+    so others who can read the directory can read the state
+    """
+    old = os.umask(0o022)
+    try:
+        write_atomically(tmp_path / "state.json", "x")
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE((tmp_path / "state.json").stat().st_mode) == 0o644
+
+
+def test_write_atomically_failure_keeps_original(tmp_path, monkeypatch):
+    """Test that a failure partway leaves the original file untouched and no
+    temp file behind
+    """
+    path = tmp_path / "state.json"
+    path.write_text("original", encoding="utf-8")
+
+    def _fail(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", _fail)
+    with pytest.raises(OSError, match="disk full"):
+        write_atomically(path, "new")
+    assert path.read_text(encoding="utf-8") == "original"
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+
+
+def test_write_atomically_concurrent_writers(tmp_path):
+    """Test that many writers saving the same file at once never fail and never
+    leave it corrupt: it's always one writer's complete contents
+    """
+    path = tmp_path / "state.json"
+    contents = [json.dumps({"writer": i, "pad": "x" * 50_000}) for i in range(8)]
+    errors = []
+
+    def _writer(text):
+        try:
+            for _ in range(50):
+                write_atomically(path, text)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_writer, args=(text,)) for text in contents]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    assert path.read_text(encoding="utf-8") in contents
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]

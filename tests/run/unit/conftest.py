@@ -60,7 +60,6 @@ def full_stage_config_dict(minimal_stage_config_dict) -> dict:
     return {
         **minimal_stage_config_dict,
         "walltime": "06:00:00",
-        "spinup_check": False,
         "ncpus": 1,
         "select": 1,
         "memory": "24GB",
