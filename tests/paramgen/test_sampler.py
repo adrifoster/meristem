@@ -428,7 +428,7 @@ def test_posterior_sampler_broadcast_returns_list_of_arrays(
 ):
     """sample() with array_index=None returns a list of arrays (one per parameter)."""
     sampler = PosteriorSampler(joint_param_row, posterior_config=posterior_config)
-    ctx = SampleContext(n_indices=3)
+    ctx = SampleContext(n_indices=[3])
     result = sampler.sample(0.5, ctx)
     assert isinstance(result, list)
     assert len(result) == 2
@@ -441,7 +441,7 @@ def test_posterior_sampler_broadcast_fills_all_indices(
 ):
     """sample() broadcast mode fills all n_indices positions with the same value."""
     sampler = PosteriorSampler(joint_param_row, posterior_config=posterior_config)
-    ctx = SampleContext(n_indices=3)
+    ctx = SampleContext(n_indices=[3])
     result = sampler.sample(0.5, ctx)
     assert result[0][0] == pytest.approx(result[0][1])
     assert result[0][1] == pytest.approx(result[0][2])
@@ -454,7 +454,7 @@ def test_posterior_sampler_multi_source_fills_correct_indices(
     sampler = PosteriorSampler(
         joint_param_row, posterior_config=multi_source_posterior_config
     )
-    ctx = SampleContext(n_indices=3)
+    ctx = SampleContext(n_indices=[3])
     result = sampler.sample(0.5, ctx)
 
     # indices 0 and 1 come from posterior_file (fates_leafn_vert_scaler_coeff1 in [0, 0.95])
@@ -653,7 +653,7 @@ def test_posterior_sampler_normalize_broadcast(tmp_path):
     row = pd.Series({"parameter_name": "leaf_cn", "strategy": "posterior"})
     sampler = PosteriorSampler(row, posterior_config=posterior_config)
 
-    context = SampleContext(array_index=None, n_indices=3)
+    context = SampleContext(array_index=None, n_indices=[3])
     result = sampler.normalize(20.0, context)
     assert len(result) == 1  # one entry per parameter
     assert len(result[0]) == 3  # one value per index
@@ -676,7 +676,7 @@ def test_unscale_broadcast_multiple_sources(tmp_path):
     row = pd.Series({"parameter_name": "leaf_cn", "strategy": "posterior"})
     sampler = PosteriorSampler(row, posterior_config=posterior_config)
 
-    context = SampleContext(array_index=None, n_indices=3)
+    context = SampleContext(array_index=None, n_indices=[3])
     result = sampler.normalize(20.0, context)
     assert len(result) == 1  # one entry per parameter
     assert len(result[0]) == 3  # one value per index
@@ -690,7 +690,7 @@ def test_posterior_sampler_normalize_broadcast_joint(joint_param_row, posterior_
         np.array([0.012, 0.015, 0.005]),  # coeff1 defaults
         np.array([2.1, 2.5, 2.6]),  # coeff2 defaults
     ]
-    ctx = SampleContext(array_index=None, n_indices=3)
+    ctx = SampleContext(array_index=None, n_indices=[3])
     result = sampler.normalize(default_values, ctx)
     assert isinstance(result, list)
     assert len(result) == 2
@@ -722,7 +722,7 @@ def test_posterior_sampler_normalize_broadcast_joint_multi_source(
             [12.0, 14.0, 22.0]
         ),  # coeff2: indices 0,1 from file1 [10,19.5], index 2 from file2 [20,29.5]
     ]
-    ctx = SampleContext(array_index=None, n_indices=3)
+    ctx = SampleContext(array_index=None, n_indices=[3])
     result = sampler.normalize(default_values, ctx)
     assert len(result) == 2
     assert all(np.all(r >= 0.0) and np.all(r <= 1.0) for r in result)

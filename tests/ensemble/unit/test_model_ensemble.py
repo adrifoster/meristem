@@ -321,6 +321,33 @@ def test_create_member_stages_run_prepare(ready_config_dict, tmp_path):
     assert run.stages[1].config.ncpus == 4
 
 
+def test_create_member_stages_run_finalize(ready_config_dict, tmp_path):
+    """Test that each member stage, with or without a script, ends by running
+    meristem ensemble finalize for that member and stage (which sets the
+    member's parameter file in its case)
+    """
+    script = tmp_path / "setup.sh"
+    script.touch()
+    ready_config_dict["member_stages"] = [
+        {"name": "ad", "queue": "regular"},
+        {"name": "post", "script": str(script), "queue": "regular"},
+    ]
+    ensemble = Ensemble.create(ready_config_dict)
+    for member in MEMBERS:
+        for stage in _member_run(ensemble, member).stages:
+            assert shlex.split(stage.config.post_command) == [
+                *shlex.split(meristem_cmd()),
+                "ensemble",
+                "finalize",
+                "--root",
+                str(ensemble.root),
+                "--member",
+                member,
+                "--stage",
+                stage.config.name,
+            ]
+
+
 def test_create_member_stage_keeps_script(ready_config_dict, tmp_path):
     """Test that a member stage with a script keeps it and gets the prepare
     command too (the job runs prepare, then the script)
@@ -335,11 +362,16 @@ def test_create_member_stage_keeps_script(ready_config_dict, tmp_path):
     assert "prepare" in shlex.split(stage.config.command)
 
 
-def test_create_member_stage_without_script_runs_only_prepare(created_ensemble):
-    """Test that a member stage with no script runs only prepare"""
+def test_create_member_stage_without_script_runs_prepare_and_finalize(
+    created_ensemble,
+):
+    """Test that a member stage with no script runs prepare and then finalize,
+    with no script in between
+    """
     stage = _member_run(created_ensemble, MEMBERS[0]).stages[0]
     assert stage.config.script is None
     assert "prepare" in shlex.split(stage.config.command)
+    assert "finalize" in shlex.split(stage.config.post_command)
 
 
 def test_create_member_stage_command_quotes_root(ready_config_dict, tmp_path):

@@ -247,6 +247,39 @@ def test_case_run_fails_then_retry_failed(run_ensemble, fake, meristem, tmp_path
     assert (status.drop(failing)["attempts"] == 1).all()
 
 
+def test_retry_skip_script_still_sets_paramfile(run_ensemble, fake, meristem, tmp_path):
+    """Test that retrying a member with --skip-script still runs finalize, so
+    its case gets its own parameter file rather than keeping the base case's.
+    Here the member's script fails before finalize ever ran, then is skipped
+    """
+    failing = "ens_0001"
+    script = tmp_path / "fails.sh"
+    # fails for one member whenever it runs, so the retry only succeeds if the
+    # script really is skipped
+    script.write_text(f'if [[ "$1" == *_{failing}_* ]]; then exit 3; fi\n')
+    stage = {"name": "spinup_ad", "queue": "develop", "script": str(script)}
+    root = run_ensemble(member_stages=[stage])
+
+    ensemble = Ensemble.load(root)
+    failing_case = Path(ensemble.status().set_index("member").loc[failing, "case_root"])
+    assert ensemble.status().set_index("member").loc[failing, "status"] == "failed"
+    # finalize never ran, so the clone still has only the base case's settings
+    assert _paramfile_lines(failing_case) == [], fake.logs()
+
+    result = meristem(
+        "ensemble", "retry", "--root", str(root), "--failed", "--skip-script"
+    )
+    assert result.returncode == 0, result.stderr
+    fake.run_until_idle()
+
+    status = Ensemble.load(root).status()
+    assert (status["status"] == "done").all(), fake.logs()
+    for row in status.itertuples():
+        _assert_case_configured(
+            Path(str(row.case_root)), ensemble.param_files[str(row.member)], fake
+        )
+
+
 def test_killed_setup_job_is_lost_then_retry_lost(make_ensemble, fake, meristem):
     """Test that a member whose setup job was killed is reported as lost (exit
     code 3) while the others finish, and that retry --lost reruns it to done

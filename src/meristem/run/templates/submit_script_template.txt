@@ -24,7 +24,10 @@ export -f meristem
 
 RUN_ROOT={{ root | shquote }}
 STAGE={{ name | shquote }}
-trap 'meristem run fail --root "$RUN_ROOT" --stage "$STAGE"' ERR
+# which attempt of the stage this job is: meristem ignores calls from an
+# older attempt's jobs, so a stale job can't change a retried stage
+ATTEMPT={{ attempt }}
+trap 'meristem run fail --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT"' ERR
 
 echo "=== Run: {{ run_id }} / stage: {{ name }} ==="
 echo "=== Started: $(date) ==="
@@ -54,6 +57,10 @@ cd {{ case_root | shquote }}
 # e.g. "case.run:123.desched1, case.st_archive:124.desched1"; with RESUBMIT > 0
 # only the last segment's jobs are listed
 JOB_IDS=$(./xmlquery --value JOB_IDS)
+# record them before anything else can fail, so a retry knows they may still
+# be running even if the advance and fail jobs never get submitted
+meristem run record-cime-jobs --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT" \
+    --job-ids "$JOB_IDS"
 RUN_JOB_ID=$(sed -n 's/.*case\.run:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
 ARCHIVE_JOB_ID=$(sed -n 's/.*case\.st_archive:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
 if [[ -z $RUN_JOB_ID ]]; then
@@ -64,13 +71,14 @@ fi
 FINAL_JOB_ID=${ARCHIVE_JOB_ID:-$RUN_JOB_ID}
 echo "CIME submitted, case.run: $RUN_JOB_ID, final job ID: $FINAL_JOB_ID"
 
-meristem run submit-advance --root "$RUN_ROOT" --stage "$STAGE" --cime-job-id "$FINAL_JOB_ID"
+meristem run submit-advance --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT" \
+    --cime-job-id "$FINAL_JOB_ID"
 # watch case.run too: if it crashes PBS deletes st_archive and anything
 # waiting on it, so a fail job on st_archive alone never runs
-meristem run submit-fail --root "$RUN_ROOT" --stage "$STAGE" \
+meristem run submit-fail --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT" \
     --cime-job-id "$RUN_JOB_ID" --cime-job-id "$FINAL_JOB_ID"
 {% else %}
-meristem run advance --root "$RUN_ROOT" --stage "$STAGE"
+meristem run advance --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT"
 {% endif %}
 
 echo "=== Setup complete: $(date) ==="

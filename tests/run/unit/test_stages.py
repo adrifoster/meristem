@@ -192,6 +192,24 @@ def test_stage_state_from_dict_without_advance_and_fail_job_ids():
     assert not stage_state.fail_job_ids
 
 
+def test_stage_state_from_dict_roundtrip_with_cime_job_ids(submitted_state):
+    """Test that cime_job_ids survive a to_dict/from_dict round trip"""
+    submitted_state.cime_job_ids = ["12349.pbs", "12350.pbs"]
+    roundtrip = StageState.from_dict(submitted_state.to_dict())
+    assert roundtrip == submitted_state
+    assert roundtrip.cime_job_ids == ["12349.pbs", "12350.pbs"]
+
+
+def test_stage_state_from_dict_without_cime_job_ids():
+    """Test that a state dict saved before CIME job IDs were recorded still
+    loads, with none
+    """
+    stage_state = StageState.from_dict(
+        {"status": "submitted", "job_id": "12345.pbs", "submit_time": 1_000_000.0}
+    )
+    assert not stage_state.cime_job_ids
+
+
 def test_stage_state_from_dict_defaults_optional_fields():
     """Test that a StageState.from_dict correctly instantiates optional fields"""
     stage_state = StageState.from_dict({"status": "pending"})
@@ -311,6 +329,7 @@ def test_stage_state_repr(failed_state):
         f"StageState(status={failed_state.status!r}, job_id={failed_state.job_id!r}, "
         f"advance_job_id={failed_state.advance_job_id!r}, "
         f"fail_job_ids={failed_state.fail_job_ids!r}, "
+        f"cime_job_ids={failed_state.cime_job_ids!r}, "
         f"submit_time={failed_state.submit_time!r}, "
         f"end_time={failed_state.end_time!r}, attempts={failed_state.attempts!r})"
     )

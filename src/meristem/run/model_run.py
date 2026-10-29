@@ -47,6 +47,9 @@ _STATE_FILE = "run_state.json"
 # characters that are safe in a run_id (used as a directory component).
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 
+# the job ID in each "job:ID" entry of a case's JOB_IDS
+_CIME_JOB_ID_RE = re.compile(r"[^\s,:]+:([^\s,]+)")
+
 # keys that must be present in a config dict.
 _REQUIRED_CONFIG_KEYS = frozenset({"root", "stages"})
 
@@ -249,9 +252,11 @@ class ModelRun:
         """Check whether a submitted stage has no jobs left that will finish it.
 
         A stage is lost when it is SUBMITTED but none of its recorded jobs
-        (setup, and advance and fail once the setup job has submitted them) are
-        still queued or running, so nothing in PBS will ever mark it DONE or
-        FAILED. This covers a setup job killed before it submitted the advance
+        (setup, the CIME jobs once case.submit has reported them, and advance and
+        fail once the setup job has submitted them) are still queued or running,
+        so nothing in PBS will ever mark it DONE or FAILED. While its CIME jobs
+        are running it isn't lost, so retrying it can't start a second CIME run
+        on the same case. This covers a setup job killed before it submitted the advance
         and fail jobs (including every no_cime stage), and advance/fail jobs
         that ended or were deleted without updating the stage.
 
@@ -269,8 +274,9 @@ class ModelRun:
         every later job (including the advance and fail jobs) along with them.
 
         Known gaps (the stage is reported lost while its CIME run is going):
-        a setup job killed between case.submit and submit-advance, and stages
-        submitted before advance/fail job IDs were recorded (old state files).
+        a setup job killed between case.submit and record-cime-jobs (before
+        CIME's job IDs are known), and stages submitted before advance/fail and
+        CIME job IDs were recorded (old state files).
 
         Args:
             stage_name (str): name of the stage to check
@@ -290,6 +296,7 @@ class ModelRun:
             stage.state.job_id,
             stage.state.advance_job_id,
             *stage.state.fail_job_ids,
+            *stage.state.cime_job_ids,
         )
         job_ids = [
             job_id for job_id in recorded if job_id and not job_id.startswith("DRY_")
@@ -321,7 +328,58 @@ class ModelRun:
             fresh.job_id,
             fresh.advance_job_id,
             *fresh.fail_job_ids,
+            *fresh.cime_job_ids,
         )
+
+    def _active_jobs(self, stage: Stage) -> list[str]:
+        """The stage's recorded jobs (setup, advance, fail, and the CIME jobs)
+        that the scheduler reports as queued or running
+
+        Args:
+            stage (Stage): stage
+
+        Raises:
+            RuntimeError: if the scheduler query fails
+
+        Returns:
+            list[str]: active job IDs, in recorded order
+        """
+        recorded = (
+            stage.state.job_id,
+            stage.state.advance_job_id,
+            *stage.state.fail_job_ids,
+            *stage.state.cime_job_ids,
+        )
+        job_ids = [
+            job_id for job_id in recorded if job_id and not job_id.startswith("DRY_")
+        ]
+        if not job_ids:
+            return []
+        states = self.scheduler.query(job_ids)
+        active = {JobState.QUEUED, JobState.RUNNING}
+        return [job_id for job_id in job_ids if states.get(job_id) in active]
+
+    def _is_stale(self, stage: Stage, attempt: int | None, action: str) -> bool:
+        """Whether a call from a job belongs to an older attempt of the stage
+        (e.g. an advance job still queued when the stage was retried), so it
+        should be ignored
+
+        Args:
+            stage (Stage): the stage the job belongs to
+            attempt (int | None): the job's attempt, or None (job scripts written
+                before attempts were recorded in them: not checked)
+            action (str): what the job asked for, for the message
+
+        Returns:
+            bool: True if the call should be ignored
+        """
+        if attempt is None or attempt == stage.state.attempts:
+            return False
+        print(
+            f"  {self.run_id} / {stage.config.name}: ignoring {action} from "
+            f"attempt {attempt}; the stage is on attempt {stage.state.attempts}"
+        )
+        return True
 
     def _stage(self, name: str) -> Stage:
         """Get the Stage given an input name
@@ -459,13 +517,18 @@ class ModelRun:
         self._validate_stages()
         return self._submit_stage(first, dry_run=dry_run)
 
-    def fail(self, stage_name: str):
-        """Mark a stage as failed (called from the ERR trap).
+    def fail(self, stage_name: str, attempt: int | None = None):
+        """Mark a stage as failed (called from the ERR trap and fail jobs).
 
         Args:
             stage_name (str): stage name
+            attempt (int | None, optional): attempt of the stage the calling job
+                belongs to; a call from an older attempt is ignored. Defaults to
+                None (no check, as in job scripts written before attempts)
         """
         stage = self._stage(stage_name)
+        if self._is_stale(stage, attempt, "fail"):
+            return
         if stage.state.status not in (StageStatus.SUBMITTED, StageStatus.DONE):
             raise ValueError(
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
@@ -476,9 +539,39 @@ class ModelRun:
         self.save()
         print(f"  {self.run_id} / {stage_name}: FAILED")
 
+    def record_cime_jobs(
+        self, stage_name: str, job_ids: str, attempt: int | None = None
+    ) -> list[str]:
+        """Record the CIME jobs case.submit queued for a stage, so they're known
+        even if the setup job fails before submitting the advance and fail jobs
+        Called from the setup job script right after case.submit
+
+        Args:
+            stage_name (str): name of stage
+            job_ids (str): the case's JOB_IDS, e.g.
+                "case.run:123.desched1, case.st_archive:124.desched1"
+            attempt (int | None, optional): attempt of the stage the calling job
+                belongs to; a call from an older attempt is ignored. Defaults to
+                None (no check)
+
+        Returns:
+            list[str]: the recorded job IDs ([] if ignored or JOB_IDS has none)
+        """
+        stage = self._stage(stage_name)
+        if self._is_stale(stage, attempt, "record-cime-jobs"):
+            return []
+        stage.state.cime_job_ids = _CIME_JOB_ID_RE.findall(job_ids)
+        self.save()
+        print(f"  {self.run_id} / {stage_name}: CIME jobs {stage.state.cime_job_ids}")
+        return list(stage.state.cime_job_ids)
+
     def submit_advance(
-        self, stage_name: str, cime_job_id: str, dry_run: bool = False
-    ) -> str:
+        self,
+        stage_name: str,
+        cime_job_id: str,
+        dry_run: bool = False,
+        attempt: int | None = None,
+    ) -> str | None:
         """Write the advance script with the CIME job ID and submit it
         Called from the setup job script after case.submit completes
 
@@ -487,11 +580,16 @@ class ModelRun:
             cime_job_id (str): CIME job ID
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
+            attempt (int | None, optional): attempt of the stage the calling job
+                belongs to; a call from an older attempt is ignored. Defaults to
+                None (no check)
 
         Returns:
-            str: PBS job ID of the advance script
+            str | None: PBS job ID of the advance script, or None if ignored
         """
         stage = self._stage(stage_name)
+        if self._is_stale(stage, attempt, "submit-advance"):
+            return None
         job_file = self._write_advance_script(stage, cime_job_id)
         if dry_run:
             print(f"  {self.run_id} / {stage_name}: dry run, wrote {job_file}")
@@ -506,7 +604,11 @@ class ModelRun:
         return job_id
 
     def submit_fail(
-        self, stage_name: str, cime_job_ids: str | list[str], dry_run: bool = False
+        self,
+        stage_name: str,
+        cime_job_ids: str | list[str],
+        dry_run: bool = False,
+        attempt: int | None = None,
     ) -> list[str]:
         """Write and submit one fail script per CIME job ID
         This is so that if our CIME job crashes we can fail the stage
@@ -524,11 +626,16 @@ class ModelRun:
                 case.st_archive. Duplicates are submitted once
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
+            attempt (int | None, optional): attempt of the stage the calling job
+                belongs to; a call from an older attempt is ignored. Defaults to
+                None (no check)
 
         Returns:
-            list[str]: PBS job IDs of the fail scripts
+            list[str]: PBS job IDs of the fail scripts ([] if ignored)
         """
         stage = self._stage(stage_name)
+        if self._is_stale(stage, attempt, "submit-fail"):
+            return []
         if isinstance(cime_job_ids, str):
             cime_job_ids = [cime_job_ids]
         cime_job_ids = list(dict.fromkeys(cime_job_ids))
@@ -559,18 +666,30 @@ class ModelRun:
             )
         return list(stage.state.fail_job_ids)
 
-    def advance(self, completed_stage_name: str, dry_run: bool = False) -> str | None:
+    def advance(
+        self,
+        completed_stage_name: str,
+        dry_run: bool = False,
+        attempt: int | None = None,
+    ) -> str | None:
         """Advance the pipeline and submit the next stage
 
         Args:
             completed_stage_name (str): completed stage name
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
+            attempt (int | None, optional): attempt of the stage the calling job
+                belongs to; a call from an older attempt is ignored, so a stale
+                advance job can't finish a retried stage. Defaults to None (no
+                check)
 
         Returns:
-            str | None: PBS job ID of the advance script, or None if all stages complete
+            str | None: PBS job ID of the advance script, or None if all stages
+            complete or the call was ignored
         """
         stage = self._stage(completed_stage_name)
+        if self._is_stale(stage, attempt, "advance"):
+            return None
         if stage.state.status != StageStatus.SUBMITTED:
             raise ValueError(
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
@@ -631,6 +750,9 @@ class ModelRun:
         Raises:
             ValueError: if the stage can't be retried, or lost is True and the
             stage isn't lost (so a running stage is never resubmitted)
+            ValueError: if the stage is FAILED but jobs from that attempt are
+            still queued or running
+            RuntimeError: if the scheduler query for those jobs fails
             ValueError: if this or a later stage's config is invalid (e.g. its
             script is missing); the stage is left as it was
 
@@ -655,6 +777,16 @@ class ModelRun:
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only retry PENDING or FAILED stages."
             )
+        if stage.state.status is StageStatus.FAILED:
+            # e.g. the setup job failed after case.submit: its CIME and advance
+            # jobs are still queued, and a new attempt would run alongside them
+            active = self._active_jobs(stage)
+            if active:
+                raise ValueError(
+                    f"Stage {stage.config.name!r} failed, but jobs from that "
+                    f"attempt are still queued or running: {active}. Wait for "
+                    "them to finish or qdel them, then retry."
+                )
         self._validate_stages(start=stage.config.name)
         if dry_run:
             return self._dry_run_stage(stage, skip_script=skip_script)
@@ -669,6 +801,7 @@ class ModelRun:
         stage.state.job_id = None
         stage.state.advance_job_id = None
         stage.state.fail_job_ids = []
+        stage.state.cime_job_ids = []
         self.save()
         return self._submit_stage(stage, dry_run=dry_run, skip_script=skip_script)
 
@@ -691,7 +824,7 @@ class ModelRun:
                 Defaults to False
 
         Raises:
-            ValueError: Can only submit PENDING or FAILED stages
+            ValueError: Can only submit PENDING stages (checked before submitting)
 
         Returns:
             str: _description_
@@ -795,6 +928,8 @@ class ModelRun:
             submit_args=stage.config.submit_args,
             command=stage.config.command,
             post_command=stage.config.post_command,
+            # written before the job is submitted, which starts the next attempt
+            attempt=stage.state.attempts + 1,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
@@ -823,6 +958,7 @@ class ModelRun:
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,
+            attempt=stage.state.attempts,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
@@ -855,24 +991,26 @@ class ModelRun:
             cime_job_id=cime_job_id,
             root=self.root,
             stage_name=stage.config.name,
+            attempt=stage.state.attempts,
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
 
 
 def _check_submittable(stage: Stage) -> None:
-    """Check a stage can be submitted
+    """Check a stage can be submitted, before its job is: only a PENDING stage
+    can become SUBMITTED (retry resets a FAILED one to PENDING first)
 
     Args:
         stage (Stage): stage
 
     Raises:
-        ValueError: stage isn't PENDING or FAILED
+        ValueError: stage isn't PENDING
     """
-    if stage.state.status not in (StageStatus.PENDING, StageStatus.FAILED):
+    if stage.state.status is not StageStatus.PENDING:
         raise ValueError(
             f"Stage {stage.config.name!r} is {stage.state.status.value} "
-            "- can only submit PENDING or FAILED stages."
+            "- can only submit PENDING stages (retry resubmits a FAILED one)."
         )
 
 

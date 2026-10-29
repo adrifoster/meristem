@@ -84,7 +84,8 @@ def test_submit_script_trap_references_stage_name(created_run):
     created_run.submit()
     content = (created_run.root / f"{created_run.run_id}_spinup_ad.pbs").read_text()
     assert f"STAGE={created_run.stages[0].config.name}\n" in content
-    assert '--stage "$STAGE"\' ERR' in content
+    assert "ATTEMPT=1\n" in content  # the first submit starts attempt 1
+    assert '--stage "$STAGE" --attempt "$ATTEMPT"\' ERR' in content
 
 
 def test_submit_script_correct_script(created_run):
@@ -353,6 +354,50 @@ def test_submit_skip_script_omits_command_and_script(command_and_script_run):
     assert _setup_calls(job_file) == []
 
 
+@pytest.fixture
+def hooks_run(tmp_path, minimal_stage_config_dict, fake_scheduler) -> ModelRun:
+    """A ModelRun whose single stage runs a command, a script, then a
+    post_command (like an ensemble member's prepare, script, finalize)
+    """
+    stage = {
+        **minimal_stage_config_dict,
+        "command": "echo prepare",
+        "post_command": "echo finalize",
+    }
+    return _run_with_stages(tmp_path / "myrun", [stage], fake_scheduler)
+
+
+def test_submit_post_command_runs_after_script(hooks_run, script_file):
+    """Test that a stage's post_command runs after its command and script, so
+    the script can't undo it
+    """
+    hooks_run.submit()
+    calls = _setup_calls(hooks_run.root / f"{hooks_run.run_id}_spinup_ad.pbs")
+    assert calls == [
+        ["bash", "-c", "set -euo pipefail; echo prepare"],
+        [
+            "bash",
+            "-c",
+            'set -euo pipefail; source "$0" "$@"',
+            str(script_file),
+            str(hooks_run.root / "spinup_ad"),
+        ],
+        ["bash", "-c", "set -euo pipefail; echo finalize"],
+    ]
+
+
+def test_submit_skip_script_still_runs_post_command(hooks_run):
+    """Test that skip_script skips the command and script but not the
+    post_command: an ensemble member retried with --skip-script must still set
+    its parameter file (finalize), or it runs with the base case's
+    """
+    # pylint: disable=protected-access
+    job_file = hooks_run._write_job_script(hooks_run.stages[0], skip_script=True)
+    assert _setup_calls(job_file) == [
+        ["bash", "-c", "set -euo pipefail; echo finalize"]
+    ]
+
+
 @pytest.mark.parametrize("command", ["submit-advance", "submit-fail"])
 def test_submit_script_correct_clm_run_submit_commands(created_run, command):
     """
@@ -395,12 +440,14 @@ def _run_cime_block(
 
     set_line = next(line for line in lines if line.startswith("set -e"))
     trap_line = next(line for line in lines if line.startswith("trap "))
+    attempt_line = next(line for line in lines if line.startswith("ATTEMPT="))
     fail_clause = f'if [[ "$*" == *{fail_on}* ]]; then false; fi; ' if fail_on else ""
 
     script = "\n".join(
         [
             set_line,
             "RUN_ROOT=root STAGE=stage",
+            attempt_line,
             f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; {fail_clause}}}',
             trap_line,
             *lines[start:end],
@@ -448,9 +495,12 @@ def test_submit_script_cime_block_uses_case_run_and_archive_ids(
     assert submit_args == ["--resubmit-immediate"]
 
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    # the CIME jobs are recorded first, before anything else can fail
     assert calls == [
-        f"run submit-advance --root root --stage stage --cime-job-id {advance_on}",
-        f"run submit-fail --root root --stage stage --cime-job-id {fail_on}",
+        f"run record-cime-jobs --root root --stage stage --attempt 1 --job-ids {job_ids}",
+        "run submit-advance --root root --stage stage --attempt 1 "
+        f"--cime-job-id {advance_on}",
+        f"run submit-fail --root root --stage stage --attempt 1 --cime-job-id {fail_on}",
     ]
 
 
@@ -480,7 +530,10 @@ def test_submit_script_cime_block_without_case_run_id_fails(created_run):
     assert result.returncode != 0
     assert "No case.run job ID" in result.stderr
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
-    assert calls == ["run fail --root root --stage stage"]
+    assert calls == [
+        "run record-cime-jobs --root root --stage stage --attempt 1 --job-ids ",
+        "run fail --root root --stage stage --attempt 1",
+    ]
 
 
 def test_submit_script_cime_block_runs_fail_when_advance_errors(created_run):
@@ -493,7 +546,7 @@ def test_submit_script_cime_block_runs_fail_when_advance_errors(created_run):
     )
     assert result.returncode != 0
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
-    assert calls[-1] == "run fail --root root --stage stage"
+    assert calls[-1] == "run fail --root root --stage stage --attempt 1"
 
 
 def test_submit_stage_status_set_to_submitted(created_run):

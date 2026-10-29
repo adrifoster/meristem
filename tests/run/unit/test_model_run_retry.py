@@ -354,3 +354,104 @@ def test_retry_ignores_earlier_stage_scripts(two_script_run, tmp_path, mocker):
     mock = mocker.patch.object(two_script_run, "_submit_stage", return_value="1.pbs")
     two_script_run.retry("spinup_sasu")
     mock.assert_called_once()
+
+
+# retry while the failed attempt's jobs are still active
+
+
+@pytest.fixture
+def failed_with_jobs(created_run) -> ModelRun:
+    """created_run whose stage failed with its setup (1.fake), advance (2.fake),
+    fail (3.fake, 4.fake) and CIME jobs (5.fake, 6.fake) recorded, e.g. the
+    setup job failed after case.submit
+    """
+    created_run.submit()
+    state = created_run.stages[0].state
+    state.advance_job_id = "2.fake"
+    state.fail_job_ids = ["3.fake", "4.fake"]
+    state.cime_job_ids = ["5.fake", "6.fake"]
+    created_run.save()
+    created_run.fail("spinup_ad")
+    return created_run
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize("job_state", [JobState.QUEUED, JobState.RUNNING])
+@pytest.mark.parametrize("job_id", ["1.fake", "2.fake", "4.fake", "5.fake", "6.fake"])
+def test_retry_failed_with_active_jobs_raises(
+    failed_with_jobs, fake_scheduler, job_id, job_state, dry_run
+):
+    """Test that retrying a FAILED stage whose setup, advance or fail job is
+    still queued or running raises, naming it, and changes and submits nothing
+    """
+    fake_scheduler.job_states = {job_id: job_state}
+    submitted = len(fake_scheduler.submitted)
+    with pytest.raises(ValueError, match=rf"still queued or running: \['{job_id}'\]"):
+        failed_with_jobs.retry("spinup_ad", dry_run=dry_run)
+    assert len(fake_scheduler.submitted) == submitted
+    state = (
+        ModelRun.load(failed_with_jobs.root, scheduler=fake_scheduler).stages[0].state
+    )
+    assert state.status is StageStatus.FAILED
+    assert state.attempts == 1
+    assert (state.job_id, state.advance_job_id) == ("1.fake", "2.fake")
+
+
+def test_retry_failed_lists_every_active_job(failed_with_jobs, fake_scheduler):
+    """Test that the error lists all the attempt's active jobs, in order"""
+    fake_scheduler.job_states = {
+        "1.fake": JobState.FINISHED,
+        "2.fake": JobState.QUEUED,
+        "3.fake": JobState.QUEUED,
+        "4.fake": JobState.RUNNING,
+    }
+    with pytest.raises(ValueError, match=r"\['2.fake', '3.fake', '4.fake'\]"):
+        failed_with_jobs.retry("spinup_ad")
+
+
+@pytest.mark.parametrize("job_state", [JobState.FINISHED, JobState.UNKNOWN])
+def test_retry_failed_with_finished_jobs(failed_with_jobs, fake_scheduler, job_state):
+    """Test that a FAILED stage whose jobs are all finished (or gone from the
+    scheduler) is retried
+    """
+    fake_scheduler.job_states = {
+        job: job_state
+        for job in ("1.fake", "2.fake", "3.fake", "4.fake", "5.fake", "6.fake")
+    }
+    failed_with_jobs.retry("spinup_ad")
+    state = failed_with_jobs.stages[0].state
+    assert state.status is StageStatus.SUBMITTED
+    assert state.attempts == 2
+    assert fake_scheduler.queried == [
+        ["1.fake", "2.fake", "3.fake", "4.fake", "5.fake", "6.fake"]
+    ]
+    assert state.cime_job_ids == []  # reset for the new attempt
+
+
+def test_retry_failed_without_recorded_jobs_skips_query(created_run, fake_scheduler):
+    """Test that a FAILED stage with no recorded jobs (e.g. it was never
+    submitted) is retried without querying the scheduler
+    """
+    created_run.stages[0].state.status = StageStatus.FAILED
+    created_run.retry("spinup_ad")
+    assert not fake_scheduler.queried
+    assert created_run.stages[0].state.status is StageStatus.SUBMITTED
+
+
+def test_retry_failed_skips_dry_run_job_ids(created_run, fake_scheduler):
+    """Test that dry-run placeholder job IDs aren't sent to the scheduler"""
+    state = created_run.stages[0].state
+    state.status = StageStatus.FAILED
+    state.advance_job_id = "DRY_advance_member_0001_spinup_ad"
+    created_run.retry("spinup_ad")
+    assert not fake_scheduler.queried
+
+
+def test_retry_failed_query_error_raises(failed_with_jobs, fake_scheduler, mocker):
+    """Test that a failed scheduler query stops the retry, rather than being
+    taken as 'no jobs active'
+    """
+    mocker.patch.object(fake_scheduler, "query", side_effect=RuntimeError("qstat down"))
+    with pytest.raises(RuntimeError, match="qstat down"):
+        failed_with_jobs.retry("spinup_ad")
+    assert failed_with_jobs.stages[0].state.status is StageStatus.FAILED

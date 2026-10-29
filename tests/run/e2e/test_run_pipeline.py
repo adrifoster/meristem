@@ -392,6 +392,97 @@ def test_next_stage_script_missing_fails_it_then_retry(
     assert [s["attempts"] for s in state["stages"]] == [1, 1], state
 
 
+def _stage_states(root: Path) -> dict[str, tuple[str, int]]:
+    """Each stage's (status, attempts), as saved"""
+    state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
+    return {s["name"]: (s["status"], s["attempts"]) for s in state["stages"]}
+
+
+def test_failed_attempt_with_live_jobs_then_retry(make_run, fake, meristem):
+    """Test a setup job that fails after case.submit, leaving its CIME and
+    advance jobs queued: retry is refused while they're active, and once retried
+    a leftover advance job from the old attempt is ignored rather than
+    finishing the new attempt
+    """
+    root = make_run([{"name": "stage1"}, {"name": "stage2"}])
+    fake.fail_qsub(r"_fail(_\d+)?\.pbs$")  # fails the setup job after case.submit
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    fake.step()  # stage1's setup job
+    assert _stage_states(root)["stage1"] == ("failed", 1), fake.logs()
+    advance = next(j for j in fake.jobs() if j["name"] == "e2e_test_stage1_advance")
+    assert advance["state"] == "Q"
+
+    # attempt 1's case.run, st_archive and advance jobs are still queued
+    result = meristem("run", "retry", "--root", str(root))
+    assert result.returncode == 1
+    assert "still queued or running" in result.stderr
+    assert advance["id"] in result.stderr
+    assert _stage_states(root)["stage1"] == ("failed", 1)
+
+    # attempt 1's CIME jobs finish; its advance job is gone (killed here)
+    (fake.spool / "control.json").unlink()
+    fake.step()  # case.run
+    fake.step()  # st_archive
+    fake.kill(advance["id"])
+    result = meristem("run", "retry", "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _stage_states(root)["stage1"] == ("submitted", 2)
+
+    # attempt 1's advance script runs anyway (e.g. the scheduler lost track of
+    # it): it's ignored instead of marking attempt 2 done and starting stage2
+    stale = subprocess.run(
+        ["bash", advance["script"]],
+        env=fake.env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stale.returncode == 0, stale.stdout + stale.stderr
+    assert "ignoring advance from attempt 1" in stale.stdout
+    assert _stage_states(root) == {
+        "stage1": ("submitted", 2),
+        "stage2": ("pending", 0),
+    }
+
+    fake.run_until_idle()
+    assert _stage_states(root) == {
+        "stage1": ("done", 2),
+        "stage2": ("done", 1),
+    }, fake.logs()
+
+
+def test_setup_fails_before_advance_job_cime_still_tracked(make_run, fake, meristem):
+    """Test a setup job that fails after case.submit but before submitting any
+    advance or fail job: its CIME jobs are still recorded, so retry is refused
+    while they run (instead of starting a second CIME run on the same case),
+    and allowed once they finish
+    """
+    root = make_run([{"name": "stage1"}])
+    fake.fail_qsub(r"_advance\.pbs$")  # only the advance job's qsub fails
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    fake.step()  # the setup job
+    jobs = {j["name"]: j for j in fake.jobs()}
+    assert sorted(jobs) == ["e2e_test_stage1", "stage1.run", "stage1.st_archive"]
+    state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
+    stage = state["stages"][0]
+    assert stage["status"] == "failed", fake.logs()
+    assert stage["advance_job_id"] is None and stage["fail_job_ids"] == []
+    run_id, archive_id = jobs["stage1.run"]["id"], jobs["stage1.st_archive"]["id"]
+    assert stage["cime_job_ids"] == [run_id, archive_id]
+
+    result = meristem("run", "retry", "--root", str(root))
+    assert result.returncode == 1
+    assert "still queued or running" in result.stderr
+    assert run_id in result.stderr and archive_id in result.stderr
+
+    (fake.spool / "control.json").unlink()
+    fake.run_until_idle()  # the CIME jobs finish; nothing else was queued
+    result = meristem("run", "retry", "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+    assert _stage_states(root) == {"stage1": ("done", 2)}, fake.logs()
+
+
 def test_killed_setup_job_is_lost_then_retry(make_run, fake, meristem):
     """Test that a killed setup job is lost and retry works"""
     root = make_run([{"name": "stage1"}])

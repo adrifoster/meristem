@@ -236,7 +236,7 @@ def test_submit_advance_calls_submit_advance(mock_run, dry_run):
     argv = SUBMIT_ADVANCE_ARGV + (["--dry-run"] if dry_run else [])
     assert main(argv) == 0
     mock_run.submit_advance.assert_called_once_with(
-        "spinup_ad", "55555.pbs", dry_run=dry_run
+        "spinup_ad", "55555.pbs", dry_run=dry_run, attempt=None
     )
 
 
@@ -250,7 +250,7 @@ def test_submit_fail_calls_submit_fail(mock_run, dry_run):
     argv = SUBMIT_FAIL_ARGV + (["--dry-run"] if dry_run else [])
     assert main(argv) == 0
     mock_run.submit_fail.assert_called_once_with(
-        "spinup_ad", ["55555.pbs"], dry_run=dry_run
+        "spinup_ad", ["55555.pbs"], dry_run=dry_run, attempt=None
     )
 
 
@@ -262,7 +262,7 @@ def test_submit_fail_passes_every_cime_job_id(mock_run, capsys):
     mock_run.submit_fail.return_value = ["1.pbs", "2.pbs"]
     main(SUBMIT_FAIL_ARGV[:-1] + ["100.pbs", "--cime-job-id", "101.pbs"])
     mock_run.submit_fail.assert_called_once_with(
-        "spinup_ad", ["100.pbs", "101.pbs"], dry_run=False
+        "spinup_ad", ["100.pbs", "101.pbs"], dry_run=False, attempt=None
     )
     out = capsys.readouterr().out
     assert "Fail job submitted: 1.pbs" in out
@@ -278,7 +278,7 @@ def test_advance_calls_advance(mock_run, dry_run):
     """Test that advance calls ModelRun.advance, passing --dry-run through"""
     argv = ["advance", "--root", "/tmp/run", "--stage", "spinup_ad"]
     assert main(argv + (["--dry-run"] if dry_run else [])) == 0
-    mock_run.advance.assert_called_once_with("spinup_ad", dry_run=dry_run)
+    mock_run.advance.assert_called_once_with("spinup_ad", dry_run=dry_run, attempt=None)
 
 
 # fail
@@ -288,7 +288,37 @@ def test_advance_calls_advance(mock_run, dry_run):
 def test_fail_calls_fail(mock_run):
     """Test that fail calls ModelRun.fail"""
     assert main(["fail", "--root", "/tmp/run", "--stage", "spinup_ad"]) == 0
-    mock_run.fail.assert_called_once_with("spinup_ad")
+    mock_run.fail.assert_called_once_with("spinup_ad", attempt=None)
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize(
+    "argv,method",
+    [
+        (SUBMIT_ADVANCE_ARGV, "submit_advance"),
+        (SUBMIT_FAIL_ARGV, "submit_fail"),
+        (["advance", "--root", "/tmp/run", "--stage", "spinup_ad"], "advance"),
+        (["fail", "--root", "/tmp/run", "--stage", "spinup_ad"], "fail"),
+    ],
+)
+def test_job_callbacks_pass_attempt(mock_run, argv, method):
+    """Test that --attempt (set by meristem's job scripts) reaches each method
+    jobs call back into, as an int
+    """
+    assert main(argv + ["--attempt", "3"]) == 0
+    assert getattr(mock_run, method).call_args.kwargs["attempt"] == 3
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize("extra,attempt", [([], None), (["--attempt", "2"], 2)])
+def test_record_cime_jobs_calls_record_cime_jobs(mock_run, extra, attempt):
+    """Test that record-cime-jobs passes the stage, JOB_IDS and attempt through"""
+    argv = ["record-cime-jobs", "--root", "/tmp/run", "--stage", "spinup_ad"]
+    argv += ["--job-ids", "case.run:100, case.st_archive:101", *extra]
+    assert main(argv) == 0
+    mock_run.record_cime_jobs.assert_called_once_with(
+        "spinup_ad", "case.run:100, case.st_archive:101", attempt=attempt
+    )
 
 
 # retry

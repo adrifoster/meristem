@@ -23,6 +23,7 @@ _RUNTIME_KEYS: frozenset[str] = frozenset(
         "job_id",
         "advance_job_id",
         "fail_job_ids",
+        "cime_job_ids",
         "submit_time",
         "end_time",
         "attempts",
@@ -88,7 +89,7 @@ _ALLOWED_TRANSITIONS: dict[StageStatus, frozenset[StageStatus]] = {
 # ---------------------------------------------------------------------------
 
 
-class StageState:
+class StageState:  # pylint: disable=too-many-instance-attributes
     """Mutable runtime state for one stage. Owned by `Stage`.
 
     Mutations for submit_time, end_time, attempts, and status gi through methods or properties
@@ -115,6 +116,9 @@ class StageState:
     fail_job_ids: list of str
         PBS job IDs of fail jobs assigned after submission (one per CIME job
         they watch)
+    cime_job_ids: list of str
+        PBS job IDs of the CIME jobs (e.g. case.run, case.st_archive) the setup
+        job submitted, recorded as soon as case.submit reports them
     submit_time: float or None
         Unix timestamp of the most recent submission
     end_time: float or None
@@ -132,11 +136,13 @@ class StageState:
         submit_time: float | None = None,
         end_time: float | None = None,
         attempts: int = 0,
+        cime_job_ids: list[str] | None = None,
     ):
         self._status = status
         self.job_id = job_id
         self.advance_job_id = advance_job_id
         self.fail_job_ids = list(fail_job_ids or [])
+        self.cime_job_ids = list(cime_job_ids or [])
         self._submit_time = submit_time
         self._end_time = end_time
         self._attempts = attempts
@@ -240,6 +246,7 @@ class StageState:
             and self.job_id == other.job_id
             and self.advance_job_id == other.advance_job_id
             and self.fail_job_ids == other.fail_job_ids
+            and self.cime_job_ids == other.cime_job_ids
             and self._submit_time == other._submit_time
             and self._end_time == other._end_time
             and self._attempts == other._attempts
@@ -249,6 +256,7 @@ class StageState:
         return (
             f"StageState(status={self.status!r}, job_id={self.job_id!r}, "
             f"advance_job_id={self.advance_job_id!r}, fail_job_ids={self.fail_job_ids!r}, "
+            f"cime_job_ids={self.cime_job_ids!r}, "
             f"submit_time={self._submit_time!r}, end_time={self._end_time!r}, "
             f"attempts={self._attempts!r})"
         )
@@ -267,6 +275,7 @@ class StageState:
             "job_id": self.job_id,
             "advance_job_id": self.advance_job_id,
             "fail_job_ids": list(self.fail_job_ids),
+            "cime_job_ids": list(self.cime_job_ids),
             "submit_time": self._submit_time,
             "end_time": self._end_time,
             "attempts": self._attempts,
@@ -298,6 +307,8 @@ class StageState:
             submit_time=input_dict.get("submit_time"),
             end_time=input_dict.get("end_time"),
             attempts=input_dict.get("attempts", 0),
+            # older state files have no cime_job_ids
+            cime_job_ids=input_dict.get("cime_job_ids") or [],
         )
 
 

@@ -1,19 +1,17 @@
-# run: tethered multi-stage runs on PBS
+# run: tethered multi-stage runs on a job scheduler
 
-`meristem.run` manages multi-stage CLM runs on PBS clusters.
+`meristem.run` manages multi-stage runs on clusters.
 
 A CLM run often needs several stages in order (for example accelerated-decomposition spinup, then
 post-AD spinup, then a transient run), and each stage is normally set up and submitted by hand once the
 previous one finishes. `meristem.run` *tethers* these stages together: each stage automatically
-submits the next when it completes, using PBS job dependencies to ensure correct ordering.
-
-> **Status**: Early development. The API may change.
+submits the next when it completes, using job scheduler dependencies to ensure correct ordering.
 
 ----
 
 ## How it works
 
-Each stage consists of up to four PBS jobs:
+Each stage consists of up to four jobs:
 
 1. **Setup job**: runs your setup script for the stage (create, configure and build the case),
    submits the CIME case, then submits the advance and fail jobs below.

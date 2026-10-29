@@ -43,9 +43,10 @@ class SampleContext:
     index_axis : int | None
         Axis of default_value that array_index selects along. None when
         array_index is None.
-    n_indices : int | None
-        Total number of positions along the free dimension (1 for scalars).
-        Used by PosteriorSampler in broadcast mode to size the output arrays.
+    n_indices : list[int] | None
+        Number of positions along each free dimension ([1] for scalars), e.g.
+        [3] for a per-PFT parameter. Used by PosteriorSampler in broadcast mode
+        as the shape of the output arrays.
         Ignored by UniformSampler.
     pft_axis: int | None
         Axis along which the pft-dimension exists

@@ -161,14 +161,18 @@ def test_advance_non_pending_or_failed_rases(created_run, cant_advance_status):
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-@pytest.mark.parametrize("next_status", [StageStatus.SUBMITTED, StageStatus.DONE])
-def test_advance_next_stage_already_started_raises(
+@pytest.mark.parametrize(
+    "next_status", [StageStatus.SUBMITTED, StageStatus.DONE, StageStatus.FAILED]
+)
+def test_advance_next_stage_not_pending_raises(
     two_stage_run, fake_scheduler, next_status, dry_run
 ):
-    """Test that advance() won't resubmit a next stage that's already been
-    submitted or done (only possible with an inconsistent state file): it
-    submits nothing and leaves the next stage as it was, on disk too. A real
-    advance still marks the completed stage DONE, since its run finished
+    """Test that advance() won't submit a next stage that isn't PENDING (only
+    possible with an inconsistent state file): it raises before writing or
+    submitting a job, so no job runs untracked (a FAILED stage can't become
+    SUBMITTED; retry resets it to PENDING first), and leaves the next stage as
+    it was, on disk too. A real advance still marks the completed stage DONE,
+    since its run finished
     """
     object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.SUBMITTED)
     object.__setattr__(two_stage_run.stages[0].state, "_submit_time", time.time() - 100)
@@ -177,10 +181,11 @@ def test_advance_next_stage_already_started_raises(
     with pytest.raises(
         ValueError,
         match=f"Stage 'spinup_sasu' is {next_status.value} - can only submit "
-        "PENDING or FAILED stages",
+        "PENDING stages",
     ):
         two_stage_run.advance("spinup_ad", dry_run=dry_run)
     assert not fake_scheduler.submitted
+    assert not list(two_stage_run.root.glob("*_spinup_sasu.pbs"))
     completed = StageStatus.SUBMITTED if dry_run else StageStatus.DONE
     loaded = ModelRun.load(two_stage_run.root, scheduler=two_stage_run.scheduler)
     for run in (two_stage_run, loaded):

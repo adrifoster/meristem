@@ -11,4 +11,4 @@
 #PBS -W depend=afternotok:{{ cime_job_id }}
 set -euo pipefail
 
-{{ meristem }} run fail --root {{ root | shquote }} --stage {{ stage_name | shquote }}
+{{ meristem }} run fail --root {{ root | shquote }} --stage {{ stage_name | shquote }} --attempt {{ attempt }}

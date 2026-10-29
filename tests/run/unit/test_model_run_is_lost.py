@@ -11,6 +11,7 @@ from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
 SETUP, ADVANCE, FAIL, FAIL_2 = "1.fake", "2.fake", "3.fake", "4.fake"
+CIME_RUN, CIME_ARCHIVE = "5.fake", "6.fake"
 
 
 def _submit(
@@ -19,6 +20,7 @@ def _submit(
     advance_job_id=None,
     fail_job_ids=(),
     age=2 * _UNKNOWN_GRACE_SECONDS,
+    cime_job_ids=(),
 ):
     """Put the first stage in SUBMITTED with the given job IDs, saved to disk.
     By default submitted long enough ago that the UNKNOWN grace period is over
@@ -29,6 +31,7 @@ def _submit(
     state.job_id = job_id
     state.advance_job_id = advance_job_id
     state.fail_job_ids = list(fail_job_ids)
+    state.cime_job_ids = list(cime_job_ids)
     run.save()
 
 
@@ -165,6 +168,44 @@ def test_is_lost_only_advance_recorded_and_queued_is_false(created_run, fake_sch
     _submit(created_run, advance_job_id=ADVANCE)
     fake_scheduler.job_states = {SETUP: JobState.FINISHED, ADVANCE: JobState.QUEUED}
     assert not created_run.is_lost("spinup_ad")
+
+
+@pytest.mark.parametrize("running", [CIME_RUN, CIME_ARCHIVE])
+def test_is_lost_setup_died_after_case_submit_cime_running_is_false(
+    created_run, fake_scheduler, running
+):
+    """Test that a setup job killed after recording its CIME jobs, but before
+    submitting the advance and fail jobs, doesn't make the stage lost while a
+    CIME job is still going (retrying it would start a second CIME run)
+    """
+    _submit(created_run, cime_job_ids=[CIME_RUN, CIME_ARCHIVE])
+    fake_scheduler.job_states = {SETUP: JobState.FINISHED, running: JobState.RUNNING}
+    assert not created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_setup_died_after_case_submit_cime_finished_is_true(
+    created_run, fake_scheduler
+):
+    """Test that the same stage is lost once its CIME jobs have finished, since
+    nothing will mark it done or failed
+    """
+    _submit(created_run, cime_job_ids=[CIME_RUN, CIME_ARCHIVE])
+    fake_scheduler.job_states = {
+        job: JobState.FINISHED for job in (SETUP, CIME_RUN, CIME_ARCHIVE)
+    }
+    assert created_run.is_lost("spinup_ad")
+
+
+def test_is_lost_queries_cime_jobs_too(created_run, fake_scheduler):
+    """Test that is_lost's single query includes the CIME jobs, after the others"""
+    _submit(
+        created_run,
+        advance_job_id=ADVANCE,
+        fail_job_ids=[FAIL],
+        cime_job_ids=[CIME_RUN, CIME_ARCHIVE],
+    )
+    created_run.is_lost("spinup_ad")
+    assert fake_scheduler.queried == [[SETUP, ADVANCE, FAIL, CIME_RUN, CIME_ARCHIVE]]
 
 
 def test_is_lost_queries_all_recorded_jobs_once(created_run, fake_scheduler):

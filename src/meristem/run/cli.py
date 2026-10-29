@@ -79,6 +79,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     submit.set_defaults(handler=cmd_submit)
 
+    # meristem run record-cime-jobs --root R --stage S --job-ids JOB_IDS [--debug]
+    record_cime_jobs = subparsers.add_parser(
+        "record-cime-jobs",
+        parents=[debug, root],
+        help="Record the CIME jobs case.submit queued for a stage.",
+    )
+    record_cime_jobs.add_argument("--stage", required=True, help="Stage name.")
+    record_cime_jobs.add_argument(
+        "--job-ids",
+        required=True,
+        help="The case's JOB_IDS, e.g. 'case.run:123, case.st_archive:124'.",
+    )
+    record_cime_jobs.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt of the stage the calling job belongs to; a call from an "
+        "older attempt is ignored. Set by meristem's job scripts.",
+    )
+    record_cime_jobs.set_defaults(handler=cmd_record_cime_jobs)
+
     # meristem run submit-advance --root R --stage S --cime-job-id ID [--debug] [--dry-run]
     submit_advance = subparsers.add_parser(
         "submit-advance",
@@ -90,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--cime-job-id",
         required=True,
         help="CIME job scheduler ID.",
+    )
+    submit_advance.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt of the stage the calling job belongs to; a call from an "
+        "older attempt is ignored. Set by meristem's job scripts.",
     )
     submit_advance.set_defaults(handler=cmd_submit_advance)
 
@@ -106,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="CIME job scheduler ID.",
     )
+    submit_fail.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt of the stage the calling job belongs to; a call from an "
+        "older attempt is ignored. Set by meristem's job scripts.",
+    )
     submit_fail.set_defaults(handler=cmd_submit_fail)
 
     # meristem run advance --root R --stage S [--debug] [--dry-run]
@@ -115,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mark stage done and submit the next stage.",
     )
     advance.add_argument("--stage", required=True, help="Stage name.")
+    advance.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt of the stage the calling job belongs to; a call from an "
+        "older attempt is ignored. Set by meristem's job scripts.",
+    )
     advance.set_defaults(handler=cmd_advance)
 
     # meristem run fail --root R --stage S [--debug]
@@ -122,6 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
         "fail", parents=[debug, root], help="Mark stage as failed."
     )
     fail.add_argument("--stage", required=True, help="Stage name.")
+    fail.add_argument(
+        "--attempt",
+        type=int,
+        help="Attempt of the stage the calling job belongs to; a call from an "
+        "older attempt is ignored. Set by meristem's job scripts.",
+    )
     fail.set_defaults(handler=cmd_fail)
 
     # meristem run retry --root R [--stage S] [--debug] [--dry-run] [--skip-script] [--lost]
@@ -200,6 +244,20 @@ def cmd_submit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record_cime_jobs(args: argparse.Namespace) -> int:
+    """Execute record-cime-jobs action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    run.record_cime_jobs(args.stage, args.job_ids, attempt=args.attempt)
+    return 0
+
+
 def cmd_submit_advance(args: argparse.Namespace) -> int:
     """Execute submit-advance action and return a successful exit code
 
@@ -212,7 +270,9 @@ def cmd_submit_advance(args: argparse.Namespace) -> int:
     run = ModelRun.load(Path(args.root))
     _print_job_id(
         "Advance job submitted",
-        run.submit_advance(args.stage, args.cime_job_id, dry_run=args.dry_run),
+        run.submit_advance(
+            args.stage, args.cime_job_id, dry_run=args.dry_run, attempt=args.attempt
+        ),
     )
     return 0
 
@@ -227,7 +287,9 @@ def cmd_submit_fail(args: argparse.Namespace) -> int:
         int: 0 on success
     """
     run = ModelRun.load(Path(args.root))
-    job_ids = run.submit_fail(args.stage, args.cime_job_id, dry_run=args.dry_run)
+    job_ids = run.submit_fail(
+        args.stage, args.cime_job_id, dry_run=args.dry_run, attempt=args.attempt
+    )
     print("\n".join(f"Fail job submitted: {job_id}" for job_id in job_ids))
     return 0
 
@@ -242,7 +304,10 @@ def cmd_advance(args: argparse.Namespace) -> int:
         int: 0 on success
     """
     run = ModelRun.load(Path(args.root))
-    _print_job_id("Next stage submitted", run.advance(args.stage, dry_run=args.dry_run))
+    _print_job_id(
+        "Next stage submitted",
+        run.advance(args.stage, dry_run=args.dry_run, attempt=args.attempt),
+    )
     return 0
 
 
@@ -256,7 +321,7 @@ def cmd_fail(args: argparse.Namespace) -> int:
         int: 0 on success
     """
     run = ModelRun.load(Path(args.root))
-    run.fail(args.stage)
+    run.fail(args.stage, attempt=args.attempt)
     return 0
 
 
