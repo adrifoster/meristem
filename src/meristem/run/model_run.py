@@ -62,7 +62,7 @@ _REQUIRED_CONFIG_KEYS = frozenset({"root", "stages"})
 _UNKNOWN_GRACE_SECONDS = 600
 
 
-class ModelRun:
+class ModelRun:  # pylint: disable=too-many-instance-attributes
     """
     Manages the full lifecycle of a multi-stage CESM run.
 
@@ -76,6 +76,8 @@ class ModelRun:
     stages: ordered tuple of Stage instances
     email: email for the machine - can be None
     project: project code to use for job submission. can use os.environ variable
+    helper_queue: queue for the small advance and fail jobs (e.g. "develop"),
+        or None to use each stage's queue
     scheduler: job scheduler used to submit job scripts. defaults to PBS
     """
 
@@ -87,6 +89,7 @@ class ModelRun:
         project: str,
         email: str | None = None,
         scheduler: Scheduler | None = None,
+        helper_queue: str | None = None,
     ):
         # absolute: the root is written into job scripts, which PBS doesn't run
         # from the current directory (e.g. --root . on the command line)
@@ -97,6 +100,7 @@ class ModelRun:
         self.project = project if project else os.getenv("PROJECT", "")
         self._project_from_env = not project
         self.scheduler = scheduler or get_scheduler(DEFAULT_SCHEDULER)
+        self.helper_queue = helper_queue or None
         self._validate()
 
     def _validate(self):
@@ -114,6 +118,8 @@ class ModelRun:
         )
         if self.email is not None:
             check_email("email", self.email)
+        if self.helper_queue is not None:
+            check_id("helper_queue", self.helper_queue)
         if not self.stages:
             raise ValueError("stages must not be empty")
         # stages are looked up by name, and share job scripts and case roots by it
@@ -201,6 +207,7 @@ class ModelRun:
             run_id=cfg.get("run_id", "run"),
             stages=stages,
             email=cfg.get("email"),
+            helper_queue=cfg.get("helper_queue"),
             project=cfg.get("project", ""),
             scheduler=scheduler
             or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
@@ -238,6 +245,8 @@ class ModelRun:
             root=root,
             run_id=state["run_id"],
             email=state.get("email"),
+            # None in state files written before helper_queue existed
+            helper_queue=state.get("helper_queue"),
             stages=[Stage.from_dict(stage) for stage in state["stages"]],
             project=state.get("project", ""),
             # state files written before the scheduler key existed are PBS runs
@@ -254,6 +263,7 @@ class ModelRun:
         state = {
             "run_id": self.run_id,
             "email": self.email,
+            "helper_queue": self.helper_queue,
             "project": self.project,
             "scheduler": self.scheduler.name,
             "stages": [stage.to_dict() for stage in self.stages],
@@ -1009,7 +1019,7 @@ class ModelRun:
         template = template.render(
             meristem=meristem_cmd(),
             job_name=job_name,
-            queue=stage.config.queue,
+            queue=self.helper_queue or stage.config.queue,
             project=self.project,
             email=self.email,
             cime_job_id=cime_job_id,
@@ -1042,7 +1052,7 @@ class ModelRun:
         template = template.render(
             meristem=meristem_cmd(),
             job_name=job_name,
-            queue=stage.config.queue,
+            queue=self.helper_queue or stage.config.queue,
             project=self.project,
             email=self.email,
             cime_job_id=cime_job_id,

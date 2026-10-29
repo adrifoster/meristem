@@ -944,6 +944,7 @@ class Ensemble:
                 stages=self._member_stages(member),
                 email=self.config.email or None,
                 project=self.config.project,
+                helper_queue=self.config.helper_queue,
             )
             run._validate_stages()  # pylint: disable=protected-access
             runs.append(run)

@@ -278,4 +278,3 @@ pipeline completed. The submit script prints the exact command.
 
 Note that PBS jobs don't inherit your shell's environment. That's why the example scripts read their
 settings from a file next to them rather than from exported variables.
-

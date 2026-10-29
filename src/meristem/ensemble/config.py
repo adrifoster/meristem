@@ -26,6 +26,7 @@ _OPTIONAL_KEYS = frozenset(
         "case_dir",
         "project",
         "email",
+        "helper_queue",
     }
 )
 _REQUIRED_PARAMGEN_KEYS = frozenset({"dir", "prefix"})
@@ -124,6 +125,8 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     output_root: passed to create_clone --cime-output-root (None = CIME default)
     project: PBS project code (falls back to $PROJECT)
     email: email for job scheduler emails
+    helper_queue: queue for members' small advance and fail jobs (e.g.
+        "develop"), or None to use each member stage's queue
     """
 
     ensemble_id: str
@@ -138,6 +141,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
     output_root: Path | None = None
     project: str = ""
     email: str | None = None
+    helper_queue: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.ensemble_id, str):
@@ -202,6 +206,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
             ),
             "project": self.project,
             "email": self.email,
+            "helper_queue": self.helper_queue,
         }
 
     @classmethod
@@ -272,6 +277,7 @@ class EnsembleConfig:  # pylint: disable=too-many-instance-attributes
             # a blank "project:" in the YAML is None
             project=config.get("project") or "",
             email=config.get("email"),
+            helper_queue=config.get("helper_queue"),
         )
 
     @classmethod

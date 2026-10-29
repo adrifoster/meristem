@@ -257,6 +257,15 @@ def test_create_member_run_project_and_email(ready_config_dict):
     assert run.email == "me@x.org"
 
 
+@pytest.mark.parametrize("helper_queue", ["develop", None])
+def test_create_member_run_helper_queue(ready_config_dict, helper_queue):
+    """Test that every member's run gets the ensemble's helper_queue (or none)"""
+    if helper_queue is not None:
+        ready_config_dict["helper_queue"] = helper_queue
+    ensemble = Ensemble.create(ready_config_dict)
+    assert {_member_run(ensemble, m).helper_queue for m in MEMBERS} == {helper_queue}
+
+
 def test_create_member_run_project_from_env(ready_config_dict, monkeypatch):
     """Test that member runs fall back to $PROJECT when the config has none"""
     monkeypatch.setenv("PROJECT", "ENVPROJ")

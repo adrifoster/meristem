@@ -544,8 +544,10 @@ def test_to_dict_round_trip_all_keys(ensemble_config_dict, member_stage_dict, tm
         output_root=str(tmp_path / "out"),
         project="P12345678",
         email="me@example.com",
+        helper_queue="develop",
     )
     config = EnsembleConfig.from_dict(ensemble_config_dict)
+    assert config.helper_queue == "develop"
     assert EnsembleConfig.from_dict(config.to_dict()) == config
 
 
