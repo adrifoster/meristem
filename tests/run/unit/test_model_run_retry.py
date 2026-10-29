@@ -455,3 +455,60 @@ def test_retry_failed_query_error_raises(failed_with_jobs, fake_scheduler, mocke
     with pytest.raises(RuntimeError, match="qstat down"):
         failed_with_jobs.retry("spinup_ad")
     assert failed_with_jobs.stages[0].state.status is StageStatus.FAILED
+
+
+# retry a named stage before the stages before it are done
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "earlier", [StageStatus.FAILED, StageStatus.PENDING, StageStatus.SUBMITTED]
+)
+def test_retry_later_stage_before_earlier_done_raises(
+    two_stage_run, fake_scheduler, earlier, dry_run
+):
+    """Test that retrying a named later stage raises, naming the earlier stage
+    that isn't done, and changes and submits nothing
+    """
+    object.__setattr__(two_stage_run.stages[0].state, "_status", earlier)
+    two_stage_run.save()
+    with pytest.raises(
+        ValueError,
+        match=rf"Can't retry 'spinup_sasu' before 'spinup_ad' is done "
+        rf"\(it's {earlier.value}\); retry 'spinup_ad' first",
+    ):
+        two_stage_run.retry("spinup_sasu", dry_run=dry_run)
+    assert not fake_scheduler.submitted
+    loaded = ModelRun.load(two_stage_run.root, scheduler=fake_scheduler)
+    assert [s.state.status for s in loaded.stages] == [earlier, StageStatus.PENDING]
+
+
+@pytest.mark.parametrize("later", [StageStatus.PENDING, StageStatus.FAILED])
+def test_retry_later_stage_after_earlier_done(two_stage_run, later):
+    """Test that a named later stage is retried once every stage before it is done"""
+    object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.DONE)
+    object.__setattr__(two_stage_run.stages[1].state, "_status", later)
+    two_stage_run.retry("spinup_sasu")
+    assert two_stage_run.stages[1].state.status is StageStatus.SUBMITTED
+
+
+def test_retry_without_stage_picks_first_unfinished(two_stage_run):
+    """Test that retry with no stage name retries the first stage that isn't
+    done, so it never trips the earlier-stages check
+    """
+    object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.FAILED)
+    two_stage_run.retry(None)
+    assert two_stage_run.stages[0].state.status is StageStatus.SUBMITTED
+    assert two_stage_run.stages[1].state.status is StageStatus.PENDING
+
+
+def test_unfinished_before(two_stage_run):
+    """Test that unfinished_before returns the first earlier stage that isn't
+    done, or None for the first stage or when all earlier stages are done
+    """
+    assert two_stage_run.unfinished_before("spinup_ad") is None
+    assert two_stage_run.unfinished_before("spinup_sasu").config.name == "spinup_ad"
+    object.__setattr__(two_stage_run.stages[0].state, "_status", StageStatus.DONE)
+    assert two_stage_run.unfinished_before("spinup_sasu") is None
+    with pytest.raises(ValueError, match="No stage named 'nope'"):
+        two_stage_run.unfinished_before("nope")

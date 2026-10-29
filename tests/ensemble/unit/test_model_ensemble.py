@@ -850,6 +850,53 @@ def test_retry_explicit_refuses_active_stage_lists_all(
     assert not retry_calls
 
 
+def test_retry_named_later_stage_before_earlier_done_raises(
+    two_stage_ensemble, retry_calls
+):
+    """Test that naming a later stage is refused for the whole ensemble when any
+    member hasn't finished the stages before it, listing those members, and
+    nothing is retried
+    """
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.FAILED, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[2], StageStatus.SUBMITTED, index=0)
+    with pytest.raises(ValueError, match="once every stage before it is done") as err:
+        two_stage_ensemble.retry(stage="transient")
+    message = str(err.value)
+    assert f"{MEMBERS[0]}: transient (before it, spinup_ad is failed)" in message
+    assert f"{MEMBERS[2]}: transient (before it, spinup_ad is submitted)" in message
+    assert MEMBERS[1] not in message
+    assert not retry_calls
+
+
+def test_retry_named_later_stage_after_earlier_done(two_stage_ensemble, retry_calls):
+    """Test that a named later stage is retried for members whose earlier
+    stages are all done
+    """
+    for member in MEMBERS:
+        _set_status(two_stage_ensemble, member, StageStatus.DONE, index=0)
+    result = two_stage_ensemble.retry(stage="transient")
+    assert list(result) == MEMBERS
+    assert [call[1] for call in retry_calls] == ["transient"] * len(MEMBERS)
+
+
+def test_retry_named_stage_reports_both_problems(two_stage_ensemble, retry_calls):
+    """Test that a stage that's running and one blocked by an earlier stage are
+    both reported, under their own explanations
+    """
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.DONE, index=0)
+    _set_status(two_stage_ensemble, MEMBERS[0], StageStatus.SUBMITTED, index=1)
+    _set_status(two_stage_ensemble, MEMBERS[1], StageStatus.FAILED, index=0)
+    with pytest.raises(ValueError) as err:
+        two_stage_ensemble.retry(stage="transient")
+    message = str(err.value)
+    assert "can only resubmit PENDING or FAILED stages" in message
+    assert f"{MEMBERS[0]}: transient is submitted" in message
+    assert "once every stage before it is done" in message
+    assert f"{MEMBERS[1]}: transient (before it, spinup_ad is failed)" in message
+    assert not retry_calls
+
+
 def test_retry_forwards_dry_run_and_skip_script(created_ensemble, retry_calls):
     """Test that dry_run and skip_script are passed to each member's retry"""
     _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)

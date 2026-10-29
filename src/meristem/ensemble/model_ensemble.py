@@ -389,7 +389,8 @@ class Ensemble:
             failed (bool): select failed stages
 
         Raises:
-            ValueError: an explicitly named stage is running or done
+            ValueError: an explicitly named stage is running or done, or a stage
+                before it isn't done (lists every member affected)
 
         Returns:
             dict[str, tuple[str, bool]]: member : (stage name, whether it was lost)
@@ -397,21 +398,14 @@ class Ensemble:
         explicit = not failed and not lost
         to_retry: dict[str, tuple[str, bool]] = {}
         refused: list[str] = []
+        blocked: list[str] = []
 
         for member, run in runs.items():
             if explicit:
-                target = (
-                    next((s for s in run.stages if s.config.name == stage), None)
-                    if stage
-                    else run.current_stage
-                )
-                if target is None:
-                    continue
-                status = target.state.status
-                if status not in (StageStatus.PENDING, StageStatus.FAILED):
-                    refused.append(f" {member}: {target.config.name} is {status.value}")
-                    continue
-                to_retry[member] = (target.config.name, False)
+                name = _explicit_retry(member, run, stage, refused, blocked)
+                if name is not None:
+                    to_retry[member] = (name, False)
+                continue
 
             lost_names = set(run.lost_stages()) if lost else set()
             for run_stage in run.stages:
@@ -422,11 +416,19 @@ class Ensemble:
                     to_retry[member] = (name, True)
                 elif failed and run_stage.state.status == StageStatus.FAILED:
                     to_retry[member] = (name, False)
+        problems = []
         if refused:
-            raise ValueError(
+            problems.append(
                 "can only resubmit PENDING or FAILED stages (use --lost for a lost "
                 "one):\n" + "\n".join(refused)
             )
+        if blocked:
+            problems.append(
+                "can only resubmit a stage once every stage before it is done "
+                "(retry those first):\n" + "\n".join(blocked)
+            )
+        if problems:
+            raise ValueError("\n".join(problems))
         return to_retry
 
     def prepare(self, member: str, stage: str):
@@ -946,6 +948,49 @@ class Ensemble:
             run._validate_stages()  # pylint: disable=protected-access
             runs.append(run)
         return runs
+
+
+def _explicit_retry(
+    member: str,
+    run: ModelRun,
+    stage: str | None,
+    refused: list[str],
+    blocked: list[str],
+) -> str | None:
+    """The stage to resubmit for a member when what to retry is named rather
+    than selected by status: the named stage, or the member's current stage
+
+    Args:
+        member (str): member name
+        run (ModelRun): the member's run
+        stage (str | None): the named stage, or None for the current stage
+        refused (list[str]): appended to if the stage is running or done
+        blocked (list[str]): appended to if a stage before it isn't done
+
+    Returns:
+        str | None: the stage name, or None if there's nothing to retry or it
+        can't be (then refused or blocked says why)
+    """
+    target = (
+        next((s for s in run.stages if s.config.name == stage), None)
+        if stage
+        else run.current_stage
+    )
+    if target is None:
+        return None
+    status = target.state.status
+    if status not in (StageStatus.PENDING, StageStatus.FAILED):
+        refused.append(f" {member}: {target.config.name} is {status.value}")
+        return None
+    # a named stage can be a later one: it mustn't start on unfinished input
+    blocking = run.unfinished_before(target.config.name)
+    if blocking is not None:
+        blocked.append(
+            f" {member}: {target.config.name} (before it, "
+            f"{blocking.config.name} is {blocking.state.status.value})"
+        )
+        return None
+    return target.config.name
 
 
 def _preview(names: list[str], n: int = 3) -> str:

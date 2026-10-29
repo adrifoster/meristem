@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import subprocess
@@ -481,6 +482,56 @@ def test_setup_fails_before_advance_job_cime_still_tracked(make_run, fake, meris
     assert result.returncode == 0, result.stdout + result.stderr
     fake.run_until_idle()
     assert _stage_states(root) == {"stage1": ("done", 2)}, fake.logs()
+
+
+def test_retry_later_stage_before_earlier_done_refused(
+    make_run, stage_script, fake, meristem
+):
+    """Test that `run retry --stage stage2` is refused while stage1 has failed,
+    queueing nothing, and that retrying stage1 itself still works
+    """
+    bad = stage_script("exit 3", name="stage1")
+    root = make_run([{"name": "stage1", "script": bad}, {"name": "stage2"}])
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    fake.run_until_idle()
+    assert _stage_states(root)["stage1"] == ("failed", 1), fake.logs()
+    n_jobs = len(fake.jobs())
+
+    result = meristem("run", "retry", "--root", str(root), "--stage", "stage2")
+    assert result.returncode == 1
+    assert "Can't retry 'stage2' before 'stage1' is done" in result.stderr
+    assert len(fake.jobs()) == n_jobs
+    assert _stage_states(root)["stage2"] == ("pending", 0)
+
+    stage_script(name="stage1")  # fix stage1's script
+    result = meristem("run", "retry", "--root", str(root), "--stage", "stage1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+    assert _stage_states(root) == {
+        "stage1": ("done", 2),
+        "stage2": ("done", 1),
+    }, fake.logs()
+
+
+def test_submit_with_relative_root_runs_to_done(make_run, fake, meristem):
+    """Test that submitting with a relative --root works: the job scripts get
+    the absolute root, since PBS jobs (here, the fake's scratch directories)
+    don't run from the directory meristem was called in
+    """
+    root = make_run([{"name": "stage1"}, {"name": "stage2"}])
+    relative = os.path.relpath(root)
+    assert not Path(relative).is_absolute()
+
+    result = meristem("run", "submit", "--root", relative)
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+
+    assert _stage_states(root) == {
+        "stage1": ("done", 1),
+        "stage2": ("done", 1),
+    }, fake.logs()
+    for script in root.glob("*.pbs"):
+        assert relative not in script.read_text(), script.name
 
 
 def test_killed_setup_job_is_lost_then_retry(make_run, fake, meristem):

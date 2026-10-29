@@ -123,3 +123,33 @@ def test_model_run_root_coerced_to_path(tmp_path, ad_stage):
         project="PROJ",
     )
     assert isinstance(run.root, Path)
+
+
+@pytest.mark.parametrize("relative", [".", "runs/myrun", "./runs/../runs/myrun"])
+def test_model_run_relative_root_resolved(tmp_path, ad_stage, monkeypatch, relative):
+    """Test that a relative root (e.g. --root . on the command line) is made
+    absolute against the current directory, since it's written into job scripts
+    that PBS doesn't run from here
+    """
+    monkeypatch.chdir(tmp_path)
+    run = ModelRun(root=relative, run_id="run", stages=[ad_stage], project="PROJ")
+    assert run.root.is_absolute()
+    assert run.root == (tmp_path / relative).resolve()
+
+
+def test_model_run_load_relative_root_writes_absolute_job_script(
+    created_run, fake_scheduler, monkeypatch
+):
+    """Test that a run loaded with a relative root (as `meristem run submit
+    --root .` does) writes the absolute root into its job script
+    """
+    monkeypatch.chdir(created_run.root)
+    run = ModelRun.load(".", scheduler=fake_scheduler)
+    assert run.root == created_run.root.resolve()
+    run.submit()
+    script = (run.root / f"{run.run_id}_spinup_ad.pbs").read_text()
+    root_line = next(
+        line for line in script.splitlines() if line.startswith("RUN_ROOT=")
+    )
+    assert root_line == f"RUN_ROOT={run.root}"
+    assert Path(root_line.split("=", 1)[1]).is_absolute()

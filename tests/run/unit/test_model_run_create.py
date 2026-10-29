@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 
 import pytest
@@ -185,6 +186,28 @@ def test_model_run_create_missing_later_script_raises(tmp_path, run_config_dict)
     with pytest.raises(ValueError, match=r"later\.sh"):
         ModelRun.create(run_config_dict)
     assert not Path(run_config_dict["root"]).exists()
+
+
+@pytest.mark.parametrize(
+    "root, hint",
+    [
+        ("runs/myrun", ""),
+        ("$SCRATCH/myrun", r" \(is an environment variable unset\?\)"),
+    ],
+)
+def test_model_run_create_relative_root_raises(
+    run_config_dict, tmp_path, monkeypatch, root, hint
+):
+    """Test that a relative root in a run config is rejected (like every other
+    config path), hinting at an unset environment variable, and writes nothing
+    """
+    monkeypatch.chdir(tmp_path)
+    run_config_dict["root"] = root
+    with pytest.raises(
+        ValueError, match=rf"root '{re.escape(root)}' must be an absolute path{hint}"
+    ):
+        ModelRun.create(run_config_dict)
+    assert not (tmp_path / root).exists()
 
 
 def test_model_run_create_relative_case_root_raises(run_config_dict):

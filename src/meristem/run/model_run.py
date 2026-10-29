@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader
 import yaml
 
 from meristem.commands import meristem_cmd
+from meristem.utils import to_absolute_path
 from .scheduler import DEFAULT_SCHEDULER, JobState, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
@@ -85,7 +86,9 @@ class ModelRun:
         email: str | None = None,
         scheduler: Scheduler | None = None,
     ):
-        self.root = Path(root)
+        # absolute: the root is written into job scripts, which PBS doesn't run
+        # from the current directory (e.g. --root . on the command line)
+        self.root = Path(root).resolve()
         self.run_id = run_id
         self.stages: tuple[Stage, ...] = tuple(stages)
         self.email = email
@@ -149,14 +152,17 @@ class ModelRun:
         Returns:
             ModelRun: ModelRun instance
         Raises:
-            ValueError: if required config keys are missing or invalid
+            ValueError: if required config keys are missing or invalid, or
+            root is relative
             FileExistsError: if a state file already exists at the target root,
             indicating that the run has already been initialized
         """
         cfg = _load_config(config)
         _validate_config(cfg)
 
-        root = Path(cfg["root"])
+        # like the other config paths, a relative root is rejected rather than
+        # resolved: it may be an unset environment variable (e.g. $SCRATCH/run)
+        root = to_absolute_path("root", cfg["root"])
         state_path = root / _STATE_FILE
         if state_path.exists():
             raise FileExistsError(
@@ -247,6 +253,23 @@ class ModelRun:
             if stage.state.status != StageStatus.DONE:
                 return stage
         return None
+
+    def unfinished_before(self, stage_name: str) -> Stage | None:
+        """The first stage before stage_name that isn't DONE, if any
+
+        Args:
+            stage_name (str): stage name
+
+        Raises:
+            ValueError: Can't find supplied stage
+
+        Returns:
+            Stage | None: the first earlier stage that isn't DONE, or None if
+            they all are (or stage_name is the first stage)
+        """
+        self._stage(stage_name)
+        earlier = self.stages[: self.stage_names.index(stage_name)]
+        return next((s for s in earlier if s.state.status != StageStatus.DONE), None)
 
     def is_lost(self, stage_name: str) -> bool:
         """Check whether a submitted stage has no jobs left that will finish it.
@@ -750,6 +773,7 @@ class ModelRun:
         Raises:
             ValueError: if the stage can't be retried, or lost is True and the
             stage isn't lost (so a running stage is never resubmitted)
+            ValueError: if a stage before it isn't DONE
             ValueError: if the stage is FAILED but jobs from that attempt are
             still queued or running
             RuntimeError: if the scheduler query for those jobs fails
@@ -776,6 +800,14 @@ class ModelRun:
             raise ValueError(
                 f"Stage {stage.config.name!r} is {stage.state.status.value} "
                 "— can only retry PENDING or FAILED stages."
+            )
+        # a named stage can be a later one: it mustn't start on unfinished input
+        blocking = self.unfinished_before(stage.config.name)
+        if blocking is not None:
+            raise ValueError(
+                f"Can't retry {stage.config.name!r} before {blocking.config.name!r} "
+                f"is done (it's {blocking.state.status.value}); retry "
+                f"{blocking.config.name!r} first."
             )
         if stage.state.status is StageStatus.FAILED:
             # e.g. the setup job failed after case.submit: its CIME and advance
