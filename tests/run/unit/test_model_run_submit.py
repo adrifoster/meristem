@@ -611,17 +611,30 @@ def test_submit_passes_job_file_to_scheduler(created_run, fake_scheduler):
     assert fake_scheduler.submitted == [job_file]
 
 
-def test_submit_returns_existing_job_id_when_skipping(created_run):
-    """Test that ModelRun.submit() returns the existing job ID when skipping"""
+def test_submit_skipping_reports_existing_job_and_returns_none(
+    created_run, fake_scheduler, capsys
+):
+    """Test that ModelRun.submit() on a run already submitted submits nothing,
+    names the existing job in its skip message, and returns None (so the
+    existing job isn't reported as newly submitted)
+    """
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     created_run.stages[0].state.job_id = "existing.pbs"
-    assert created_run.submit() == "existing.pbs"
+    assert created_run.submit() is None
+    assert not fake_scheduler.submitted
+    assert (
+        "skipping submit (first stage is submitted, job existing.pbs)"
+        in capsys.readouterr().out
+    )
 
 
-def test_submit_returns_none_when_skipping_with_no_job_id(created_run):
-    """Test that ModelRun.submit() returns empty string when skipping a stage with no job ID"""
+def test_submit_returns_none_when_skipping_with_no_job_id(created_run, capsys):
+    """Test that ModelRun.submit() returns None when skipping a stage with no
+    job ID, and the skip message doesn't mention a job
+    """
     created_run.stages[0].state.status = StageStatus.SUBMITTED
     assert created_run.submit() is None
+    assert "skipping submit (first stage is submitted)" in capsys.readouterr().out
 
 
 def test_submit_does_not_mutate_stage_when_skipping(created_run):
@@ -834,4 +847,4 @@ def test_submit_skipped_does_not_validate(created_run, script_file):
     """
     created_run.submit()
     script_file.unlink()
-    assert created_run.submit() == created_run.stages[0].state.job_id
+    assert created_run.submit() is None

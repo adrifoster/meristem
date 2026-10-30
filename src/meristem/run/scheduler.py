@@ -42,6 +42,7 @@ _PBS_STATES: dict[str, JobState] = {
     "Q": JobState.QUEUED,  # queued
     "H": JobState.QUEUED,  # held (e.g. waiting on a dependency)
     "W": JobState.QUEUED,  # waiting for its start time
+    "T": JobState.QUEUED,  # in transit from a routing queue (e.g. develop -> cpudev)
     "R": JobState.RUNNING,  # running
     "S": JobState.RUNNING,  # suspended
     "E": JobState.RUNNING,  # exiting after running

@@ -563,14 +563,19 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             submit anything. Defaults to False.
 
         Returns:
-            str: PBS job ID of the submit script
+            str | None: PBS job ID of the submitted setup job, or None if nothing
+            was submitted (the first stage isn't pending)
         """
         first = self.stages[0]
         if first.state.status != StageStatus.PENDING:
+            # report the existing job here, and return None so it isn't taken
+            # (and printed) as a new submission
+            job = f", job {first.state.job_id}" if first.state.job_id else ""
             print(
-                f"  {self.run_id}: skipping submit (first stage is {first.state.status.value})"
+                f"  {self.run_id}: skipping submit (first stage is "
+                f"{first.state.status.value}{job})"
             )
-            return first.state.job_id or None
+            return None
         self._validate_stages()
         return self._submit_stage(first, dry_run=dry_run)
 

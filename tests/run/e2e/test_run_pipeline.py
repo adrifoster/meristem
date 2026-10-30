@@ -534,6 +534,23 @@ def test_submit_with_relative_root_runs_to_done(make_run, fake, meristem):
         assert relative not in script.read_text(), script.name
 
 
+def test_submit_twice_does_not_report_old_job_as_new(make_run, fake, meristem):
+    """Test that running submit again on a submitted run submits nothing and
+    names the existing job without calling it newly submitted
+    """
+    root = make_run([{"name": "stage1"}])
+    first = meristem("run", "submit", "--root", str(root))
+    assert first.returncode == 0, first.stderr
+    job_id = fake.jobs()[0]["id"]
+    assert f"Submitted: {job_id}" in first.stdout
+
+    second = meristem("run", "submit", "--root", str(root))
+    assert second.returncode == 0, second.stderr
+    assert f"skipping submit (first stage is submitted, job {job_id})" in second.stdout
+    assert "Submitted:" not in second.stdout
+    assert len(fake.jobs()) == 1
+
+
 def test_killed_setup_job_is_lost_then_retry(make_run, fake, meristem):
     """Test that a killed setup job is lost and retry works"""
     root = make_run([{"name": "stage1"}])

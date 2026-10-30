@@ -87,6 +87,8 @@ def test_pbs_query_calls_qstat_once_with_all_ids(mocker):
         ("W", JobState.QUEUED),
         ("S", JobState.RUNNING),
         ("E", JobState.RUNNING),
+        # routed from a routing queue (e.g. develop) to its execution queue
+        ("T", JobState.QUEUED),
     ],
 )
 def test_pbs_query_maps_job_state(mocker, letter, expected):
@@ -133,10 +135,13 @@ def test_pbs_query_qstat_failure_raises(mocker):
         PbsScheduler().query(["1.desched1"])
 
 
-def test_pbs_query_unrecognized_state_raises(mocker):
+# B and X are job-array states and M a job moved to another server, none of
+# which meristem's jobs get
+@pytest.mark.parametrize("letter", ["Z", "B", "X", "M"])
+def test_pbs_query_unrecognized_state_raises(mocker, letter):
     """Test that an unrecognized job_state raises instead of guessing"""
-    _mock_qstat(mocker, _qstat_block("1.desched1", "Z"))
-    with pytest.raises(RuntimeError, match="'Z'"):
+    _mock_qstat(mocker, _qstat_block("1.desched1", letter))
+    with pytest.raises(RuntimeError, match=f"'{letter}'"):
         PbsScheduler().query(["1.desched1"])
 
 
