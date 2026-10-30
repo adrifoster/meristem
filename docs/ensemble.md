@@ -65,3 +65,21 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 ## Quick start
 
 ### 1. Write a ensemble YAML
+
+```yaml
+# ensemble.yaml
+root: /glade/derecho/scratch/user/my_ensemble  # working directory for the entire ensemble
+ensemble_id: my_ensemble                       # short identifier (letters, digits, hyphens, underscores)
+project: PXXXXXXX                              # cluster allocation project code
+email: name@ucar.edu                           # email
+
+stages:
+  - name: spinup_ad               # name of stage - used for job and case names
+    script: /path/to/setup_ad.sh  # path to your setup script for this stage
+    queue: develop                # PBS queue
+
+  - name: spinup_postad
+    script: /path/to/setup_postad.sh
+    queue: develop
+```
+

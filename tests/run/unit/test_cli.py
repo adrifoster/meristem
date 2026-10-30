@@ -382,6 +382,14 @@ def test_status_does_not_retry(mock_run):
 # error handling
 
 
+def test_create_empty_config_exits_one(tmp_path, capsys):
+    """Test that `run create` with an empty YAML file reports it and exits 1"""
+    path = tmp_path / "run.yaml"
+    path.write_text("", encoding="utf-8")
+    assert main(["create", "--config", str(path)]) == 1
+    assert "ERROR: run config is empty." in capsys.readouterr().err
+
+
 def test_main_load_missing_root_exits_one(tmp_path, capsys):
     """Test that a missing root gives exit status 1 and an error on stderr"""
     result = main(["status", "--root", str(tmp_path / "nonexistent")])

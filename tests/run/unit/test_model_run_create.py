@@ -33,6 +33,25 @@ def test_model_run_create_yaml_passes(tmp_path, run_config_dict):
     ModelRun.create(yaml_path)
 
 
+@pytest.mark.parametrize(
+    "text, match",
+    [
+        ("", r"^run config is empty\.$"),
+        ("# only a comment\n", r"^run config is empty\.$"),
+        ("- a\n- b\n", r"must be a mapping of keys to values, got list\.$"),
+        ("hello\n", r"must be a mapping of keys to values, got str\.$"),
+    ],
+)
+def test_model_run_create_yaml_not_a_mapping_raises(tmp_path, text, match):
+    """Test that an empty or non-mapping run.yaml raises a clear ValueError
+    (it used to be an AttributeError)
+    """
+    path = tmp_path / "run.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=match):
+        ModelRun.create(path)
+
+
 def test_model_run_create_yaml_path_as_string_passes(tmp_path, run_config_dict):
     """Test that ModelRun.create with a yaml file as a string passes"""
     yaml_path = tmp_path / "config.yml"

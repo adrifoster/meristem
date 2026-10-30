@@ -1018,6 +1018,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         """
         job_name = f"{self.run_id}_{stage.config.name}_advance"
         job_file = self.root / f"{job_name}.pbs"
+        log_file = self.root / f"{job_name}.log"
 
         template = _ENV.get_template("advance_script_template.txt")
         template = template.render(
@@ -1025,6 +1026,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             job_name=job_name,
             queue=self.helper_queue or stage.config.queue,
             project=self.project,
+            log_file=log_file,
             email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
@@ -1051,6 +1053,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         """
         job_name = f"{self.run_id}_{stage.config.name}{suffix}"
         job_file = self.root / f"{job_name}.pbs"
+        log_file = self.root / f"{job_name}.log"
 
         template = _ENV.get_template("fail_script_template.txt")
         template = template.render(
@@ -1058,6 +1061,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             job_name=job_name,
             queue=self.helper_queue or stage.config.queue,
             project=self.project,
+            log_file=log_file,
             email=self.email,
             cime_job_id=cime_job_id,
             root=self.root,
@@ -1092,8 +1096,17 @@ def _validate_config(config: dict) -> None:
         config: raw config dictionary (from YAML or passed directly)
 
     Raises:
-        ValueError: if any required key is absent or malformed
+        ValueError: if the config is empty or not a mapping (e.g. an empty YAML
+        file), or any required key is absent or malformed
     """
+    # an empty YAML file (or only comments) loads as None
+    if config is None:
+        raise ValueError("run config is empty.")
+    if not isinstance(config, dict):
+        raise ValueError(
+            "run config must be a mapping of keys to values, "
+            f"got {type(config).__name__}."
+        )
     missing = _REQUIRED_CONFIG_KEYS - config.keys()
     if missing:
         raise ValueError(

@@ -119,7 +119,7 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 | --- | --- | --- | --- |
 | `name` | yes | | Unique stage name. By default the stage's case is created at `<root>/<name>` |
 | `script` | yes | | Path to the setup script for this stage (see [Setup scripts](#setup-scripts)) |
-| `queue` | yes | | PBS queue for the setup job |
+| `queue` | yes | | PBS queue for the setup job (not the actual CLM/CIME case)|
 | `case_root` | no | `<root>/<name>` | Absolute path to the stage's case directory |
 | `walltime` | no | `01:00:00` | Walltime for the setup job (`HH:MM:SS`) |
 | `select` | no | `1` | Number of nodes for the setup job |
@@ -127,6 +127,7 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 | `memory` | no | `10GB` | Memory for the setup job, e.g. `16GB` |
 | `no_cime` | no | `false` | If true, the stage isn't a CIME case: run the script, then advance directly |
 | `extra_pbs` | no | `[]` | Extra raw PBS directives, e.g. `["-l place=group=rack"]` |
+| `submit_args` | no | | Extra CIME case submission arguments |
 
 The resource keys (`walltime`, `select`, `ncpus`, `memory`) apply to the setup job only. The model run's
 own resources come from the CIME case, as usual.

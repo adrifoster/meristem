@@ -35,6 +35,10 @@ class Scheduler(Protocol):
         """Get the current state of each job, keyed by the job IDs passed in"""
         ...
 
+    def cancel(self, job_ids: list[str]):
+        """Cancel a job"""
+        ...
+
 
 # PBS job_state letter -> JobState. Q/H/R/F are the common cases; the rest are
 # mapped to the closest state so a live job is never reported as gone
@@ -49,8 +53,11 @@ _PBS_STATES: dict[str, JobState] = {
     "F": JobState.FINISHED,  # finished
 }
 
-# qstat exit code when one or more job IDs are unknown (PBSE_UNKJOBID)
-_QSTAT_UNKNOWN_JOB_EXIT = 153
+# PBS exit code when one or more job IDs are unknown (PBSE_UNKJOBID)
+_PBS_UNKNOWN_JOB_EXIT = 153
+
+# PBS exit code when qdel tries to kill a finished job
+_PBS_FINISHED_JOB_EXIT = 35
 
 _QSTAT_JOB_ID_RE = re.compile(r"^Job Id:\s*(\S+)")
 _QSTAT_JOB_STATE_RE = re.compile(r"^\s+job_state\s*=\s*(\S+)")
@@ -132,7 +139,7 @@ class PbsScheduler:
         )
         # a non-zero exit is expected when any ID is unknown; anything else means
         # qstat itself failed, which must not be mistaken for every job being gone
-        if result.returncode not in (0, _QSTAT_UNKNOWN_JOB_EXIT):
+        if result.returncode not in (0, _PBS_UNKNOWN_JOB_EXIT):
             raise RuntimeError(
                 f"qstat failed (exit {result.returncode}): "
                 f"{(result.stderr or result.stdout).strip()}"
@@ -151,6 +158,32 @@ class PbsScheduler:
                     f"qstat reported unrecognized job_state {letter!r} for {job_id}"
                 )
         return states
+
+    def cancel(self, job_ids: list[str]):
+        """Cancel each job with qdel job_ids
+
+        Args:
+            job_ids (list[str]): PBS job IDs
+
+        Raises:
+            RuntimeError: if qdel fails for any reason other than unknown job IDs
+        """
+        if not job_ids:
+            return
+
+        result = subprocess.run(
+            ["qdel", *job_ids],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # a non-zero exit is expected when any ID is unknown; anything else means
+        # qdel itself failed, which must not be mistaken for every job being finished
+        if result.returncode not in (0, _PBS_FINISHED_JOB_EXIT, _PBS_UNKNOWN_JOB_EXIT):
+            raise RuntimeError(
+                f"qdel failed (exit {result.returncode}): "
+                f"{(result.stderr or result.stdout).strip()}"
+            )
 
 
 # scheduler name -> class, used to rebuild a scheduler from a config or state file

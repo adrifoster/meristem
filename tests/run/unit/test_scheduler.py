@@ -29,6 +29,15 @@ def _mock_qstat(mocker, stdout: str, returncode: int = 0, stderr: str = ""):
     return mock_run
 
 
+def _mock_qdel(mocker, stdout: str = "", returncode: int = 0, stderr: str = ""):
+    """Patch subprocess.run to return the given qdel result"""
+    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
+    mock_run.return_value.stdout = stdout
+    mock_run.return_value.stderr = stderr
+    mock_run.return_value.returncode = returncode
+    return mock_run
+
+
 def test_pbs_submit_calls_qsub_with_correct_args(tmp_path, mocker):
     """Test that PbsScheduler.submit() calls qsub with the correct arguments"""
     mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
@@ -173,3 +182,57 @@ def test_get_scheduler_unknown_raises():
     """Test that get_scheduler raises for an unknown name and lists known ones"""
     with pytest.raises(ValueError, match="nonexistent.*pbs"):
         get_scheduler("nonexistent")
+
+
+def test_pbs_cancel_calls_qdel_once_with_all_ids(mocker):
+    """Test that PbsScheduler.cancel() makes a single qdel call for all IDs"""
+    mock_run = _mock_qdel(mocker)
+    PbsScheduler().cancel(["1.desched1", "2.desched1"])
+    mock_run.assert_called_once_with(
+        ["qdel", "1.desched1", "2.desched1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_pbs_cancel_empty_list_does_not_call_qdel(mocker):
+    """Test that cancel([]) returns None without running qdel"""
+    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
+    assert not PbsScheduler().cancel([])
+    mock_run.assert_not_called()
+
+
+def test_pbs_cancel_ignores_unknown_job(mocker):
+    """Test that a job qdel ignores an unkown job. NCAR's qdel prints the
+    'Unknown Job Id' message on stdout and exits 153
+    """
+    _mock_qdel(mocker, "qdel: Unknown Job Id 9.desched1\n", returncode=153)
+    assert not PbsScheduler().cancel(["9.desched1"])
+
+
+def test_pbs_cancel_ignores_finished_job(mocker):
+    """Test that a job qdel ignores a finished job. NCAR's qdel prints the
+    'Job has finished' message on stdout and exits 35
+    """
+    _mock_qdel(mocker, "Job has finished 8015997.desched1\n", returncode=35)
+    assert not PbsScheduler().cancel(["9.desched1"])
+
+
+def test_pbs_cancel_qdel_failure_raises(mocker):
+    """Test that a qdel failure other than unknown IDs raises"""
+    _mock_qdel(mocker, returncode=1, stderr="cannot connect to server")
+    with pytest.raises(RuntimeError, match="cannot connect to server"):
+        PbsScheduler().cancel(["1.desched1"])
+
+
+def test_fake_scheduler_cancel_cancelled_holds_ids_and_cancels(fake_scheduler):
+    """Test that FakeScheduler.cancel() updates the cancelled listt and sets the
+    job_states correctly
+    """
+    fake_scheduler.job_states = {"1.fake": JobState.RUNNING}
+    fake_scheduler.cancel(["1.fake"])
+    assert fake_scheduler.canceled == [["1.fake"]]
+    assert fake_scheduler.query(["1.fake"]) == {
+        "1.fake": JobState.FINISHED,
+    }

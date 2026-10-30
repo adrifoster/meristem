@@ -22,6 +22,7 @@ class FakeScheduler:
         self.submitted: list[Path] = []
         self.job_states: dict[str, JobState] = {}
         self.queried: list[list[str]] = []
+        self.canceled: list[list[str]] = []
 
     def submit(self, job_file: Path) -> str:
         """Record job_file and return a fake job ID"""
@@ -34,6 +35,11 @@ class FakeScheduler:
         return {
             job_id: self.job_states.get(job_id, JobState.UNKNOWN) for job_id in job_ids
         }
+
+    def cancel(self, job_ids: list[str]):
+        """Record the cancellation and set their job states to finished"""
+        self.canceled.append(list(job_ids))
+        self.job_states.update({key: JobState.FINISHED for key in job_ids})
 
 
 @pytest.fixture

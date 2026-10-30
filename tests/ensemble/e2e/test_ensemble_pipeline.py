@@ -58,7 +58,9 @@ def _assert_jobs_finished_cleanly(fake):
     assert all(j["exit"] in (0, None) for j in jobs), fake.logs()
     fail_jobs = [j for j in jobs if "_fail_" in j["name"]]
     assert fail_jobs
-    assert all(j["deleted"] and j["log"] is None for j in fail_jobs)
+    # never ran: deleted, and no log file written (the job script names one)
+    assert all(j["deleted"] for j in fail_jobs)
+    assert not [j["log"] for j in fail_jobs if j["log"] and Path(j["log"]).exists()]
     assert all(not j["deleted"] for j in jobs if "_fail_" not in j["name"])
 
 

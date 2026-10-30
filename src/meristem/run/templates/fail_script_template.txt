@@ -4,6 +4,7 @@
 #PBS -l select=1:ncpus=1:mem=1GB
 #PBS -l walltime=0:10:00
 #PBS -A {{ project }}
+#PBS -o {{ log_file }}
 #PBS -j oe
 #PBS -k eod
 {# no mail: PBS aborts this job on every successful run (afternotok unmet) #}
