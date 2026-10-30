@@ -93,6 +93,65 @@ def test_lh_posterior_uncovered_pfts_keep_defaults(
 
 
 # ===========================================================================
+# Posterior strategy on a parameter that writes one variable
+# ===========================================================================
+
+
+def test_lh_posterior_default_param_writes_draws(tmp_path, default_param_file):
+    """A default (non-joint) parameter drawn from a posterior writes one
+    posterior draw, for every PFT, into each member
+    """
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_leaf_slatop",
+                "long_name": "SLA",
+                "category": "stomatal",
+                "subcategory": "photosynthesis",
+                "units": "m^2/gC",
+                "coord": "['fates_pft']",
+                "param_type": "default",
+                "strategy": "posterior",
+                "param_min": "",
+                "param_max": "",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": None,
+                "base_params": "",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    draws = np.linspace(0.005, 0.05, 21)
+    posterior = tmp_path / "slatop_posterior.txt"
+    posterior.write_text("fates_leaf_slatop\n" + "\n".join(map(str, draws)) + "\n")
+    sources = tmp_path / "posterior_sources.yaml"
+    sources.write_text(
+        yaml.dump(
+            {
+                "fates_leaf_slatop": {
+                    "parameters": ["fates_leaf_slatop"],
+                    "files": [{"path": str(posterior), "array_indices": "all"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _make_lh_ensemble(
+        param_dir, default_param_file, tmp_path, sources
+    ).create_ensemble()
+
+    members = sorted((tmp_path / "ensemble").glob(f"test_*{default_param_file.suffix}"))
+    assert len(members) == 5
+    for path in members:
+        values = ParameterDataset.from_path(path)["fates_leaf_slatop"].values
+        assert np.allclose(values, values[0]), path.name  # one draw for every PFT
+        assert np.isclose(draws, values[0]).any(), path.name  # it's a posterior draw
+
+
+# ===========================================================================
 # LH full pipeline — NetCDF
 # ===========================================================================
 

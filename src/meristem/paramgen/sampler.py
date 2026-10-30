@@ -396,15 +396,20 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
         if len(self.sources) == 1 and self.sources[0].is_broadcast:
             result = [np.zeros(n_indices) for _ in self.parameters]
             sort_idx = self.sources[0].sort_param_index
-            if isinstance(value, list):
-                sort_value = float(value[sort_idx].flat[0])
-            else:
-                sort_value = value
-            unscaled = self.sources[0].unscale(
-                sort_value, clip_to_bounds=clip_to_bounds
+            sort_values = np.broadcast_to(
+                np.asarray(
+                    value[sort_idx] if isinstance(value, list) else value, dtype=float
+                ),
+                tuple(n_indices),
             )
-            for k, _ in enumerate(self.parameters):
-                result[k][:] = unscaled
+            # one draw applies to every index, but each index's value sits at
+            # its own quantile of the draws (e.g. per-PFT defaults)
+            for idx in np.ndindex(*n_indices):
+                unscaled = self.sources[0].unscale(
+                    float(sort_values[idx]), clip_to_bounds=clip_to_bounds
+                )
+                for k, _ in enumerate(self.parameters):
+                    result[k][idx] = unscaled
         else:
             # index-specific sources (_check_sources: none is broadcast). A position
             # no source covers isn't sampled, so it has no normalized value

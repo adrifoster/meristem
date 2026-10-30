@@ -320,3 +320,26 @@ def test_scale_from_root_percent_bounds_default_normalizes_to_middle(
     param = Parameter.from_row(scale_from_root_row, param_dataset)
     normalized = param.normalize(param.get_default(param_dataset), param_dataset)
     np.testing.assert_allclose(normalized, [0.5] * 3)
+
+
+def test_scale_from_root_posterior_raises(scale_from_root_row, param_dataset, tmp_path):
+    """Test that a scale_from_root parameter with strategy 'posterior' is rejected
+    when built, since its value is a single delta added to the root
+    """
+    posterior = tmp_path / "posterior.txt"
+    posterior.write_text(
+        "fates_nonhydro_smpsc fates_nonhydro_smpso\n-100000 -50000\n-90000 -40000\n"
+    )
+    scale_from_root_row["strategy"] = "posterior"
+    scale_from_root_row["param_min"] = ""
+    scale_from_root_row["param_max"] = ""
+    config = {
+        "parameters": ["fates_nonhydro_smpsc", "fates_nonhydro_smpso"],
+        "files": [{"path": str(posterior), "array_indices": "all"}],
+    }
+    with pytest.raises(
+        ValueError,
+        match="'smpsc_delta' has param_type 'scale_from_root'.*strategy 'posterior' "
+        "isn't supported",
+    ):
+        Parameter.from_row(scale_from_root_row, param_dataset, posterior_config=config)

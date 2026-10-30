@@ -292,7 +292,7 @@ class Parameter(ABC):
             float: Sampled parameter value.
         """
         context = self._build_context(self._full_default(default_ds))
-        return self.sampler.sample(normalized_value, context)
+        return self._from_sampler(self.sampler.sample(normalized_value, context))
 
     def normalize(
         self,
@@ -319,7 +319,51 @@ class Parameter(ABC):
             float: normalized [0-1] parameter value.
         """
         context = self._build_context(self._full_default(default_ds))
-        return self.sampler.normalize(value, context, clip_to_bounds=clip_to_bounds)
+        normalized = self.sampler.normalize(
+            self._to_sampler(value), context, clip_to_bounds=clip_to_bounds
+        )
+        return self._from_sampler(normalized)
+
+    def _to_sampler(
+        self, value: float | np.ndarray | list[np.ndarray]
+    ) -> float | np.ndarray | list[np.ndarray]:
+        """Put a value in the form the sampler takes. A posterior sampler works
+        with one array per posterior variable (built for joint parameters);
+        this parameter has one, so when it isn't expanded its value is wrapped
+
+        Args:
+            value (float | np.ndarray | list[np.ndarray]): this parameter's value
+
+        Returns:
+            float | np.ndarray | list[np.ndarray]: the value for the sampler
+        """
+        if (
+            isinstance(self.sampler, PosteriorSampler)
+            and self.active_index is None
+            and not isinstance(value, list)
+        ):
+            return [np.asarray(value)]
+        return value
+
+    def _from_sampler(
+        self, value: float | np.ndarray | list[np.ndarray]
+    ) -> float | np.ndarray | list[np.ndarray]:
+        """Put a value from the sampler in this parameter's form: a posterior
+        sampler gives a one-item list for a parameter with one variable
+
+        Args:
+            value (float | np.ndarray | list[np.ndarray]): the sampler's value
+
+        Returns:
+            float | np.ndarray | list[np.ndarray]: this parameter's value
+        """
+        if (
+            isinstance(self.sampler, PosteriorSampler)
+            and isinstance(value, list)
+            and len(value) == 1
+        ):
+            return value[0]
+        return value
 
     def _build_context(
         self,
@@ -641,7 +685,8 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
 
     def _validate_specs(self) -> None:
         """Require root_param and base_params to both be set, len(base_params) == 1,
-        and root_param not to be the base param (a parameter can't scale from itself).
+        root_param not to be the base param (a parameter can't scale from itself),
+        and a non-posterior strategy.
         """
         missing = []
         if self.spec.root_param is None:
@@ -664,6 +709,15 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
                 f"Parameter '{self.spec.name}' has root_param "
                 f"'{self.spec.root_param}' as its base_param; a scale_from_root "
                 "parameter can't scale from itself."
+            )
+        # its value is one delta added to the root, which a posterior over
+        # variables doesn't describe
+        if isinstance(self.sampler, PosteriorSampler):
+            raise ValueError(
+                f"Parameter '{self.spec.name}' has param_type 'scale_from_root', "
+                "which samples a delta added to its root, so strategy 'posterior' "
+                "isn't supported. Give it uniform bounds on the delta, or use a "
+                "joint parameter with a posterior over both variables."
             )
 
     def _variables_to_validate(self) -> list[str]:
@@ -735,6 +789,18 @@ class JointParameter(Parameter, param_type="joint"):
 
     def _variables_to_validate(self) -> list[str]:
         return self.spec.base_params
+
+    def _to_sampler(
+        self, value: float | np.ndarray | list[np.ndarray]
+    ) -> float | np.ndarray | list[np.ndarray]:
+        """A joint parameter's value is already one array per variable"""
+        return value
+
+    def _from_sampler(
+        self, value: float | np.ndarray | list[np.ndarray]
+    ) -> float | np.ndarray | list[np.ndarray]:
+        """A joint parameter keeps the sampler's one array per variable"""
+        return value
 
     def _full_default(self, default_ds: ParameterDataset) -> list[np.ndarray]:
         return [default_ds[p].values for p in self.spec.base_params]

@@ -659,6 +659,65 @@ def test_posterior_sampler_normalize_broadcast(tmp_path):
     assert len(result[0]) == 3  # one value per index
 
 
+def _broadcast_sampler(tmp_path, columns: dict[str, list[float]]) -> PosteriorSampler:
+    """A PosteriorSampler with one 'all' posterior file of the given columns,
+    sorted by the first
+    """
+    path = tmp_path / "broadcast_posterior.txt"
+    names = list(columns)
+    rows = zip(*columns.values())
+    path.write_text(
+        " ".join(names) + "\n" + "\n".join(" ".join(map(str, r)) for r in rows) + "\n"
+    )
+    config = {
+        "parameters": names,
+        "files": [{"path": str(path), "array_indices": "all"}],
+    }
+    row = pd.Series({"parameter_name": names[0], "strategy": "posterior"})
+    return PosteriorSampler(row, posterior_config=config)
+
+
+@pytest.mark.parametrize("as_list", [True, False])
+def test_unscale_broadcast_normalizes_each_index(tmp_path, as_list):
+    """Test that with one 'all' file each index is normalized from its own value
+    (e.g. per-PFT defaults), not all from the first index's
+    """
+    sampler = _broadcast_sampler(tmp_path, {"leaf_cn": [10.0, 20.0, 30.0]})
+    value = np.array([10.0, 20.0, 30.0])
+    result = sampler.normalize(
+        [value] if as_list else value, SampleContext(n_indices=[3])
+    )
+    np.testing.assert_allclose(result[0], [0.0, 0.5, 1.0])
+
+
+def test_unscale_broadcast_joint_uses_sort_variable_per_index(tmp_path):
+    """Test that a joint posterior's normalized value at each index is the
+    quantile of the sort variable there, shared by every variable
+    """
+    sampler = _broadcast_sampler(
+        tmp_path, {"a": [1.0, 2.0, 3.0, 4.0, 5.0], "b": [50.0, 40.0, 30.0, 20.0, 10.0]}
+    )
+    value = [np.array([5.0, 1.0, 3.0]), np.array([0.0, 0.0, 0.0])]
+    result = sampler.normalize(value, SampleContext(n_indices=[3]))
+    for normalized in result:
+        np.testing.assert_allclose(normalized, [1.0, 0.0, 0.5])
+
+
+def test_unscale_broadcast_multi_dimensional(tmp_path):
+    """Test that each position of a multi-dimensional value is normalized"""
+    sampler = _broadcast_sampler(tmp_path, {"v": [0.0, 1.0, 2.0, 3.0, 4.0]})
+    value = np.array([[0.0, 1.0, 2.0], [2.0, 3.0, 4.0]])
+    [result] = sampler.normalize([value], SampleContext(n_indices=[2, 3]))
+    np.testing.assert_allclose(result, value / 4.0)
+
+
+def test_unscale_broadcast_scalar(tmp_path):
+    """Test that a scalar parameter (one index) still normalizes its value"""
+    sampler = _broadcast_sampler(tmp_path, {"v": [0.0, 1.0, 2.0, 3.0, 4.0]})
+    [result] = sampler.normalize(3.0, SampleContext(n_indices=[1]))
+    np.testing.assert_allclose(result, [0.75])
+
+
 def test_unscale_broadcast_multiple_sources(tmp_path):
     """_unscale_broadcast else branch: multiple sources with specific array indices."""
     f0 = tmp_path / "posterior_0.txt"
