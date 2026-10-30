@@ -85,6 +85,9 @@ class Ensemble:
             TypeError: if config is not an EnsembleConfig, dict, str, or Path
             FileExistsError: if a state file already exists at the target root,
             indicating that the ensemble has already been initialized
+            FileExistsError: if any member stage's case directory already exists
+            (e.g. left in a shared case_dir by an ensemble with the same
+            ensemble_id), since prepare would reuse it as this member's clone
         """
         ensemble = cls(_to_config(config))
 
@@ -99,6 +102,7 @@ class Ensemble:
         ensemble.check_base_case()
         ensemble.check_stage_scripts()
         member_runs = ensemble._member_runs()
+        ensemble.check_case_roots_free()
 
         ensemble.root.mkdir(parents=True, exist_ok=True)
         for run in member_runs:
@@ -642,6 +646,31 @@ class Ensemble:
         if missing:
             raise FileNotFoundError(
                 "parameter file(s) no longer exist:\n" + "\n".join(missing)
+            )
+
+    def check_case_roots_free(self):
+        """Check no member stage's case directory exists yet
+
+        prepare reuses an existing case with the expected name as the member's
+        own clone (so a retried stage keeps its clone), so a leftover case from
+        another ensemble with the same name would be reused silently. Checked at
+        create only: later, an existing case is this ensemble's own.
+
+        Raises:
+            FileExistsError: if any of them exists
+        """
+        existing = [
+            str(case_root)
+            for member in self.param_files
+            for stage in self.config.member_stages
+            if (case_root := self._case_root(member, stage.name)).exists()
+        ]
+        if existing:
+            raise FileExistsError(
+                f"{len(existing)} member case directories already exist, e.g. "
+                f"{_preview(existing)}. They may be left from another ensemble with "
+                f"ensemble_id {self.config.ensemble_id!r}; remove them, or use a "
+                "different case_dir or ensemble_id."
             )
 
     def check_stage_scripts(self):

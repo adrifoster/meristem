@@ -14,6 +14,7 @@ import yaml
 from meristem.paramgen.param_ensemble import LatinHypercubeEnsemble, OneAtATimeEnsemble
 from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
 from meristem.paramgen.parameter_dataset import ParameterDataset
+from meristem.paramgen.sampler import PosteriorSampler
 
 EXAMPLES_DIR = Path(__file__).parents[2] / "examples" / "paramgen"
 
@@ -151,6 +152,56 @@ def test_lh_posterior_default_param_writes_draws(tmp_path, default_param_file):
         assert np.isclose(draws, values[0]).any(), path.name  # it's a posterior draw
 
 
+# draws in the fixtures' posterior files: a posterior value is a whole draw, so
+# its normalized value is only known to within one draw's step
+_POSTERIOR_DRAWS = 20
+
+
+def _normalized_written(param, member: ParameterDataset, default_ds) -> np.ndarray:
+    """The normalized value(s) of what a member file holds for a parameter: its
+    own sampled value (get_default on the member, e.g. base - root for
+    scale_from_root), normalized against the default file
+    """
+    normalized = param.normalize(param.get_default(member), default_ds)
+    parts = normalized if isinstance(normalized, list) else [normalized]
+    return np.concatenate([np.ravel(part) for part in parts])
+
+
+def _tolerance(param) -> float:
+    """How closely a parameter's written value can be normalized back"""
+    if isinstance(param.sampler, PosteriorSampler):
+        return 1.0 / (_POSTERIOR_DRAWS - 1)
+    return 1e-9
+
+
+def _assert_members_match_key(ensemble) -> int:
+    """Check that every member file holds, for every parameter, the value its
+    key row says was sampled (written and key agree, nothing is missing,
+    truncated, or written in the wrong place)
+
+    Returns:
+        int: how many (member, parameter) values were checked
+    """
+    key = pd.read_csv(ensemble.ensemble_dir / f"{ensemble.file_prefix}_key.csv")
+    extension = ensemble.default_ds.file_extension
+    checked = 0
+    for row in key.to_dict("records"):
+        member = ParameterDataset.from_path(
+            ensemble.ensemble_dir / f"{row['ensemble']}{extension}"
+        )
+        for group in ensemble.sampling_units:
+            for param in group.params:
+                normalized = _normalized_written(param, member, ensemble.default_ds)
+                np.testing.assert_allclose(
+                    normalized,
+                    row[group.name],
+                    atol=_tolerance(param),
+                    err_msg=f"{row['ensemble']}: {param.spec.name}",
+                )
+                checked += 1
+    return checked
+
+
 # ===========================================================================
 # LH full pipeline — NetCDF
 # ===========================================================================
@@ -175,6 +226,19 @@ def test_lh_written_files_differ_from_default(
             any_different = True
             break
     assert any_different, "All ensemble members are identical to the default"
+
+
+def test_lh_members_match_key(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Every LH member file holds, for every parameter (uniform, percent,
+    scale_from_root, joint posterior), the value its key row says was sampled
+    """
+    ensemble = _make_lh_ensemble(
+        ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+    )
+    ensemble.create_ensemble()
+    assert _assert_members_match_key(ensemble) == 5 * len(ensemble.params)
 
 
 def test_lh_key_has_correct_shape(
@@ -264,6 +328,58 @@ def test_lh_json_output_format_matches_input(
 # ===========================================================================
 
 
+def _variables(param) -> set[str]:
+    """The variables a parameter writes"""
+    return set(param.spec.base_params or [param.spec.original_name])
+
+
+def test_oat_members_change_only_their_parameter(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Every written OAT member has its perturbed parameter (or group) at its
+    minimum or maximum, as its key row says, and every other variable exactly at
+    its default
+    """
+    ensemble = _make_oat_ensemble(
+        ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+    )
+    ensemble.create_ensemble()
+    key = pd.read_csv(tmp_path / "ensemble" / "test_key.csv")
+    assert len(key) == 2 * len(ensemble.sampling_units)
+    groups = {group.name: group for group in ensemble.sampling_units}
+    default = ensemble.default_ds
+    extension = default.file_extension
+
+    for row in key.to_dict("records"):
+        member = ParameterDataset.from_path(
+            tmp_path / "ensemble" / f"{row['ensemble']}{extension}"
+        )
+        _assert_oat_member(row, member, groups[row["parameter"]], default)
+
+
+def _assert_oat_member(row: dict, member, group, default) -> None:
+    """Check one OAT member: its perturbed parameters at the key's direction,
+    every other numeric variable exactly at its default
+    """
+    expected = {"minimum": 0.0, "maximum": 1.0}[row["direction"]]
+    for param in group.params:
+        np.testing.assert_allclose(
+            _normalized_written(param, member, default),
+            expected,
+            atol=_tolerance(param),
+            err_msg=f"{row['ensemble']}: {param.spec.name}",
+        )
+    perturbed = set().union(*(_variables(param) for param in group.params))
+    for var in default.data_vars:
+        if var in perturbed or default[var].values.dtype.kind not in "fiu":
+            continue
+        np.testing.assert_array_equal(
+            member[var].values,
+            default[var].values,
+            err_msg=f"{row['ensemble']} ({row['parameter']}): {var} changed",
+        )
+
+
 def test_oat_min_member_has_minimum_value(
     ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
 ):
@@ -332,36 +448,40 @@ def test_oat_other_params_unchanged(
 # ===========================================================================
 
 
-def test_grouped_lh_netcdf_members_written_correctly(
-    grouped_param_dir, default_netcdf_file, tmp_path
-):
-    """Grouped LH ensemble writes files with both grouped params modified."""
-    ensemble = _make_lh_ensemble(grouped_param_dir, default_netcdf_file, tmp_path)
+def test_grouped_lh_members_match_key(grouped_param_dir, default_param_file, tmp_path):
+    """A grouped LH ensemble writes 5 members, each holding the values its key
+    row says were sampled, for every parameter
+    """
+    ensemble = _make_lh_ensemble(grouped_param_dir, default_param_file, tmp_path)
     ensemble.create_ensemble()
-    output_files = list((tmp_path / "ensemble").glob("test_*.nc"))
-    assert len(output_files) == 5
-
-
-def test_grouped_lh_json_members_written_correctly(
-    grouped_param_dir, json_param_file, tmp_path
-):
-    """Grouped LH ensemble writes files with both grouped params modified."""
-    ensemble = _make_lh_ensemble(grouped_param_dir, json_param_file, tmp_path)
-    ensemble.create_ensemble()
-    output_files = list((tmp_path / "ensemble").glob("test_*.json"))
-    assert len(output_files) == 5
+    members = list((tmp_path / "ensemble").glob(f"test_*{default_param_file.suffix}"))
+    assert len(members) == 5
+    assert _assert_members_match_key(ensemble) == 5 * len(ensemble.params)
 
 
 def test_grouped_params_move_together(grouped_param_dir, default_param_file, tmp_path):
-    """Params in the same group receive the same normalized value."""
+    """In every written member, parameters in the same group (and, for an
+    expanded group, the same index) sit at the same place in their ranges
+    """
     ensemble = _make_lh_ensemble(grouped_param_dir, default_param_file, tmp_path)
-    samples = ensemble.create_samples()
+    ensemble.create_ensemble()
+    extension = ensemble.default_ds.file_extension
+    multi_param_groups = [g for g in ensemble.sampling_units if len(g.params) > 1]
+    assert multi_param_groups  # the fixture has groups to check
 
-    for sample in samples:
-        # build member and verify both params were written
-        ds = ensemble.create_ensemble_member(sample)
-        assert "fates_leaf_slatop" in ds
-        assert "fates_leaf_vcmax25top" in ds
+    for path in sorted(ensemble.ensemble_dir.glob(f"test_*{extension}")):
+        member = ParameterDataset.from_path(path)
+        for group in multi_param_groups:
+            values = [
+                _normalized_written(param, member, ensemble.default_ds)
+                for param in group.params
+            ]
+            for param, normalized in zip(group.params[1:], values[1:]):
+                np.testing.assert_allclose(
+                    normalized,
+                    values[0][0],
+                    err_msg=f"{path.name}: {group.name}: {param.spec.name}",
+                )
 
 
 # ===========================================================================

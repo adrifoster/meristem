@@ -297,6 +297,39 @@ def test_case_root_differs_between_ensembles(ready_config_dict, tmp_path):
     assert first_root != second_root
 
 
+def test_create_existing_case_dirs_raises(ready_config_dict, tmp_path):
+    """Test that an ensemble whose member case directories already exist (here,
+    left in a shared case_dir by an earlier ensemble with the same ensemble_id)
+    is refused at create, naming them, and nothing is written
+    """
+    first = Ensemble.create(ready_config_dict)
+    leftovers = [
+        _member_run(first, member).stages[0].config.case_root for member in MEMBERS
+    ]
+    for case_root in leftovers:
+        case_root.mkdir(parents=True)
+
+    ready_config_dict["root"] = str(tmp_path / "ens2")
+    with pytest.raises(FileExistsError) as err:
+        Ensemble.create(ready_config_dict)
+    message = str(err.value)
+    assert message.startswith("3 member case directories already exist")
+    assert str(leftovers[0]) in message
+    assert "ensemble_id 'my_ens-1'" in message
+    assert not (tmp_path / "ens2").exists()
+
+
+def test_create_ignores_other_ensembles_case_dirs(ready_config_dict, tmp_path):
+    """Test that case directories of an ensemble with a different ensemble_id
+    in the same case_dir don't block create
+    """
+    first = Ensemble.create(ready_config_dict)
+    _member_run(first, MEMBERS[0]).stages[0].config.case_root.mkdir(parents=True)
+    ready_config_dict["ensemble_id"] = "my_ens-2"
+    ready_config_dict["root"] = str(tmp_path / "ens2")
+    Ensemble.create(ready_config_dict)
+
+
 def test_create_member_stages_run_prepare(ready_config_dict, tmp_path):
     """Test that each member stage, in order, runs meristem ensemble prepare in
     its own case under case_dir, keeping the stage's other settings

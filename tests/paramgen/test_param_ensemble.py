@@ -25,6 +25,7 @@ from meristem.paramgen.param_ensemble import (
 from meristem.paramgen.ensemble_config import LatinHypercubeConfig, OneAtATimeConfig
 from meristem.paramgen.parameter import DimIndex, Parameter
 from meristem.paramgen.parameter_dataset import ParameterDataset
+from meristem.paramgen.sampler import PosteriorSampler
 
 
 def test_from_dict_missing_ensemble_type(
@@ -518,18 +519,57 @@ def test_oat_create_samples_values(oat_ensemble):
     assert set(values) == {0.0, 1.0}
 
 
-def test_lh_create_ensemble_member(lh_ensemble):
-    """Test that create_ensemble_member works for a LH ensemble"""
-    samples = lh_ensemble.create_samples()
-    ds = lh_ensemble.create_ensemble_member(samples[0])
-    assert "fates_leaf_slatop" in ds
+def _normalized_in(param, ds, default_ds) -> np.ndarray:
+    """A member's value for a parameter (read back with get_default), normalized"""
+    normalized = param.normalize(param.get_default(ds), default_ds)
+    parts = normalized if isinstance(normalized, list) else [normalized]
+    return np.concatenate([np.ravel(part) for part in parts])
+
+
+def _atol(param) -> float:
+    """A posterior value is a whole draw (the fixtures' files have 20)"""
+    return 1.0 / 19 if isinstance(param.sampler, PosteriorSampler) else 1e-9
+
+
+@pytest.mark.parametrize("member", [0, 4])
+def test_lh_create_ensemble_member(lh_ensemble, member):
+    """Test that a LH member holds, for every parameter, the value of its
+    sample's normalized value
+    """
+    sample = lh_ensemble.create_samples()[member]
+    ds = lh_ensemble.create_ensemble_member(sample)
+    for param_sample in sample:
+        for param in param_sample.group.params:
+            np.testing.assert_allclose(
+                _normalized_in(param, ds, lh_ensemble.default_ds),
+                param_sample.normalized_value,
+                atol=_atol(param),
+                err_msg=param.spec.name,
+            )
 
 
 def test_oat_create_ensemble_member(oat_ensemble):
-    """Test that create_ensemble_member works for a OAT ensemble"""
-    samples = oat_ensemble.create_samples()
-    ds = oat_ensemble.create_ensemble_member(samples[0])
-    assert "fates_leaf_slatop" in ds
+    """Test that an OAT member holds its perturbed parameter at its minimum or
+    maximum and every other variable at its default
+    """
+    default_ds = oat_ensemble.default_ds
+    for sample in oat_ensemble.create_samples():
+        [param_sample] = sample.parameter_samples
+        ds = oat_ensemble.create_ensemble_member(sample)
+        written = set()
+        for param in param_sample.group.params:
+            np.testing.assert_allclose(
+                _normalized_in(param, ds, default_ds),
+                param_sample.normalized_value,
+                atol=_atol(param),
+                err_msg=param.spec.name,
+            )
+            written |= set(param.spec.base_params or [param.spec.original_name])
+        for var in set(default_ds.data_vars) - written:
+            if default_ds[var].values.dtype.kind in "fiu":
+                np.testing.assert_array_equal(
+                    ds[var].values, default_ds[var].values, err_msg=var
+                )
 
 
 def test_oat_create_ensemble_key_wrong_length(oat_ensemble, lh_ensemble):
