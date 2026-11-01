@@ -400,20 +400,27 @@ def _stage_states(root: Path) -> dict[str, tuple[str, int]]:
 
 
 def test_failed_attempt_with_live_jobs_then_retry(make_run, fake, meristem):
-    """Test a setup job that fails after case.submit, leaving its CIME and
-    advance jobs queued: retry is refused while they're active, and once retried
-    a leftover advance job from the old attempt is ignored rather than
-    finishing the new attempt
+    """Test a setup job that fails after case.submit, with its advance job
+     already submitted: fail cancels the CIME jobs, retry is refused only until
+     PBS the advance job that waited on them, and once retried a leftover
+     advance script from the old attempt is ignored rather than finishing theremoves the and
+    advance jobs queued: and once retried a leftover advance job from the old attempt is
+    ignored rather than finishing the new attempt
     """
     root = make_run([{"name": "stage1"}, {"name": "stage2"}])
     fake.fail_qsub(r"_fail(_\d+)?\.pbs$")  # fails the setup job after case.submit
     assert meristem("run", "submit", "--root", str(root)).returncode == 0
     fake.step()  # stage1's setup job
-    assert _stage_states(root)["stage1"] == ("failed", 1), fake.logs()
-    advance = next(j for j in fake.jobs() if j["name"] == "e2e_test_stage1_advance")
+
+    # fail canceled the CIME jobs, the advance job that waited on them is still
+    # queued until PBS removes it
+    jobs = {j["name"]: j for j in fake.jobs()}
+    assert jobs["stage1.run"]["deleted"] and jobs["stage1.st_archive"]["deleted"]
+    advance = jobs["e2e_test_stage1_advance"]
     assert advance["state"] == "Q"
 
-    # attempt 1's case.run, st_archive and advance jobs are still queued
+    # fail cancelled the CIME jobs, but PBS hasn't yet removed the advance job that
+    # waited on them, so retry is refused for now
     result = meristem("run", "retry", "--root", str(root))
     assert result.returncode == 1
     assert "still queued or running" in result.stderr
@@ -423,8 +430,8 @@ def test_failed_attempt_with_live_jobs_then_retry(make_run, fake, meristem):
     # attempt 1's CIME jobs finish; its advance job is gone (killed here)
     (fake.spool / "control.json").unlink()
     fake.step()  # case.run
-    fake.step()  # st_archive
-    fake.kill(advance["id"])
+    assert next(j for j in fake.jobs() if j["id"] == advance["id"])["deleted"]
+
     result = meristem("run", "retry", "--root", str(root))
     assert result.returncode == 0, result.stdout + result.stderr
     assert _stage_states(root)["stage1"] == ("submitted", 2)
@@ -471,13 +478,10 @@ def test_setup_fails_before_advance_job_cime_still_tracked(make_run, fake, meris
     run_id, archive_id = jobs["stage1.run"]["id"], jobs["stage1.st_archive"]["id"]
     assert stage["cime_job_ids"] == [run_id, archive_id]
 
-    result = meristem("run", "retry", "--root", str(root))
-    assert result.returncode == 1
-    assert "still queued or running" in result.stderr
-    assert run_id in result.stderr and archive_id in result.stderr
+    for name in ("stage1.run", "stage1.st_archive"):
+        assert jobs[name]["deleted"] is True, fake.logs()
 
     (fake.spool / "control.json").unlink()
-    fake.run_until_idle()  # the CIME jobs finish; nothing else was queued
     result = meristem("run", "retry", "--root", str(root))
     assert result.returncode == 0, result.stdout + result.stderr
     fake.run_until_idle()
@@ -612,3 +616,32 @@ def test_broken_qstat_is_not_reported_as_lost(make_run, fake, meristem):
     assert result.returncode != 0, output
     assert "qstat failed" in output, output
     assert "lost" not in output.replace("--lost", ""), output
+
+
+def test_canceled_setup_job_is_failed_then_retry(make_run, fake, meristem):
+    """Test that a canceled setup job is lost and retry works"""
+    root = make_run([{"name": "stage1"}])
+
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+
+    result = meristem("run", "cancel", "--root", str(root))
+    assert result.returncode == 0
+    assert f"Canceled: {fake.jobs()[0]["id"]}" in result.stdout
+
+    jobs = fake.jobs()
+    assert jobs[0]["state"] == "F"
+    assert jobs[0]["deleted"] is True
+    assert not fake._log_path(jobs[0]).exists()
+
+    result = meristem("run", "status", "--root", str(root))
+    lines = result.stdout.splitlines()[1:]
+    assert "✗" in next(l for l in lines if "stage1" in l)
+
+    assert meristem("run", "retry", "--root", str(root)).returncode == 0
+    fake.run_until_idle()
+
+    result = meristem("run", "status", "--root", str(root))
+    assert result.returncode == 0, result.stdout + fake.logs()
+    line = next(l for l in result.stdout.splitlines()[1:] if "stage1" in l)
+    assert "✓" in line
+    assert "attempts=2" in line

@@ -51,14 +51,16 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 
 ### Requirements
 
-- A machine with PBS (e.g. Derecho)
-- CESM/CTSM set up on that machine
-- meristem installed in a Python environment on a filesystem the compute nodes can see (e.g.
-  `/glade/work`). Generated job scripts call meristem through the absolute path of the Python
-  that created the run (`/path/to/python -m meristem`), so no environment needs to be activated
-  inside the jobs. Don't move, delete, or rebuild that environment while a run is in progress.
-- Setup scripts can call `meristem` directly. They do not get an activated conda environment,
-  so a setup script that needs one must activate it itself.
+- A machine with PBS (e.g. Derecho) and CESM/CTSM set up on it
+- A **built base case**: `BUILD_COMPLETE` must be `TRUE`. Every member is cloned from it with
+  `--keepexe`, so nothing is rebuilt.
+- **Paramgen output** for the ensemble in one directory (see [paramgen](paramgen.md)):
+  - `<prefix>.txt`: the member names, one per line
+  - `<prefix>_key.csv`: a table with an `ensemble` column naming each member
+  - one parameter file per member, `<member>.nc` or `<member>.json` (exactly one of the two)
+- meristem installed in a Python environment on a filesystem the compute nodes can see, as for
+  [`meristem.run`](run.md#requirements). Don't move or rebuild that environment while the ensemble is
+  running.
   
 ----
 
@@ -68,18 +70,90 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 
 ```yaml
 # ensemble.yaml
-root: /glade/derecho/scratch/user/my_ensemble  # working directory for the entire ensemble
-ensemble_id: my_ensemble                       # short identifier (letters, digits, hyphens, underscores)
-project: PXXXXXXX                              # cluster allocation project code
+ensemble_id: morris_test                       # short identifier (letters, digits, hyphens, underscores)
+root: /glade/derecho/scratch/user/morris_test  # ensemble state, job scripts and logs
+project: PXXXXXXX                              # PBS project code
 email: name@ucar.edu                           # email
 
-stages:
-  - name: spinup_ad               # name of stage - used for job and case names
-    script: /path/to/setup_ad.sh  # path to your setup script for this stage
-    queue: develop                # PBS queue
+base_case: /glade/work/user/cases/base_case    # built case every member is cloned from
+paramfile_key: fates_paramfile                 # user_nl_clm variable: paramfile or fates_paramfile
 
-  - name: spinup_postad
-    script: /path/to/setup_postad.sh
+paramgen:
+  dir: /glade/work/user/morris_files           # paramgen output directory
+  prefix: morris                               # reads morris.txt and morris_key.csv
+  members: all                                 # or a list, e.g. ["0001", "0002"]
+
+member_stages:                                 # run once per member, in order
+  - name: spinup
+    queue: develop
+  - name: transient
+    script: /path/to/setup_transient.sh        # optional
     queue: develop
 ```
+
+Quote member names that are all digits (`"0001"`) so YAML doesn't read them as numbers.
+
+A stage's `script` is optional. If given, it runs on the member's clone and is called as
+`bash <script> <case_root> <previous_case_name> <previous_case_root>`.
+
+### 2. Initialise the ensemble
+
+```bash
+meristem ensemble create --config ensemble.yaml
+```
+
+This checks the base case, parameter files and stage scripts, then writes the state files. No jobs
+are submitted.
+
+### 3. Submit
+
+```bash
+meristem ensemble submit --root /glade/derecho/scratch/user/morris_test
+```
+
+This submits the first stage of every member. Add `--limit 2` to submit only two members as a test
+(running the same command again later submits the rest), or `--dry-run` to write the job scripts
+without calling `qsub`.
+
+### 4. Check status
+
+```bash
+meristem ensemble status --root /glade/derecho/scratch/user/morris_test
+```
+
+```text
+Ensemble: morris_test (/glade/derecho/scratch/user/morris_test)
+50 members
+
+           pending  submitted  done  failed
+spinup           0         10    38       2
+transient       12          0     0       0
+
+Failed (2): 0007:spinup, 0031:spinup
+  retry with: meristem ensemble retry --root /glade/derecho/scratch/user/morris_test --failed
+```
+
+Add `--print-members` to list every member and stage, or `--members 0001 0002` to check particular
+members. Add `--check-queue` to ask PBS about each submitted stage and report any that are **lost**
+(see [Lost stages](run.md#lost-stages)). `status` exits with code 3 if any stage is lost.
+
+### 5. Retry
+
+```bash
+meristem ensemble retry --root /glade/derecho/scratch/user/morris_test --failed
+```
+
+`--failed` and `--lost` retry every stage in that state. To resubmit specific stages, name them with
+`--stage <name>` and/or `--members 0001 0002`. Add `--skip-script` to resubmit without re-running the
+stage script.
+
+### 6. Write a manifest
+
+```bash
+meristem ensemble manifest --root /glade/derecho/scratch/user/morris_test
+```
+
+This writes `<root>/manifest.csv` (or the file given with `-o`), with one row per member: the
+paramgen key values, its parameter file, and each stage's status, job ID, attempts, case root and
+times.
 

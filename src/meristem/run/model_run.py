@@ -410,6 +410,18 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         job_ids = [
             job_id for job_id in recorded if job_id and not job_id.startswith("DRY_")
         ]
+        return self._are_active(job_ids)
+
+    def _are_active(self, job_ids: list[str]) -> list[str]:
+        """Given an input list of job_ids, return the ones that are
+        RUNNING or QUEUED
+
+        Args:
+            job_ids (list[str]): input job ID list
+
+        Returns:
+            list[str]: subset job_ids list
+        """
         if not job_ids:
             return []
         states = self.scheduler.query(job_ids)
@@ -600,6 +612,20 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         stage.state.end_time = time.time()
         self.save()
         print(f"  {self.run_id} / {stage_name}: FAILED")
+
+        try:
+            cime_jobs = self._are_active(stage.state.cime_job_ids)
+            if cime_jobs:
+                self.scheduler.cancel(cime_jobs)
+                print(
+                    f"  {self.run_id} / {stage_name}: canceled CIME jobs {', '.join(cime_jobs)}"
+                )
+        except RuntimeError:
+            print(
+                f"Problem canceling or querying CIME jobs "
+                f"for stage {stage_name}. "
+                f"Cancel them with `meristem run cancel --root {self.root}`"
+            )
 
     def record_cime_jobs(
         self, stage_name: str, job_ids: str, attempt: int | None = None
@@ -875,6 +901,42 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         stage.state.cime_job_ids = []
         self.save()
         return self._submit_stage(stage, dry_run=dry_run, skip_script=skip_script)
+
+    def cancel(self, dry_run: bool = False) -> list[str]:
+        """Cancel a current run's stages/jobs
+
+        Args:
+            dry_run (bool, optional): Do not actually cancel, just print what
+                job_ids would be canceled. Defaults to False.
+
+        Returns:
+            list[str]: list of canceled job IDs
+        """
+
+        active_jobs = {}
+        for stage in self.stages:
+            job_list = self._active_jobs(stage)
+            if job_list:
+                active_jobs[stage.config.name] = job_list
+        if not active_jobs:
+            print(f"{self.run_id}: no queued or running jobs to cancel")
+            return []
+
+        to_cancel = [job_id for ids in active_jobs.values() for job_id in ids]
+        if dry_run:
+            print(f" {self.run_id}: would cancel {', '.join(to_cancel)}")
+            return to_cancel
+
+        self.scheduler.cancel(to_cancel)
+        for stage_name in active_jobs:
+            stage = self._stage(stage_name)
+            if stage.state.status is StageStatus.SUBMITTED:
+                stage.state.status = StageStatus.FAILED
+                stage.state.end_time = time.time()
+                print(f" {self.run_id} / {stage_name}: cancelled, marked FAILED")
+        self.save()
+
+        return to_cancel
 
     def _submit_stage(
         self,

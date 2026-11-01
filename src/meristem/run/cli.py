@@ -13,6 +13,7 @@ All other commands (many called automatically by pipeline):
     meristem run fail --root /path/to/run --stage spinup_ad
     meristem run retry --root /path/to/run [--stage spinup_ad] [--skip-script] [--lost]
     meristem run status --root /path/to/run
+    meristem run cancel --root /path/to/run [--dry-run]
 """
 
 import argparse
@@ -201,6 +202,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=cmd_status)
 
+    # meristem run cancel --root R [--debug] [--dry-run]
+    cancel = subparsers.add_parser(
+        "cancel",
+        parents=[debug, root, dry_run],
+        help=("Cancel the run's queued or running jobs and mark their stages failed."),
+    )
+    cancel.set_defaults(handler=cmd_cancel)
+
     return parser
 
 
@@ -344,6 +353,23 @@ def cmd_retry(args: argparse.Namespace) -> int:
             lost=args.lost,
         ),
     )
+    return 0
+
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Execute cancel action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+    canceled = run.cancel(dry_run=args.dry_run)
+    if canceled and not args.dry_run:
+        print(f"Canceled: {', '.join(canceled)}")
+
     return 0
 
 

@@ -15,6 +15,7 @@ from meristem.run.cli import (
     cmd_submit,
     cmd_submit_advance,
     cmd_submit_fail,
+    cmd_cancel,
     main,
 )
 
@@ -30,6 +31,7 @@ def mock_run(mocker):
     run.advance.return_value = "12345.pbs"
     run.retry.return_value = "12345.pbs"
     run.format_status.return_value = "Run: member_0001"
+    run.cancel.return_value = ["12345.pbs"]
     run.lost_stages.return_value = []
     return run
 
@@ -81,6 +83,7 @@ SUBMIT_FAIL_ARGV = [
         (["fail", "--root", "/tmp/run", "--stage", "spinup_ad"], cmd_fail),
         (["retry", "--root", "/tmp/run"], cmd_retry),
         (["status", "--root", "/tmp/run"], cmd_status),
+        (["cancel", "--root", "/tmp/run"], cmd_cancel),
     ],
 )
 def test_parser_subcommand_sets_handler(argv, handler):
@@ -135,6 +138,7 @@ def test_parser_submit_advance_cime_job_id_is_a_string():
         ["submit"],  # missing --root
         ["status"],  # missing --root
         ["retry"],  # missing --root
+        ["cancel"],  # missing --root
         ["advance", "--root", "/tmp/run"],  # missing --stage
         ["fail", "--root", "/tmp/run"],  # missing --stage
         SUBMIT_ADVANCE_ARGV[:-2],  # missing --cime-job-id
@@ -164,6 +168,7 @@ def test_main_argument_errors_exit_with_code_2(argv):
         ["advance", "--root", "/tmp/run", "--stage", "spinup_ad"],
         ["fail", "--root", "/tmp/run", "--stage", "spinup_ad"],
         ["status", "--root", "/tmp/run"],
+        ["cancel", "--root", "/tmp/run"],
         SUBMIT_ADVANCE_ARGV,
         SUBMIT_FAIL_ARGV,
     ],
@@ -410,6 +415,14 @@ def test_main_unexpected_exception_exits_one(mocker, capsys):
     assert "ERROR: boom" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("mock_load")
+def test_cancel_error_exits_one(mock_run, capsys):
+    """Test that a qdel failure exits with status 1 and prints the error"""
+    mock_run.cancel.side_effect = RuntimeError("qdel failed (exit 1): no server")
+    assert main(["cancel", "--root", "/tmp/run"]) == 1
+    assert "ERROR: qdel failed" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -423,3 +436,17 @@ def test_main_debug_flag_reraises_exception(mocker, argv):
     mocker.patch("meristem.run.cli.ModelRun.load", side_effect=RuntimeError("boom"))
     with pytest.raises(RuntimeError, match="boom"):
         main(argv + ["--debug"])
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cancel_calls_cancel(mock_run, capsys, dry_run):
+    """Test that cancel calls ModelRun.cancel, passing --dry-run through"""
+    argv = ["cancel", "--root", "/tmp/run"] + (["--dry-run"] if dry_run else [])
+    assert main(argv) == 0
+    mock_run.cancel.assert_called_once_with(dry_run=dry_run)
+    out = capsys.readouterr().out
+    if dry_run:
+        assert "Canceled:" not in out
+    else:
+        assert "Canceled: 12345.pbs" in out

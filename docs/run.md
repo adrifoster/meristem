@@ -169,6 +169,10 @@ meristem run --root <path> --advance --stage <name>
 meristem run fail --root <path> --stage <name>
   Mark a stage as failed. Called automatically from the fail job
   and the setup job's error trap, or can be run manually.
+  
+meristem run cancel --root <path> [--dry-run]
+  Cancel all queued or running jobs associated with this run and then mark all
+  stages as failed; --dry-run just prints the job IDs of what would be canceled.
 ```
 
 Add `--dry-run` to any submission command to generate job scripts without calling `qsub`.
