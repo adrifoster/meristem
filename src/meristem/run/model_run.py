@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 from collections import Counter
 from collections.abc import Collection
 
@@ -15,7 +16,13 @@ from jinja2 import Environment, FileSystemLoader
 import yaml
 
 from meristem.commands import meristem_cmd
-from meristem.utils import check_email, check_id, to_absolute_path, write_atomically
+from meristem.utils import (
+    check_email,
+    check_id,
+    to_absolute_path,
+    write_atomically,
+    run_command,
+)
 from .scheduler import DEFAULT_SCHEDULER, JobState, Scheduler, get_scheduler
 from .stages import Stage, StageStatus
 
@@ -938,6 +945,63 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
 
         return to_cancel
 
+    def clean(
+        self,
+        stages: list[str] | None = None,
+        include_archive: bool = False,
+        cancel: bool = False,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """Clean (delete) directories and paths associated with input stages
+        (or all if None supplied)
+
+        with cancel, a job that was running may still be exiting; if the delete fails,
+        run clean again
+
+        Args:
+            stages (list[str] | None, optional): Input stages to clean. Defaults to None.
+                If None, cleans all stages
+            include_archive (bool, optional): Also clean the archive (DOUT_S_ROOT)
+                directories associated with these stages. Defaults to False.
+                The run directory is always cleaned.
+            cancel (bool, optional): If jobs are queued or running, cancel them first
+                instead of raising. Defaults to False.
+            dry_run (bool, optional): Do not actually delete anything, just list what would
+                be deleted. Defaults to False.
+
+        Raises:
+            ValueError: Some jobs are still running and cancel is False
+            ValueError if a name in stages isn't a stage of this run;
+            RuntimeError if the scheduler query or cancel fails, or xmlquery fails.
+
+        Returns:
+            list[Path]: List of paths cleaned or what would be cleaned (if dry_run=True)
+        """
+
+        selected = self._select_stages(stages)
+        active = [job for stage in selected for job in self._active_jobs(stage)]
+        if active and not cancel:
+            raise ValueError(
+                f"{self.run_id} has some jobs still queued or running: {active}. "
+                f"Cancel them first with "
+                f"`meristem run cancel --root {self.root}`, or clean with --cancel"
+            )
+
+        targets = self._clean_targets(stages, include_archive)
+        if dry_run:
+            return targets
+
+        if active:
+            self.scheduler.cancel(active)
+
+        for path in targets:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            elif path.exists() or path.is_symlink():
+                path.unlink()
+
+        return targets
+
     def _submit_stage(
         self,
         stage: Stage,
@@ -1132,6 +1196,65 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         )
         job_file.write_text(template, encoding="utf-8")
         return job_file
+
+    def _clean_targets(
+        self, stages: list[str] | None = None, include_archive: bool = False
+    ) -> list[Path]:
+        """Determine files and directories to delete
+
+        Args:
+            stages (list[str] | None, optional): stage names to clean. Defaults to None.
+                If None, cleans all stages.
+            include_archive (bool, optional): Whether or not to also delete the case
+                archive directory. Defaults to False.
+
+        Returns:
+            list[Path]: list of paths to delete
+        """
+
+        to_clean = []
+        selected = self._select_stages(stages)
+        for stage in selected:
+            case_root = self._case_root_for(stage)
+
+            if (case_root / "xmlquery").is_file():
+                variables = ["RUNDIR", "DOUT_S_ROOT"] if include_archive else ["RUNDIR"]
+                for var in variables:
+                    output = Path(
+                        run_command(["./xmlquery", var, "--value"], case_root)
+                    )
+                    # only a dir named for this case, never a shared one (e.g. EXEROOT)
+                    if case_root.name in output.parts and output.exists():
+                        to_clean.append(output)
+
+            if case_root.exists():
+                to_clean.append(case_root)
+
+            pattern = re.compile(
+                rf"^{re.escape(self.run_id)}_{re.escape(stage.config.name)}"
+                r"(_advance|_fail(_\d+)?)?\.(pbs|log)$"
+            )
+            for path in sorted(self.root.iterdir()):
+                if pattern.match(path.name):
+                    to_clean.append(path)
+
+        if stages is None and self.root not in to_clean:
+            to_clean.append(self.root)
+
+        return to_clean
+
+    def _select_stages(self, stages: list[str] | None = None) -> list[Stage]:
+        """Return a list of Stages given an input stage name list (or all stages in run)
+
+        Args:
+            stages (list[str] | None, optional): List of stage names. Defaults to None.
+
+        Returns:
+            list[Stage]: list of Stages for this run
+        """
+        if stages is None:
+            return list(self.stages)
+        return [self._stage(name) for name in stages]
 
 
 def _check_submittable(stage: Stage) -> None:

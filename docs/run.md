@@ -169,14 +169,28 @@ meristem run --root <path> --advance --stage <name>
 meristem run fail --root <path> --stage <name>
   Mark a stage as failed. Called automatically from the fail job
   and the setup job's error trap, or can be run manually.
-  
+
 meristem run cancel --root <path> [--dry-run]
-  Cancel all queued or running jobs associated with this run and then mark all
-  stages as failed; --dry-run just prints the job IDs of what would be canceled.
+  Cancel all queued or running jobs associated with this run and mark any
+  submitted stages as failed; --dry-run just prints the job IDs that would be canceled.
+
+meristem run clean --root <path> [--stage/--stages <name1> <name2> ...] [--cancel] [--dry-run] [--include-archive] [--yes]
+  Delete a run's files. With no --stage, deletes every stage's case directory and
+  CIME run directory (RUNDIR), then the whole run root, including the state file.
+  With --stage, deletes only those stages' case directories, run directories and
+  job scripts/logs; the run root and state file are kept, and the stages' status
+  is left as it is (use retry to rerun one).
+  --include-archive also deletes the stages' archive directories (DOUT_S_ROOT).
+  For safety, a RUNDIR or archive whose path doesn't contain the case name is
+  never deleted, and the build directory (EXEROOT) is never touched.
+  Lists what it will delete and asks for confirmation; --yes skips the question,
+  and --dry-run only lists. Refuses if any of the stages' jobs are queued or
+  running; --cancel cancels them first.
 ```
 
-Add `--dry-run` to any submission command to generate job scripts without calling `qsub`.
-A dry run doesn't change the run's state, so you can follow it with the real command.
+Add `--dry-run` to any submission command to generate job scripts (or print files to delete/jobs to cancel)
+without calling `qsub`. A dry run doesn't change the run's state, so you can follow it with the real command.
+
 Add `--debug` to any command to show the full traceback on errors.
 
 ### Lost stages

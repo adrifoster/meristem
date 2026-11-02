@@ -14,6 +14,8 @@ All other commands (many called automatically by pipeline):
     meristem run retry --root /path/to/run [--stage spinup_ad] [--skip-script] [--lost]
     meristem run status --root /path/to/run
     meristem run cancel --root /path/to/run [--dry-run]
+    meristem run clean --root /path/to/run [--stages spinup_ad] [--debug] [--dry-run] \
+        [--cancel] [--include-archive] [--yes]
 """
 
 import argparse
@@ -26,6 +28,7 @@ from .model_run import ModelRun
 EXIT_LOST = 3
 
 
+# pylint: disable-next=too-many-locals,too-many-statements
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser.
 
@@ -210,6 +213,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cancel.set_defaults(handler=cmd_cancel)
 
+    # meristem run clean --root R [--stages S [S...]] [--debug] [--dry-run] [--cancel] /
+    #  [--include-archive] [--yes]
+    clean = subparsers.add_parser(
+        "clean",
+        parents=[debug, root, dry_run],
+        help=(
+            "Clean (delete) directories and paths. This includes case directories, job "
+            "files, and run directories by default. To also include archive directories "
+            "supply --include-archive."
+        ),
+    )
+    clean.add_argument(
+        "--stage",
+        "--stages",
+        dest="stages",
+        nargs="+",
+        action="extend",
+        help=(
+            "Stages to clean (e.g. --stages spinup_ad transient). "
+            "Defaults to all if not present."
+        ),
+    )
+    clean.add_argument(
+        "--cancel",
+        action="store_true",
+        help="Cancel any queued or running jobs first.",
+    )
+    clean.add_argument(
+        "--include-archive",
+        action="store_true",
+        help="Also clean archive directories (DOUT_S_ROOT). The RUNDIR is always cleaned.",
+    )
+    clean.add_argument(
+        "--yes",
+        action="store_true",
+        help="Bypass prompt to confirm deleting files and proceed.",
+    )
+    clean.set_defaults(handler=cmd_clean)
+
     return parser
 
 
@@ -370,6 +412,57 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     if canceled and not args.dry_run:
         print(f"Canceled: {', '.join(canceled)}")
 
+    return 0
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Execute clean action and return a successful exit code
+
+    Args:
+        args (argparse.Namespace): parsed namespace from argparse
+
+    Returns:
+        int: 0 on success
+    """
+    run = ModelRun.load(Path(args.root))
+
+    targets = run.clean(
+        stages=args.stages,
+        include_archive=args.include_archive,
+        cancel=args.cancel,
+        dry_run=True,
+    )
+
+    if not targets:
+        print("Nothing to clean")
+        return 0
+
+    print("Will delete:")
+    print("------------")
+    for path in targets:
+        print(f"  {path}")
+
+    if args.cancel:
+        print("------------")
+        print("Running or queued jobs will be canceled first.")
+
+    if args.dry_run:
+        return 0
+
+    if not args.yes:
+        answer = input("Delete these? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Nothing deleted")
+            return 0
+
+    run.clean(
+        stages=args.stages,
+        include_archive=args.include_archive,
+        cancel=args.cancel,
+        dry_run=False,
+    )
+
+    print(f"Cleaned {len(targets)} files and directories.")
     return 0
 
 

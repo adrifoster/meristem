@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import json
 import shlex
 from collections import Counter
@@ -19,7 +18,7 @@ from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
 from meristem.run.stages import Stage, StageStatus
 from meristem.run.model_run import ModelRun
-from meristem.utils import write_atomically
+from meristem.utils import write_atomically, run_command
 
 # state file name
 _STATE_FILE = "ensemble_state.json"
@@ -609,7 +608,9 @@ class Ensemble:
 
         _check_case_script("xmlquery", self.base_case)
 
-        result = _run(["./xmlquery", "BUILD_COMPLETE", "--value"], self.base_case)
+        result = run_command(
+            ["./xmlquery", "BUILD_COMPLETE", "--value"], self.base_case
+        )
 
         if result.upper() != "TRUE":
             raise ValueError(
@@ -801,7 +802,7 @@ class Ensemble:
         """
         _check_case_script("preview_namelists", case_root)
         try:
-            _run(["./preview_namelists"], case_root)
+            run_command(["./preview_namelists"], case_root)
         except RuntimeError as exc:
             raise RuntimeError(f"preview_namelists failed: {exc}") from exc
 
@@ -898,7 +899,7 @@ class Ensemble:
         """
         _check_case_script("case.setup", case_root)
         try:
-            _run(["./case.setup"], case_root)
+            run_command(["./case.setup"], case_root)
         except RuntimeError as exc:
             raise RuntimeError(f"case.setup failed: {exc}") from exc
 
@@ -916,7 +917,9 @@ class Ensemble:
             was not successfully created
         """
 
-        cimeroot = Path(_run(["./xmlquery", "CIMEROOT", "--value"], self.base_case))
+        cimeroot = Path(
+            run_command(["./xmlquery", "CIMEROOT", "--value"], self.base_case)
+        )
         create_clone = cimeroot / "scripts" / "create_clone"
         if not create_clone.is_file() or not os.access(create_clone, os.X_OK):
             raise FileNotFoundError(
@@ -939,7 +942,7 @@ class Ensemble:
 
         self.case_dir.mkdir(parents=True, exist_ok=True)
         try:
-            _run(cmd, self.base_case)
+            run_command(cmd, self.base_case)
         except RuntimeError as exc:
             leftover = (
                 f" It left a partial {case_root}; remove it before retrying."
@@ -1046,7 +1049,7 @@ def _archive_dir(case_root: str | None) -> str | None:
     ):
         return None
     try:
-        return _run(["./xmlquery", "DOUT_S_ROOT", "--value"], Path(case_root))
+        return run_command(["./xmlquery", "DOUT_S_ROOT", "--value"], Path(case_root))
     except (RuntimeError, OSError):
         return None
 
@@ -1124,7 +1127,7 @@ def _is_existing_case(case_root: Path) -> bool:
             f"{case_root} exists but is not a complete CIME case; {hint}"
         )
     try:
-        case = _run(["./xmlquery", "CASE", "--value"], case_root)
+        case = run_command(["./xmlquery", "CASE", "--value"], case_root)
     except RuntimeError as exc:
         raise FileExistsError(
             f"{case_root} exists but xmlquery CASE failed ({exc}); {hint}"
@@ -1135,34 +1138,3 @@ def _is_existing_case(case_root: Path) -> bool:
             f"{hint}"
         )
     return True
-
-
-def _run(cmd: list[str] | str, cwd: Path) -> str:
-    """Wrapper for subprocess calls
-
-    Args:
-        cmd (list[str] | str): input command
-        cwd (Path): working directory for command
-
-    Raises:
-        RuntimeError: Command gave non-zero exit status
-
-    Returns:
-        str: output from command
-    """
-
-    result = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"command {cmd} failed in {cwd} "
-            f"(exit {result.returncode}): "
-            f"{result.stderr.strip() or result.stdout.strip()}"
-        )
-    return result.stdout.strip()

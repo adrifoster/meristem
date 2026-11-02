@@ -58,11 +58,16 @@ def fake(tmp_path):
 def meristem(fake):
     """Fake meristem CLI"""
 
-    def _meristem(*args):
-        """Runs the meristem CLI a way a user would, but with the fake environment"""
+    def _meristem(*args, stdin: str = ""):
+        """Runs the meristem CLI a way a user would, but with the fake environment
+
+        stdin is what the user types at any prompt (empty by default, so a
+        prompt reads EOF instead of waiting on the terminal)
+        """
         return subprocess.run(
             [sys.executable, "-m", "meristem", *args],
             env=fake.env,
+            input=stdin,
             capture_output=True,
             text=True,
             check=False,

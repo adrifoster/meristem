@@ -645,3 +645,71 @@ def test_canceled_setup_job_is_failed_then_retry(make_run, fake, meristem):
     line = next(l for l in result.stdout.splitlines()[1:] if "stage1" in l)
     assert "✓" in line
     assert "attempts=2" in line
+
+
+def test_clean_whole_run(make_run, fake, meristem):
+    """Test that cleaning a finished run deletes its root, case dirs and run
+    dirs, and that a dry run or a declined prompt deletes nothing first
+    """
+    root = make_run([{"name": "stage1"}, {"name": "stage2"}])
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    fake.run_until_idle()
+    rundirs = [root / "scratch" / name / "run" for name in ("stage1", "stage2")]
+    assert all(rundir.is_dir() for rundir in rundirs)
+
+    result = meristem("run", "clean", "--root", str(root), "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert str(root / "stage1") in result.stdout
+    assert str(rundirs[0]) in result.stdout
+    assert root.is_dir()
+
+    result = meristem("run", "clean", "--root", str(root), stdin="n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Nothing deleted" in result.stdout
+    assert root.is_dir()
+
+    result = meristem("run", "clean", "--root", str(root), stdin="y\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+
+
+def test_clean_one_stage(make_run, fake, meristem):
+    """Test that cleaning one stage of a finished run deletes only that stage's
+    case dir, run dir and job files, and leaves the run's state alone
+    """
+    root = make_run([{"name": "stage1"}, {"name": "stage2"}])
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    fake.run_until_idle()
+    before = _stage_states(root)
+
+    result = meristem("run", "clean", "--root", str(root), "--stage", "stage1", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    assert not (root / "stage1").exists()
+    assert not (root / "scratch" / "stage1" / "run").exists()
+    assert not list(root.glob("e2e_test_stage1*"))
+    assert (root / "stage2").is_dir()
+    assert (root / "scratch" / "stage2" / "run").is_dir()
+    assert list(root.glob("e2e_test_stage2*"))
+    assert _stage_states(root) == before
+
+
+def test_clean_refuses_active_jobs(make_run, fake, meristem):
+    """Test that clean refuses (naming the jobs) while a job is queued, and
+    with --cancel cancels it and then cleans
+    """
+    root = make_run([{"name": "stage1"}])
+    assert meristem("run", "submit", "--root", str(root)).returncode == 0
+    setup = fake.jobs()[0]
+    assert setup["state"] == "Q"
+
+    result = meristem("run", "clean", "--root", str(root), "--yes")
+    assert result.returncode == 1
+    assert setup["id"] in result.stderr
+    assert root.is_dir()
+    assert fake.jobs()[0]["state"] == "Q"
+
+    result = meristem("run", "clean", "--root", str(root), "--cancel", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fake.jobs()[0]["deleted"]
+    assert not root.exists()

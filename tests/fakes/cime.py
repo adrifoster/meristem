@@ -19,6 +19,7 @@ ACCEPTED_KEYS = (
     "JOB_IDS",
     "PROJECT",
     "DOUT_S_ROOT",
+    "RUNDIR",
 )
 
 
@@ -58,12 +59,17 @@ def create_newcase(case_root: Path) -> int:
     user_nl_clm_file = case_root / "user_nl_clm"
     user_nl_clm_file.write_text("! user_nl_clm\n", encoding="utf-8")
 
+    # like CIME's scratch layout (<scratch>/<case>/run), outside the case dir
+    rundir = case_root.parent / "scratch" / case_root.name / "run"
+    rundir.mkdir(parents=True, exist_ok=True)
+
     case_dict = {
         "CASE": case_root.name,
         "BUILD_COMPLETE": False,
         "CIMEROOT": "",
         "JOB_IDS": None,
         "DOUT_S_ROOT": str(case_root / "archive"),
+        "RUNDIR": str(rundir),
     }
     (case_root / CASE_DICT_FILE).write_text(
         json.dumps(case_dict, indent=2), encoding="utf-8"

@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -123,6 +124,37 @@ def write_atomically(path: Path, text: str) -> None:
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def run_command(cmd: list[str] | str, cwd: Path) -> str:
+    """Wrapper for subprocess calls
+
+    Args:
+        cmd (list[str] | str): input command
+        cwd (Path): working directory for command
+
+    Raises:
+        RuntimeError: Command gave non-zero exit status
+
+    Returns:
+        str: output from command
+    """
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"command {cmd} failed in {cwd} "
+            f"(exit {result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result.stdout.strip()
 
 
 def _umask() -> int:

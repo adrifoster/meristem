@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import call
+
 import pytest
 
 from meristem.run.cli import (
@@ -16,6 +19,7 @@ from meristem.run.cli import (
     cmd_submit_advance,
     cmd_submit_fail,
     cmd_cancel,
+    cmd_clean,
     main,
 )
 
@@ -84,6 +88,7 @@ SUBMIT_FAIL_ARGV = [
         (["retry", "--root", "/tmp/run"], cmd_retry),
         (["status", "--root", "/tmp/run"], cmd_status),
         (["cancel", "--root", "/tmp/run"], cmd_cancel),
+        (["clean", "--root", "/tmp/run"], cmd_clean),
     ],
 )
 def test_parser_subcommand_sets_handler(argv, handler):
@@ -139,6 +144,7 @@ def test_parser_submit_advance_cime_job_id_is_a_string():
         ["status"],  # missing --root
         ["retry"],  # missing --root
         ["cancel"],  # missing --root
+        ["clean"],  # missing --root
         ["advance", "--root", "/tmp/run"],  # missing --stage
         ["fail", "--root", "/tmp/run"],  # missing --stage
         SUBMIT_ADVANCE_ARGV[:-2],  # missing --cime-job-id
@@ -450,3 +456,125 @@ def test_cancel_calls_cancel(mock_run, capsys, dry_run):
         assert "Canceled:" not in out
     else:
         assert "Canceled: 12345.pbs" in out
+
+
+# clean
+
+CLEAN_ARGV = ["clean", "--root", "/tmp/run"]
+CLEAN_TARGETS = [Path("/tmp/run/spinup_ad"), Path("/tmp/run")]
+
+
+@pytest.fixture
+def mock_clean_run(mock_run):
+    """mock_run whose clean returns CLEAN_TARGETS"""
+    mock_run.clean.return_value = CLEAN_TARGETS
+    return mock_run
+
+
+def _no_input(_prompt=""):
+    """Stand-in for input() in tests where the prompt must not be shown"""
+    raise AssertionError("input() should not be called")
+
+
+def _clean_call(dry_run, stages=None, include_archive=False, cancel=False):
+    """The call cmd_clean should make to ModelRun.clean"""
+    return call(
+        stages=stages, include_archive=include_archive, cancel=cancel, dry_run=dry_run
+    )
+
+
+def test_parser_clean_defaults():
+    """Test that clean's options default to all stages and nothing extra"""
+    args = build_parser().parse_args(CLEAN_ARGV)
+    assert args.stages is None
+    assert not args.cancel
+    assert not args.include_archive
+    assert not args.yes
+    assert not args.dry_run
+
+
+def test_parser_clean_accepts_optional_args():
+    """Test that clean accepts --stage(s), --cancel, --include-archive and --yes"""
+    args = build_parser().parse_args(
+        CLEAN_ARGV
+        + ["--stage", "a", "b", "--stages", "c"]
+        + ["--cancel", "--include-archive", "--yes"]
+    )
+    assert args.stages == ["a", "b", "c"]
+    assert args.cancel
+    assert args.include_archive
+    assert args.yes
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_dry_run_only_previews(mock_clean_run, monkeypatch, capsys):
+    """Test that --dry-run lists the paths without asking or deleting"""
+    monkeypatch.setattr("builtins.input", _no_input)
+    assert main(CLEAN_ARGV + ["--dry-run"]) == 0
+    assert mock_clean_run.clean.call_args_list == [_clean_call(dry_run=True)]
+    out = capsys.readouterr().out
+    assert all(str(path) in out for path in CLEAN_TARGETS)
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize("answer", ["n", "", "no", "maybe"])
+def test_clean_declined_deletes_nothing(mock_clean_run, monkeypatch, capsys, answer):
+    """Test that anything but y/yes at the prompt deletes nothing"""
+    monkeypatch.setattr("builtins.input", lambda _prompt="": answer)
+    assert main(CLEAN_ARGV) == 0
+    assert mock_clean_run.clean.call_args_list == [_clean_call(dry_run=True)]
+    assert "Nothing deleted" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize("answer", ["y", "yes", " Y "])
+def test_clean_confirmed_deletes(mock_clean_run, monkeypatch, capsys, answer):
+    """Test that y/yes at the prompt previews, then cleans for real"""
+    monkeypatch.setattr("builtins.input", lambda _prompt="": answer)
+    assert main(CLEAN_ARGV) == 0
+    assert mock_clean_run.clean.call_args_list == [
+        _clean_call(dry_run=True),
+        _clean_call(dry_run=False),
+    ]
+    assert "Cleaned 2" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_yes_skips_prompt(mock_clean_run, monkeypatch):
+    """Test that --yes cleans without asking, passing the options through"""
+    monkeypatch.setattr("builtins.input", _no_input)
+    argv = CLEAN_ARGV + ["--stage", "spinup_ad", "--include-archive", "--yes"]
+    assert main(argv) == 0
+    options = {"stages": ["spinup_ad"], "include_archive": True}
+    assert mock_clean_run.clean.call_args_list == [
+        _clean_call(dry_run=True, **options),
+        _clean_call(dry_run=False, **options),
+    ]
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_cancel_says_jobs_will_be_canceled(mock_clean_run, capsys):
+    """Test that --cancel is passed through and the preview says so"""
+    assert main(CLEAN_ARGV + ["--cancel", "--dry-run"]) == 0
+    assert mock_clean_run.clean.call_args_list == [
+        _clean_call(dry_run=True, cancel=True)
+    ]
+    assert "canceled first" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_nothing_to_clean(mock_run, monkeypatch, capsys):
+    """Test that an empty preview says so and neither asks nor cleans"""
+    mock_run.clean.return_value = []
+    monkeypatch.setattr("builtins.input", _no_input)
+    assert main(CLEAN_ARGV) == 0
+    assert mock_run.clean.call_count == 1
+    assert "Nothing to clean" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_error_exits_one(mock_run, capsys):
+    """Test that a refused clean (e.g. jobs still active) exits 1 with the error"""
+    mock_run.clean.side_effect = ValueError("jobs still queued or running")
+    assert main(CLEAN_ARGV) == 1
+    assert "ERROR: jobs still queued or running" in capsys.readouterr().err

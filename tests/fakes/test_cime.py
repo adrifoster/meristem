@@ -98,6 +98,9 @@ def test_create_newcase_makes_case_files(tmp_path, monkeypatch):
     assert case_dict["CASE"] == "case"
     assert case_dict["BUILD_COMPLETE"] is False
     assert case_dict["DOUT_S_ROOT"] == str(case_root / "archive")
+    rundir = tmp_path / "scratch" / "case" / "run"
+    assert case_dict["RUNDIR"] == str(rundir)
+    assert rundir.is_dir()
 
 
 def test_create_newcase_writes_faults_from_env(tmp_path, monkeypatch):
