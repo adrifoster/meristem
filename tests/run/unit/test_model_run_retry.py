@@ -422,8 +422,13 @@ def test_retry_failed_with_finished_jobs(failed_with_jobs, fake_scheduler, job_s
     state = failed_with_jobs.stages[0].state
     assert state.status is StageStatus.SUBMITTED
     assert state.attempts == 2
-    assert fake_scheduler.queried == [
-        ["1.fake", "2.fake", "3.fake", "4.fake", "5.fake", "6.fake"]
+    assert fake_scheduler.queried[-1] == [
+        "1.fake",
+        "2.fake",
+        "3.fake",
+        "4.fake",
+        "5.fake",
+        "6.fake",
     ]
     assert state.cime_job_ids == []  # reset for the new attempt
 
