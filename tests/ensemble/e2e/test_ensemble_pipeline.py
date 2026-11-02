@@ -305,3 +305,133 @@ def test_killed_setup_job_is_lost_then_retry_lost(make_ensemble, fake, meristem)
     assert result.returncode == 0, result.stdout + result.stderr
     status = Ensemble.load(root).status()
     assert (status["status"] == "done").all(), fake.logs()
+
+
+def _rundir(case_root: Path) -> Path:
+    """Where the fake CIME puts a case's RUNDIR (<case_dir>/scratch/<case>/run)"""
+    return case_root.parent / "scratch" / case_root.name / "run"
+
+
+def test_clean_member_then_whole_ensemble(run_ensemble, meristem, members):
+    """Test that cleaning one member deletes only its clone and run dir and
+    keeps the ensemble working, and that cleaning everything removes the root
+    but not the base case or the paramgen output
+    """
+    root = run_ensemble()
+    ensemble = Ensemble.load(root)
+    case_roots = {
+        str(row.member): Path(str(row.case_root))
+        for row in ensemble.status().itertuples()
+    }
+    assert all(_rundir(c).is_dir() for c in case_roots.values())
+    cleaned, kept = members[0], members[1:]
+
+    result = meristem(
+        "ensemble", "clean", "--root", str(root), "--members", cleaned, "--yes"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not case_roots[cleaned].exists()
+    assert not _rundir(case_roots[cleaned]).exists()
+    for member in kept:
+        assert case_roots[member].is_dir()
+        assert _rundir(case_roots[member]).is_dir()
+    result = meristem("ensemble", "status", "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{len(members)} members" in result.stdout
+
+    result = meristem("ensemble", "clean", "--root", str(root), "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert str(root) in result.stdout
+    assert all(str(case_roots[m]) in result.stdout for m in kept)
+    assert root.is_dir()
+
+    result = meristem("ensemble", "clean", "--root", str(root), stdin="n\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Nothing deleted" in result.stdout
+    assert root.is_dir()
+
+    result = meristem("ensemble", "clean", "--root", str(root), stdin="y\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert not any(c.exists() for c in case_roots.values())
+    assert ensemble.base_case.is_dir()
+    assert ensemble.config.paramgen_dir.is_dir()
+
+
+def test_clean_refused_while_queued_then_cancel_and_retry(
+    make_ensemble, fake, meristem
+):
+    """Test that clean refuses while members' jobs are queued, that cancel
+    stops them and marks the stages failed, and that retry --failed then runs
+    every member to done
+    """
+    root = make_ensemble()
+    assert meristem("ensemble", "submit", "--root", str(root)).returncode == 0
+    queued = [j["id"] for j in fake.jobs()]
+    assert all(j["state"] == "Q" for j in fake.jobs())
+
+    result = meristem("ensemble", "clean", "--root", str(root), "--yes")
+    assert result.returncode == 1
+    assert queued[0] in result.stderr
+    assert root.is_dir()
+
+    result = meristem("ensemble", "clean", "--root", str(root), "--cancel", "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert all(j["state"] == "Q" for j in fake.jobs())
+
+    result = meristem("ensemble", "cancel", "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"canceled {len(queued)} jobs in {len(queued)} members" in result.stdout
+    assert all(j["deleted"] for j in fake.jobs())
+    status = Ensemble.load(root).status()
+    assert (status["status"] == "failed").all()
+
+    result = meristem("ensemble", "retry", "--root", str(root), "--failed")
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+    status = Ensemble.load(root).status()
+    assert (status["status"] == "done").all(), fake.logs()
+
+
+def test_clean_member_with_cancel_then_retry_failed(make_ensemble, fake, meristem):
+    """Test that cleaning a queued member with --cancel cancels its job and
+    marks it failed (not lost), so retry --failed runs it to done
+    """
+    cleaned = "ens_0001"
+    root = make_ensemble()
+    assert meristem("ensemble", "submit", "--root", str(root)).returncode == 0
+
+    result = meristem(
+        "ensemble",
+        "clean",
+        "--root",
+        str(root),
+        "--members",
+        cleaned,
+        "--cancel",
+        "--yes",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    deleted = [j["name"] for j in fake.jobs() if j["deleted"]]
+    assert deleted == [f"my_ens-1_{cleaned}_spinup_ad"]
+    status = Ensemble.load(root).status().set_index("member")["status"]
+    assert status[cleaned] == "failed"
+
+    fake.run_until_idle()
+    result = meristem("ensemble", "retry", "--root", str(root), "--failed")
+    assert result.returncode == 0, result.stdout + result.stderr
+    fake.run_until_idle()
+    status = Ensemble.load(root).status()
+    assert (status["status"] == "done").all(), fake.logs()
+
+
+def test_clean_cancel_whole_ensemble(make_ensemble, fake, meristem, fake_base_case):
+    """Test that clean --cancel cancels the queued jobs and deletes everything"""
+    root = make_ensemble()
+    assert meristem("ensemble", "submit", "--root", str(root)).returncode == 0
+
+    result = meristem("ensemble", "clean", "--root", str(root), "--cancel", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert all(j["deleted"] for j in fake.jobs())
+    assert not root.exists()
+    assert fake_base_case.is_dir()

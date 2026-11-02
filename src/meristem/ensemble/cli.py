@@ -13,6 +13,7 @@ from .model_ensemble import Ensemble
 EXIT_LOST = 3
 
 
+# pylint: disable-next=too-many-locals,too-many-statements
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser"""
     parser = argparse.ArgumentParser(
@@ -172,6 +173,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cancel.set_defaults(handler=cmd_cancel)
 
+    # meristem ensemble clean --root R [--members M [M...]] [--stages S [S...]] /
+    #   [--include-archive] [--cancel] [--yes] [--debug] [--dry-run]
+    clean = subparsers.add_parser(
+        "clean",
+        parents=[debug, root, dry_run],
+        help="Clean (delete) directories and paths across selected (or all) members/stages. "
+        "This includes case directories, job files, and run directories by default. "
+        "To also include archive directories supply --include-archive. "
+        "Cleaning only some members or stages keeps their state files.",
+    )
+    clean.add_argument(
+        "--member",
+        "--members",
+        dest="members",
+        nargs="+",
+        action="extend",
+        help="Members to clean (e.g. --members 0001 0002). If not present, defaults to all.",
+    )
+    clean.add_argument(
+        "--stage",
+        "--stages",
+        dest="stages",
+        nargs="+",
+        action="extend",
+        help=(
+            "Stages to clean (e.g. --stages spinup_ad transient). "
+            "Defaults to all if not present."
+        ),
+    )
+    clean.add_argument(
+        "--cancel",
+        action="store_true",
+        help=(
+            "Cancel the selected members' queued or running jobs first, marking "
+            "their submitted stages failed (as `meristem ensemble cancel` does)."
+        ),
+    )
+    clean.add_argument(
+        "--include-archive",
+        action="store_true",
+        help="Also clean archive directories (DOUT_S_ROOT). The RUNDIR is always cleaned.",
+    )
+    clean.add_argument(
+        "--yes",
+        action="store_true",
+        help="Bypass prompt to confirm deleting files and proceed.",
+    )
+    clean.set_defaults(handler=cmd_clean)
+
     return parser
 
 
@@ -242,6 +292,56 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     ensemble.cancel(
         members=args.members,
         dry_run=args.dry_run,
+    )
+    return 0
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Execute clean and return an exit code"""
+    ensemble = Ensemble.load(Path(args.root))
+
+    targets = ensemble.clean(
+        members=args.members,
+        stages=args.stages,
+        include_archive=args.include_archive,
+        cancel=args.cancel,
+        dry_run=True,
+    )
+
+    if not targets:
+        print("Nothing to clean")
+        return 0
+
+    if args.dry_run:
+        print("Will delete:")
+        print("------------")
+        for path in targets:
+            print(f"  {path}")
+        return 0
+
+    print(f"Will delete {len(targets)} paths, e.g.:")
+    for path in targets[:5]:
+        print(f"  {path}")
+    if args.members is None and args.stages is None:
+        print(f"...including the ensemble root {ensemble.root}")
+
+    if args.cancel:
+        print("Running or queued jobs will be canceled first.")
+
+    print("Run with --dry-run to see every path.")
+
+    if not args.yes:
+        answer = input("Delete these? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Nothing deleted")
+            return 0
+
+    ensemble.clean(
+        members=args.members,
+        stages=args.stages,
+        include_archive=args.include_archive,
+        cancel=args.cancel,
+        dry_run=False,
     )
     return 0
 

@@ -179,13 +179,14 @@ meristem run clean --root <path> [--stage/--stages <name1> <name2> ...] [--cance
   CIME run directory (RUNDIR), then the whole run root, including the state file.
   With --stage, deletes only those stages' case directories, run directories and
   job scripts/logs; the run root and state file are kept, and the stages' status
-  is left as it is (use retry to rerun one).
+  is left as it is (use retry to rerun one), unless --cancel cancels their jobs.
   --include-archive also deletes the stages' archive directories (DOUT_S_ROOT).
   For safety, a RUNDIR or archive whose path doesn't contain the case name is
   never deleted, and the build directory (EXEROOT) is never touched.
   Lists what it will delete and asks for confirmation; --yes skips the question,
   and --dry-run only lists. Refuses if any of the stages' jobs are queued or
-  running; --cancel cancels them first.
+  running; --cancel first cancels the run's queued or running jobs and marks
+  submitted stages as failed, exactly as `meristem run cancel` does.
 ```
 
 Add `--dry-run` to any submission command to generate job scripts (or print files to delete/jobs to cancel)

@@ -238,7 +238,10 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument(
         "--cancel",
         action="store_true",
-        help="Cancel any queued or running jobs first.",
+        help=(
+            "Cancel any queued or running jobs first, marking submitted stages "
+            "failed (as `meristem run cancel` does)."
+        ),
     )
     clean.add_argument(
         "--include-archive",

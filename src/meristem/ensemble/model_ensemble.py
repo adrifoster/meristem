@@ -6,6 +6,7 @@ import os
 import re
 import json
 import shlex
+import shutil
 from collections import Counter
 from pathlib import Path
 from dataclasses import replace
@@ -64,6 +65,11 @@ class Ensemble:
     def case_dir(self) -> Path:
         """Directory where member clones are created"""
         return self.config.case_dir
+
+    @property
+    def stage_names(self) -> list[str]:
+        """Names of the member stages, in order"""
+        return [s.name for s in self.config.member_stages]
 
     @classmethod
     def create(cls, config: EnsembleConfig | dict | Path | str) -> Ensemble:
@@ -227,12 +233,8 @@ class Ensemble:
                 "(--failed / --lost), or name what to resubmit with members=... "
                 "and/or stage=... (--member / --stage)."
             )
-
-        stage_names = [s.name for s in self.config.member_stages]
-        if stage is not None and stage not in stage_names:
-            raise ValueError(
-                f"unknown member stage {stage!r}; member stages are {stage_names}."
-            )
+        if stage is not None:
+            self._check_stages([stage])
 
         selected = list(self.param_files) if members is None else members
         self._check_param_files(selected)
@@ -269,12 +271,7 @@ class Ensemble:
         Returns:
             dict[str, list[str]]: dictionary with member: job_ids
         """
-        if members is not None:
-            self._check_members(members)
-            selected = members
-        else:
-            selected = list(self.param_files)
-
+        selected = self._select_members(members)
         with redirect_stdout(io.StringIO()):
             job_ids = {}
             for member in selected:
@@ -294,6 +291,99 @@ class Ensemble:
         )
 
         return job_ids
+
+    def clean(
+        self,
+        members: list[str] | None = None,
+        stages: list[str] | None = None,
+        include_archive: bool = False,
+        cancel: bool = False,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """Clean (delete) directories and paths associated with input members and stages
+        (or all if None supplied)
+
+        Cleaning only some members or stages keeps each member's state, while a whole-ensemble
+        clean deletes <root>, including any manifest.csv there. With cancel, the
+        selected members' active jobs are canceled first and their submitted stages
+        marked failed (as in cancel), so retry --failed can rerun them.
+
+        Args:
+            members (list[str] | None, optional): Optional members to clean.
+                Defaults to None. If None, cleans all members.
+            stages (list[str] | None, optional): Optional stages to clean.
+                Defaults to None. If None, cleans all stages.
+            include_archive (bool, optional): Also clean the archive (DOUT_S_ROOT)
+                directories associated with these stages. Defaults to False.
+                The run directory is always cleaned.
+            cancel (bool, optional): If jobs are queued or running, cancel them first
+                (marking submitted stages failed) instead of raising. Defaults to False.
+            dry_run (bool, optional): Do not actually delete anything, just list what would
+                be deleted. Defaults to False.
+
+        Raises:
+            ValueError: Unknown member stages
+            ValueError: Some members still have jobs running or queued
+            FileNotFoundError: a member's run directory is missing
+            RuntimeError: qstat/qdel/xmlquery failed
+
+        Returns:
+            list[Path]: list of cleaned files/directories
+        """
+        selected = self._select_members(members)
+
+        if stages is not None:
+            self._check_stages(stages)
+
+        whole = members is None and stages is None
+        if whole:
+            run_stages = None
+        else:
+            run_stages = stages or self.stage_names
+
+        targets: list[Path] = []
+        blocked: list[str] = []
+        with redirect_stdout(io.StringIO()):
+            for member in selected:
+                try:
+                    targets += self.member_run(member).clean(
+                        stages=run_stages,
+                        include_archive=include_archive,
+                        cancel=cancel,
+                        dry_run=True,
+                    )
+                except ValueError as exc:
+                    blocked.append(f"{member}: {exc}")
+
+        if blocked:
+            raise ValueError(
+                _preview(blocked),
+            )
+
+        if whole:
+            targets.append(self.root)
+
+        if dry_run:
+            return targets
+
+        targets = []
+        with redirect_stdout(io.StringIO()):
+            for member in selected:
+                targets += self.member_run(member).clean(
+                    stages=run_stages,
+                    include_archive=include_archive,
+                    cancel=cancel,
+                    dry_run=False,
+                )
+        if whole:
+            shutil.rmtree(self.root)
+            targets.append(self.root)
+
+        print(
+            f"{self.config.ensemble_id}: cleaned {len(targets)} paths "
+            f"in {len(selected)} members"
+        )
+        return targets
 
     def status(
         self, members: list[str] | None = None, check_queue: bool = False
@@ -364,7 +454,6 @@ class Ensemble:
         Returns:
             str: status text
         """
-        stages = [s.name for s in self.config.member_stages]
         columns = [
             c for c in _STATUS_ORDER if c != "lost" or "lost" in set(status["status"])
         ]
@@ -372,7 +461,7 @@ class Ensemble:
             status.groupby(["stage", "status"])
             .size()
             .unstack(fill_value=0)
-            .reindex(index=stages, columns=columns, fill_value=0)
+            .reindex(index=self.stage_names, columns=columns, fill_value=0)
             .rename_axis(index=None, columns=None)
         )
         lines = [
@@ -407,7 +496,7 @@ class Ensemble:
         status = self.status()
         wide = pd.DataFrame({"member": list(self.param_files)})
         wide["param_file"] = [str(p) for p in self.param_files.values()]
-        for stage in [s.name for s in self.config.member_stages]:
+        for stage in self.stage_names:
             part = status[status["stage"] == stage].drop(columns="stage")
             part = part.set_index("member")
             part.columns = [f"{stage}_{c}" for c in part.columns]
@@ -421,6 +510,36 @@ class Ensemble:
             )
             wide = key.merge(wide, on="member", how="right")
         return wide
+
+    def _select_members(self, members: list[str] | None = None) -> list[str]:
+        """Return select members or all members, checking for errors
+
+        Args:
+            members (list[str]): input member list
+
+        Returns:
+            list[str]: verified member list
+        """
+        if members is not None:
+            self._check_members(members)
+            return members
+        return list(self.param_files)
+
+    def _check_stages(self, stages: list[str]):
+        """Check that input stages are actually in the ensemble
+
+        Args:
+            stages (list[str]): input list of stage names
+
+        Raises:
+            ValueError: Unknown member stages
+        """
+        unknown = [s for s in stages if s not in self.stage_names]
+        if unknown:
+            names = ", ".join(repr(s) for s in unknown)
+            raise ValueError(
+                f"unknown member stage {names}; member stages are {self.stage_names}."
+            )
 
     def _find_retries(
         self, runs: dict[str, ModelRun], stage: str | None, lost: bool, failed: bool
@@ -896,11 +1015,7 @@ class Ensemble:
             ValueError: unknown member stage or member
             FileNotFoundError: the member's parameter file is missing
         """
-        stage_names = [s.name for s in self.config.member_stages]
-        if stage not in stage_names:
-            raise ValueError(
-                f"unknown member stage {stage!r}; member stages are {stage_names}."
-            )
+        self._check_stages([stage])
         self._check_param_files([member])
 
     def _check_stage(self, member: str, stage: str):

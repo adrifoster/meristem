@@ -48,7 +48,8 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 
 `status` shows the state of every member and stage, `retry` resubmits failed or lost stages,
 `cancel` stops members' queued or running jobs (marking their stages failed, so `retry --failed`
-resubmits them later), and `manifest` writes a CSV listing the members. See
+resubmits them later), `manifest` writes a CSV listing the members, and `clean` deletes the
+clones and other files of some or all members once you no longer need them. See
 [Quick start](#quick-start) for how to use them.
 
 ### Where things live
@@ -179,8 +180,34 @@ meristem ensemble cancel --root /glade/derecho/scratch/user/morris_test
 
 This cancels the queued or running jobs (setup, CIME, advance and fail) of every member, or only
 the members named with `--members 0001 0002`, and marks the stages that were running as failed.
-Add `--dry-run` to see what would be cancelled without cancelling anything. To pick the members up
-again later, use `meristem ensemble retry --failed`.
+Use `--dry-run` to see what would be cancelled without actually cancelling anything. To run the
+members again later, use `meristem ensemble retry --failed`.
+
+### 8. Clean
+
+```bash
+meristem ensemble clean --root /glade/derecho/scratch/user/morris_test
+```
+
+With no options, this deletes the whole ensemble: every member's clones and their CIME run
+directories (RUNDIR), then the ensemble root itself, including the state files, job scripts, logs
+and any `manifest.csv` there (write the manifest somewhere else first with `-o` if you want to keep
+it). The base case, the paramgen directory and a `case_dir` outside the root are left in place;
+only the clones inside `case_dir` are deleted.
+
+To clean part of the ensemble, name members with `--members 0001 0002` and/or stages with
+`--stages spinup transient`. Only those member stages' clones, run directories and job scripts/logs
+are deleted. The members' state files are kept, so `status`, `manifest` and `retry` still work, and
+the stages' status is left as it is (use `retry` to rerun one).
+
+Add `--include-archive` to also delete the clones' archive directories (`DOUT_S_ROOT`). For safety,
+a RUNDIR or archive whose path doesn't contain the clone's case name is never deleted, and the
+build directory (`EXEROOT`, shared with the base case through `--keepexe`) is never touched.
+
+`clean` shows how many paths it will delete, with a few examples, and asks for confirmation;
+`--yes` skips the question. `--dry-run` lists every path and deletes nothing. If any selected
+member has jobs queued or running, `clean` refuses and deletes nothing in any member; add
+`--cancel` to cancel those jobs first, which marks their stages failed just as `cancel` does.
 
 ----
 
@@ -244,6 +271,25 @@ meristem ensemble cancel --root <path> [--members <m1> <m2> ...] [--dry-run]
   Cancel the queued or running jobs of every member (or those named) and mark their
   submitted stages as failed; --dry-run just reports what would be cancelled.
 
+meristem ensemble clean --root <path> [--members <m1> <m2> ...] [--stage/--stages <name1> <name2> ...]
+        [--include-archive] [--cancel] [--dry-run] [--yes]
+  Delete an ensemble's files. With neither --members nor --stages, deletes every
+  member's clones and CIME run directories (RUNDIR), then the whole ensemble root,
+  including the state files and any manifest.csv there.
+  With --members and/or --stages, deletes only those member stages' clones, run
+  directories and job scripts/logs; the members' state files are kept, and the
+  stages' status is left as it is (use retry to rerun one), unless --cancel
+  cancels their jobs.
+  --include-archive also deletes the clones' archive directories (DOUT_S_ROOT).
+  The base case, the paramgen directory and case_dir itself are never deleted.
+  For safety, a RUNDIR or archive whose path doesn't contain the case name is
+  never deleted, and the build directory (EXEROOT) is never touched.
+  Shows a summary of what it will delete and asks for confirmation; --yes skips
+  the question, and --dry-run lists every path without deleting anything.
+  Refuses, deleting nothing, if any selected member's jobs are queued or running;
+  --cancel first cancels them and marks their submitted stages as failed,
+  exactly as `meristem ensemble cancel` does.
+
 meristem ensemble manifest --root <path> [-o <file>]
   Write a CSV with one row per member (default <root>/manifest.csv).
 
@@ -256,7 +302,8 @@ meristem ensemble finalize --root <path> --member <member> --stage <name>
   from inside the setup job; not typically run manually.
 ```
 
-Add `--dry-run` to `submit` or `retry` to write the job scripts without calling `qsub`, or to
-`cancel` to see what would be cancelled. A dry run doesn't change the ensemble's state.
+Add `--dry-run` to `submit` or `retry` to write the job scripts without calling `qsub`, to
+`cancel` to see what would be cancelled, or to `clean` to see what would be deleted. A dry run
+doesn't change the ensemble's state.
 
 Add `--debug` to any command to show the full traceback on errors.

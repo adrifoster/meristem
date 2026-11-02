@@ -965,7 +965,9 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
                 directories associated with these stages. Defaults to False.
                 The run directory is always cleaned.
             cancel (bool, optional): If jobs are queued or running, cancel them first
-                instead of raising. Defaults to False.
+                instead of raising, as `cancel` does: every queued or running job of
+                the run is canceled and submitted stages are marked failed.
+                Defaults to False.
             dry_run (bool, optional): Do not actually delete anything, just list what would
                 be deleted. Defaults to False.
 
@@ -992,7 +994,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             return targets
 
         if active:
-            self.scheduler.cancel(active)
+            self.cancel()
 
         for path in targets:
             if path.is_dir() and not path.is_symlink():

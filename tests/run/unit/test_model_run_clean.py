@@ -8,6 +8,7 @@ import pytest
 
 from meristem.run.model_run import ModelRun
 from meristem.run.scheduler import JobState
+from meristem.run.stages import StageStatus
 
 # pylint: disable=protected-access
 
@@ -256,6 +257,25 @@ def test_clean_cancel(created_run, fake_scheduler):
 
     assert fake_scheduler.canceled == [[job_id]]
     assert not created_run.root.exists()
+
+
+def test_clean_one_stage_cancel_marks_it_failed(two_stage_run, fake_scheduler):
+    """Test that cleaning a submitted stage with cancel marks it failed, as
+    cancel does, so it can be retried with retry --failed
+    """
+    _make_stage_files(two_stage_run)
+    job_id = _make_active(two_stage_run, fake_scheduler)
+    state = two_stage_run.stages[0].state
+    state.submit_time = 1_000_000.0
+    state.status = StageStatus.SUBMITTED
+
+    two_stage_run.clean(["spinup_ad"], cancel=True)
+
+    assert fake_scheduler.canceled == [[job_id]]
+    reloaded = ModelRun.load(two_stage_run.root, scheduler=fake_scheduler)
+    assert reloaded.stages[0].state.status is StageStatus.FAILED
+    assert reloaded.stages[1].state.status is StageStatus.PENDING
+    assert not (two_stage_run.root / "spinup_ad").exists()
 
 
 def test_clean_cancel_dry_run_does_not_cancel(created_run, fake_scheduler):

@@ -1080,6 +1080,181 @@ def test_cancel_ignores_missing_param_file(running_ensemble, fake_scheduler):
 
 
 # ---------------------------------------------------------------------------
+# clean
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_ensemble(two_stage_ensemble, fake_scheduler, monkeypatch) -> Ensemble:
+    """two_stage_ensemble (spinup_ad then transient) whose member runs load
+    with fake_scheduler
+    """
+    monkeypatch.setattr(model_run, "get_scheduler", lambda name: fake_scheduler)
+    return two_stage_ensemble
+
+
+def _make_clones(ensemble: Ensemble) -> dict[tuple[str, str], Path]:
+    """Create every member stage's clone directory, keyed by (member, stage)"""
+    clones = {}
+    for member in ensemble.param_files:
+        for stage in ensemble.config.member_stages:
+            case_root = ensemble._case_root(member, stage.name)
+            case_root.mkdir(parents=True)
+            clones[(member, stage.name)] = case_root
+    return clones
+
+
+def test_clean_whole_ensemble(clean_ensemble, capsys):
+    """Test that cleaning the whole ensemble deletes every clone and the root,
+    but not the base case, the paramgen dir or a case_dir outside the root
+    """
+    clones = _make_clones(clean_ensemble)
+    capsys.readouterr()
+
+    targets = clean_ensemble.clean()
+
+    assert targets[-1] == clean_ensemble.root
+    assert not clean_ensemble.root.exists()
+    assert not any(clone.exists() for clone in clones.values())
+    assert clean_ensemble.base_case.is_dir()
+    assert clean_ensemble.config.paramgen_dir.is_dir()
+    assert clean_ensemble.case_dir.is_dir()
+    out = capsys.readouterr().out
+    assert f"cleaned {len(targets)} paths in {len(MEMBERS)} members" in out
+
+
+def test_clean_whole_ensemble_default_case_dir(
+    ready_config_dict, fake_scheduler, monkeypatch
+):
+    """Test that the default case_dir (<root>/cases) goes with the root"""
+    monkeypatch.setattr(model_run, "get_scheduler", lambda name: fake_scheduler)
+    del ready_config_dict["case_dir"]
+    ensemble = Ensemble.create(ready_config_dict)
+    _make_clones(ensemble)
+    assert ensemble.case_dir == ensemble.root / "cases"
+
+    ensemble.clean()
+
+    assert not ensemble.root.exists()
+
+
+def test_clean_selected_members_keeps_state(clean_ensemble):
+    """Test that cleaning some members deletes only their clones, and keeps
+    their run state so status and retry still work
+    """
+    clones = _make_clones(clean_ensemble)
+
+    clean_ensemble.clean(members=["ens_0001"])
+
+    for (member, _), clone in clones.items():
+        assert clone.exists() is (member != "ens_0001")
+    assert (clean_ensemble.root / "members" / "ens_0001" / _RUN_STATE_FILE).is_file()
+    assert (clean_ensemble.root / _STATE_FILE).is_file()
+    assert len(clean_ensemble.status()) == len(MEMBERS) * 2
+
+
+def test_clean_selected_stages(clean_ensemble):
+    """Test that cleaning a stage deletes that stage's clone for every member,
+    and keeps the root
+    """
+    clones = _make_clones(clean_ensemble)
+
+    clean_ensemble.clean(stages=["spinup_ad"])
+
+    for (_, stage), clone in clones.items():
+        assert clone.exists() is (stage != "spinup_ad")
+    assert clean_ensemble.root.is_dir()
+
+
+def test_clean_selected_members_and_stages(clean_ensemble):
+    """Test that members and stages together select only those member stages"""
+    clones = _make_clones(clean_ensemble)
+
+    clean_ensemble.clean(members=["ens_0001"], stages=["transient"])
+
+    gone = [key for key, clone in clones.items() if not clone.exists()]
+    assert gone == [("ens_0001", "transient")]
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"members": ["ens_0001", "nope"]}, "unknown member"),
+        ({"stages": ["spinup_ad", "nope"]}, "unknown member stage"),
+    ],
+)
+def test_clean_unknown_member_or_stage_raises(clean_ensemble, kwargs, match):
+    """Test that an unknown member or stage raises before anything is deleted"""
+    clones = _make_clones(clean_ensemble)
+
+    with pytest.raises(ValueError, match=match):
+        clean_ensemble.clean(**kwargs)
+
+    assert all(clone.exists() for clone in clones.values())
+
+
+def test_clean_dry_run_deletes_nothing(clean_ensemble):
+    """Test that a dry run lists the clones and the root but deletes nothing"""
+    clones = _make_clones(clean_ensemble)
+
+    targets = clean_ensemble.clean(dry_run=True)
+
+    assert set(clones.values()) <= set(targets)
+    assert targets[-1] == clean_ensemble.root
+    assert all(path.exists() for path in targets)
+
+
+def test_clean_active_jobs_raises_and_deletes_nothing(running_ensemble, fake_scheduler):
+    """Test that if any member has active jobs, clean raises naming them and
+    deletes nothing in any member
+    """
+    clones = _make_clones(running_ensemble)
+    job_id = _setup_job_id(running_ensemble, "ens_0001")
+    # only ens_0001's setup job is still active
+    fake_scheduler.job_states = {job_id: JobState.RUNNING}
+
+    with pytest.raises(ValueError, match="ens_0001") as exc:
+        running_ensemble.clean()
+
+    assert job_id in str(exc.value)
+    assert "ens_0000" not in str(exc.value)
+    assert all(clone.exists() for clone in clones.values())
+    assert running_ensemble.root.is_dir()
+    assert not fake_scheduler.canceled
+
+
+def test_clean_cancel(running_ensemble, fake_scheduler):
+    """Test that clean with cancel cancels the active jobs, then deletes"""
+    clones = _make_clones(running_ensemble)
+
+    running_ensemble.clean(cancel=True)
+
+    assert len(sum(fake_scheduler.canceled, [])) == len(MEMBERS)
+    assert not any(clone.exists() for clone in clones.values())
+    assert not running_ensemble.root.exists()
+
+
+def test_clean_cancel_dry_run_does_not_cancel(running_ensemble, fake_scheduler):
+    """Test that a dry run with cancel neither cancels nor deletes"""
+    clones = _make_clones(running_ensemble)
+
+    running_ensemble.clean(cancel=True, dry_run=True)
+
+    assert not fake_scheduler.canceled
+    assert all(clone.exists() for clone in clones.values())
+
+
+def test_clean_ignores_missing_param_file(clean_ensemble):
+    """Test that a member whose parameter file is gone can still be cleaned"""
+    clones = _make_clones(clean_ensemble)
+    clean_ensemble.param_files["ens_0000"].unlink()
+
+    clean_ensemble.clean(members=["ens_0000"])
+
+    assert not clones[("ens_0000", "spinup_ad")].exists()
+
+
+# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 
