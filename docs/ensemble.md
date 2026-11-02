@@ -12,7 +12,7 @@ and manage an ensemble of CLM/CLM-FATES runs that use those parameter files.
 An ensemble is one `meristem.run` pipeline per ensemble member. Each member gets its own parameter
 file from `meristem.paramgen`, and each of its stages (if it has more than one) runs as a CIME case
 cloned from a single, already built base case. Within a member, multiple stages are tethered
-exactly as in `meristem.run`, `mestistem.ensemble` adds the cloning and the parameter file setup around them.
+exactly as in `meristem.run`, `meristem.ensemble` adds the cloning and the parameter file setup around them.
 
 ### Creating and submitting
 
@@ -38,7 +38,7 @@ fail). The setup job runs three things in order before the case is submitted:
    (using `paramfile_key`), then checks that the generated `lnd_in` points at that file.
 
 Every stage of every member has its own case, named
-`<base case>_<ensemble_id>_<member>_<stage>` and created under `case_dir`. Ensembles that 
+`<base case>_<ensemble_id>_<member>_<stage>` and created under `case_dir`. Ensembles that
 reuse the same base case and members don't collide, since `ensemble_id` is part of the name.
 
 Because the ensemble supplies `prepare` and `finalize` itself, member stages can't set `command`,
@@ -46,8 +46,22 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 
 ### Monitoring and recovery
 
-`status` shows the state of every member and stage, `retry` resubmits failed or lost stages, and
-`manifest` writes a CSV listing the members. See [Quick start](#quick-start) for how to use them.
+`status` shows the state of every member and stage, `retry` resubmits failed or lost stages,
+`cancel` stops members' queued or running jobs (marking their stages failed, so `retry --failed`
+resubmits them later), and `manifest` writes a CSV listing the members. See
+[Quick start](#quick-start) for how to use them.
+
+### Where things live
+
+- `<root>/ensemble_state.json`: the ensemble's state file.
+- `<root>/members/<member>/`: each member's `meristem.run` root, with its `run_state.json` and the
+  member's PBS job scripts and logs.
+- `case_dir` (default `<root>/cases`): one clone per member stage, named
+  `<base case>_<ensemble_id>_<member>_<stage>`.
+- Each clone's CIME run directory and archive go wherever CIME puts them: under `output_root` if
+  it's set (passed to `create_clone --cime-output-root`), otherwise CIME's default output root.
+
+The base case and the paramgen directory are only read, never changed.
 
 ### Requirements
 
@@ -61,12 +75,12 @@ Because the ensemble supplies `prepare` and `finalize` itself, member stages can
 - meristem installed in a Python environment on a filesystem the compute nodes can see, as for
   [`meristem.run`](run.md#requirements). Don't move or rebuild that environment while the ensemble is
   running.
-  
+
 ----
 
 ## Quick start
 
-### 1. Write a ensemble YAML
+### 1. Write an ensemble YAML
 
 ```yaml
 # ensemble.yaml
@@ -157,3 +171,92 @@ This writes `<root>/manifest.csv` (or the file given with `-o`), with one row pe
 paramgen key values, its parameter file, and each stage's status, job ID, attempts, case root and
 times.
 
+### 7. Cancel
+
+```bash
+meristem ensemble cancel --root /glade/derecho/scratch/user/morris_test
+```
+
+This cancels the queued or running jobs (setup, CIME, advance and fail) of every member, or only
+the members named with `--members 0001 0002`, and marks the stages that were running as failed.
+Add `--dry-run` to see what would be cancelled without cancelling anything. To pick the members up
+again later, use `meristem ensemble retry --failed`.
+
+----
+
+## Config reference
+
+### Top-level keys
+
+| Key | Required | Default | Description |
+| --- | --- | --- | --- |
+| `ensemble_id` | yes | | Short identifier (letters, digits, hyphens, underscores), used in case and job names |
+| `root` | yes | | Directory for the ensemble's and members' state files, job scripts and logs |
+| `base_case` | yes | | Built CIME case (`BUILD_COMPLETE` is `TRUE`) that every member is cloned from |
+| `paramfile_key` | yes | | `user_nl_clm` variable to set to each member's parameter file: `paramfile` or `fates_paramfile` |
+| `paramgen` | yes | | Where to find the parameter files (see below) |
+| `member_stages` | yes | | Stages run once per member, in order (see below) |
+| `case_dir` | no | `<root>/cases` | Directory where member clones are created |
+| `output_root` | no | CIME's default | CIME output root for the clones (`create_clone --cime-output-root`) |
+| `project` | no | `$PROJECT` | PBS project/account code. If omitted, the `PROJECT` environment variable is used |
+| `email` | no | | User email for job emails. If omitted, no email directive is added |
+| `helper_queue` | no | each stage's `queue` | PBS queue for the members' small advance and fail jobs, e.g. `develop` |
+
+Paths must be absolute. Environment variables in the YAML file (`$VAR` or `${VAR}`) are expanded
+when the ensemble is created.
+
+### `paramgen` keys
+
+| Key | Required | Default | Description |
+| --- | --- | --- | --- |
+| `dir` | yes | | `meristem paramgen` output directory |
+| `prefix` | yes | | Paramgen prefix: reads `<prefix>.txt` and `<prefix>_key.csv` |
+| `members` | no | `all` | `all`, or a list of member names to run (quote all-digit names, e.g. `"0001"`) |
+
+### Member stage keys
+
+The same as `meristem.run` [stage keys](run.md#stage-keys), except that `script` is optional and
+`command`, `post_command`, `case_root` and `no_cime` aren't allowed: the ensemble sets the case
+root and runs `prepare` and `finalize` around the script itself.
+
+----
+
+## Command line reference
+
+```text
+meristem ensemble create --config ensemble.yaml
+  Check the base case, parameter files and stage scripts, and write the state files.
+  Submits nothing.
+
+meristem ensemble submit --root <path> [--limit N] [--dry-run]
+  Submit the first stage of every member that hasn't started (at most N with --limit).
+
+meristem ensemble status --root <path> [--members <m1> <m2> ...] [--print-members] [--check-queue]
+  Print a count of member stages in each state, and the failed (and lost) ones.
+  --print-members also lists every member and stage; --check-queue asks PBS about
+  submitted stages and reports lost ones. Exits 3 if a stage is lost, 0 otherwise.
+
+meristem ensemble retry --root <path> [--failed] [--lost] [--stage <name>] [--members <m1> <m2> ...] [--skip-script] [--dry-run]
+  Resubmit failed (--failed) and/or lost (--lost) stages, or the stages named with
+  --stage and/or --members. --skip-script resubmits without re-running the stage script.
+
+meristem ensemble cancel --root <path> [--members <m1> <m2> ...] [--dry-run]
+  Cancel the queued or running jobs of every member (or those named) and mark their
+  submitted stages as failed; --dry-run just reports what would be cancelled.
+
+meristem ensemble manifest --root <path> [-o <file>]
+  Write a CSV with one row per member (default <root>/manifest.csv).
+
+meristem ensemble prepare --root <path> --member <member> --stage <name>
+  Clone the base case for one member stage and run case.setup. Called automatically
+  from inside the setup job; not typically run manually.
+
+meristem ensemble finalize --root <path> --member <member> --stage <name>
+  Set the member's parameter file in its clone and check it. Called automatically
+  from inside the setup job; not typically run manually.
+```
+
+Add `--dry-run` to `submit` or `retry` to write the job scripts without calling `qsub`, or to
+`cancel` to see what would be cancelled. A dry run doesn't change the ensemble's state.
+
+Add `--debug` to any command to show the full traceback on errors.

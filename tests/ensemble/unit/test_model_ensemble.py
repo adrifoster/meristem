@@ -22,9 +22,12 @@ from meristem.ensemble.model_ensemble import (
 )
 from meristem.run import model_run
 from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
+from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
 from tests.ensemble.conftest import MEMBERS
+
+# pylint: disable=protected-access
 
 _STATE_FILE = "ensemble_state.json"
 
@@ -984,6 +987,99 @@ def test_retry_returns_member_to_job_id(created_ensemble, retry_calls):
 
 
 # ---------------------------------------------------------------------------
+# cancel
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def running_ensemble(submit_ensemble, fake_scheduler) -> Ensemble:
+    """submit_ensemble with every member's first setup job submitted and running"""
+    job_ids = submit_ensemble.submit()
+    fake_scheduler.job_states = {
+        job_id: JobState.RUNNING for job_id in job_ids.values()
+    }
+    return submit_ensemble
+
+
+def _setup_job_id(ensemble: Ensemble, member: str) -> str:
+    """Job ID of a member's first setup job, as saved on disk"""
+    return _member_run(ensemble, member).stages[0].state.job_id
+
+
+def test_cancel_all_members(running_ensemble, fake_scheduler):
+    """Test that cancel cancels every member's active jobs and marks their
+    stages failed
+    """
+    expected = {member: [_setup_job_id(running_ensemble, member)] for member in MEMBERS}
+
+    assert running_ensemble.cancel() == expected
+    assert sorted(sum(fake_scheduler.canceled, [])) == sorted(
+        sum(expected.values(), [])
+    )
+    for member in MEMBERS:
+        assert _first_status(running_ensemble, member) is StageStatus.FAILED
+
+
+def test_cancel_selected_members(running_ensemble, fake_scheduler):
+    """Test that cancel with members cancels only those members"""
+    job_id = _setup_job_id(running_ensemble, "ens_0001")
+
+    assert running_ensemble.cancel(members=["ens_0001"]) == {"ens_0001": [job_id]}
+    assert fake_scheduler.canceled == [[job_id]]
+    assert _first_status(running_ensemble, "ens_0001") is StageStatus.FAILED
+    for member in ("ens_0000", "ens_0002"):
+        assert _first_status(running_ensemble, member) is StageStatus.SUBMITTED
+
+
+def test_cancel_dry_run(running_ensemble, fake_scheduler, capsys):
+    """Test that a dry run reports what would be canceled but changes nothing"""
+    expected = {member: [_setup_job_id(running_ensemble, member)] for member in MEMBERS}
+    capsys.readouterr()
+
+    assert running_ensemble.cancel(dry_run=True) == expected
+    assert not fake_scheduler.canceled
+    for member in MEMBERS:
+        assert _first_status(running_ensemble, member) is StageStatus.SUBMITTED
+    out = capsys.readouterr().out
+    assert f"would cancel {len(MEMBERS)} jobs in {len(MEMBERS)} members" in out
+
+
+def test_cancel_reports_count(running_ensemble, capsys):
+    """Test that cancel prints how many jobs and members it canceled"""
+    capsys.readouterr()
+    running_ensemble.cancel()
+    out = capsys.readouterr().out
+    assert f"canceled {len(MEMBERS)} jobs in {len(MEMBERS)} members" in out
+
+
+def test_cancel_nothing_active(submit_ensemble, fake_scheduler, capsys):
+    """Test that cancel with no queued or running jobs cancels nothing"""
+    submit_ensemble.submit()  # job_states is empty, so every job is UNKNOWN
+    capsys.readouterr()
+
+    assert not submit_ensemble.cancel()
+    assert not fake_scheduler.canceled
+    assert "no queued or running jobs" in capsys.readouterr().out
+
+
+def test_cancel_unknown_member_raises(running_ensemble, fake_scheduler):
+    """Test that an unknown member raises before anything is canceled"""
+    with pytest.raises(ValueError, match="unknown member"):
+        running_ensemble.cancel(members=["ens_0001", "nope"])
+    assert not fake_scheduler.canceled
+
+
+def test_cancel_ignores_missing_param_file(running_ensemble, fake_scheduler):
+    """Test that a member whose parameter file is gone can still be canceled"""
+    running_ensemble.param_files["ens_0000"].unlink()
+
+    result = running_ensemble.cancel(members=["ens_0000"])
+
+    assert result == {"ens_0000": [_setup_job_id(running_ensemble, "ens_0000")]}
+    assert fake_scheduler.canceled
+
+
+# ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
 
@@ -1419,14 +1515,14 @@ def test_archive_dir_value(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# find_param_members
+# _find_param_members
 # ---------------------------------------------------------------------------
 
 
 def test_find_param_members_all(ensemble_config_dict, write_paramgen):
     """Test that members: all returns every member, in list-file order"""
     write_paramgen(members=["ens_0002", "ens_0000", "ens_0001"])
-    assert _ensemble(ensemble_config_dict).find_param_members() == [
+    assert _ensemble(ensemble_config_dict)._find_param_members() == [
         "ens_0002",
         "ens_0000",
         "ens_0001",
@@ -1441,7 +1537,7 @@ def test_find_param_members_subset_in_list_file_order(
     """
     write_paramgen()
     ensemble = _with_members(ensemble_config_dict, ["ens_0002", "ens_0000"])
-    assert ensemble.find_param_members() == ["ens_0000", "ens_0002"]
+    assert ensemble._find_param_members() == ["ens_0000", "ens_0002"]
 
 
 def test_find_param_members_ignores_blank_lines_and_whitespace(
@@ -1452,13 +1548,13 @@ def test_find_param_members_ignores_blank_lines_and_whitespace(
     (directory / "ens.txt").write_text(
         "\n  ens_0000  \n\n\tens_0001\nens_0002\n\n", encoding="utf-8"
     )
-    assert _ensemble(ensemble_config_dict).find_param_members() == MEMBERS
+    assert _ensemble(ensemble_config_dict)._find_param_members() == MEMBERS
 
 
 def test_find_param_members_missing_list_file_raises(ensemble_config_dict):
     """Test that a missing <prefix>.txt raises, naming the prefix"""
     with pytest.raises(FileNotFoundError, match=r"ens\.txt not found.*'ens'"):
-        _ensemble(ensemble_config_dict).find_param_members()
+        _ensemble(ensemble_config_dict)._find_param_members()
 
 
 @pytest.mark.parametrize("contents", ["", "\n\n  \n"])
@@ -1469,14 +1565,14 @@ def test_find_param_members_empty_list_file_raises(
     directory = write_paramgen()
     (directory / "ens.txt").write_text(contents, encoding="utf-8")
     with pytest.raises(ValueError, match="is empty"):
-        _ensemble(ensemble_config_dict).find_param_members()
+        _ensemble(ensemble_config_dict)._find_param_members()
 
 
 def test_find_param_members_duplicates_raise(ensemble_config_dict, write_paramgen):
     """Test that duplicates in the list file raise, each listed once"""
     write_paramgen(members=["b", "a", "c", "a", "b", "b"])
     with pytest.raises(ValueError, match=r"has duplicates: \['a', 'b'\]"):
-        _ensemble(ensemble_config_dict).find_param_members()
+        _ensemble(ensemble_config_dict)._find_param_members()
 
 
 def test_find_param_members_unknown_requested_raises(
@@ -1486,7 +1582,7 @@ def test_find_param_members_unknown_requested_raises(
     write_paramgen()
     ensemble = _with_members(ensemble_config_dict, ["ens_0001", "zz", "aa"])
     with pytest.raises(ValueError, match=r"requested members not in .*\['aa', 'zz'\]"):
-        ensemble.find_param_members()
+        ensemble._find_param_members()
 
 
 def test_find_param_members_uses_prefix(ensemble_config_dict, write_paramgen):
@@ -1494,11 +1590,11 @@ def test_find_param_members_uses_prefix(ensemble_config_dict, write_paramgen):
     write_paramgen()
     ensemble_config_dict["paramgen"]["prefix"] = "other"
     with pytest.raises(FileNotFoundError, match=r"other\.txt"):
-        _ensemble(ensemble_config_dict).find_param_members()
+        _ensemble(ensemble_config_dict)._find_param_members()
 
 
 # ---------------------------------------------------------------------------
-# find_param_files
+# _find_param_files
 # ---------------------------------------------------------------------------
 
 
@@ -1506,7 +1602,7 @@ def test_find_param_members_uses_prefix(ensemble_config_dict, write_paramgen):
 def test_find_param_files_all(ensemble_config_dict, write_paramgen, ext):
     """Test that each member maps to its .nc or .json parameter file, in order"""
     directory = write_paramgen(ext=ext)
-    param_files = _ensemble(ensemble_config_dict).find_param_files()
+    param_files = _ensemble(ensemble_config_dict)._find_param_files()
     assert param_files == {m: directory / f"{m}{ext}" for m in MEMBERS}
     assert list(param_files) == MEMBERS
 
@@ -1515,7 +1611,7 @@ def test_find_param_files_mixed_extensions(ensemble_config_dict, write_paramgen)
     """Test that members can have different (but single) file extensions"""
     directory = write_paramgen(param_files=MEMBERS[:2])
     (directory / f"{MEMBERS[2]}.json").touch()
-    param_files = _ensemble(ensemble_config_dict).find_param_files()
+    param_files = _ensemble(ensemble_config_dict)._find_param_files()
     assert param_files[MEMBERS[2]] == directory / f"{MEMBERS[2]}.json"
 
 
@@ -1525,7 +1621,7 @@ def test_find_param_files_subset(ensemble_config_dict, write_paramgen):
     """
     directory = write_paramgen(param_files=["ens_0001"])
     ensemble = _with_members(ensemble_config_dict, ["ens_0001"])
-    assert ensemble.find_param_files() == {"ens_0001": directory / "ens_0001.nc"}
+    assert ensemble._find_param_files() == {"ens_0001": directory / "ens_0001.nc"}
 
 
 def test_find_param_files_ignores_other_files(ensemble_config_dict, write_paramgen):
@@ -1534,14 +1630,14 @@ def test_find_param_files_ignores_other_files(ensemble_config_dict, write_paramg
     (directory / "ens_0000.txt").touch()
     (directory / "ens_0000.nc.bak").touch()
     (directory / "ens_config.yaml").touch()
-    param_files = _ensemble(ensemble_config_dict).find_param_files()
+    param_files = _ensemble(ensemble_config_dict)._find_param_files()
     assert param_files["ens_0000"] == directory / "ens_0000.nc"
 
 
 def test_find_param_files_member_list_error_propagates(ensemble_config_dict):
-    """Test that find_param_files raises find_param_members' errors"""
+    """Test that _find_param_files raises _find_param_members' errors"""
     with pytest.raises(FileNotFoundError, match="member list"):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_missing_key_file_raises(ensemble_config_dict, write_paramgen):
@@ -1549,7 +1645,7 @@ def test_find_param_files_missing_key_file_raises(ensemble_config_dict, write_pa
     directory = write_paramgen()
     (directory / "ens_key.csv").unlink()
     with pytest.raises(FileNotFoundError, match=r"ens_key\.csv not found.*'ens'"):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_member_not_in_key_raises(
@@ -1560,7 +1656,7 @@ def test_find_param_files_member_not_in_key_raises(
     with pytest.raises(
         FileNotFoundError, match=rf"{MEMBERS[-1]}: {MEMBERS[-1]} not in .*ens_key"
     ):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_no_ensemble_column_raises(
@@ -1576,7 +1672,7 @@ def test_find_param_files_no_ensemble_column_raises(
     with pytest.raises(
         ValueError, match=r"no 'ensemble' column \(columns: \['member', 'fates"
     ):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_numeric_member_names(ensemble_config_dict, write_paramgen):
@@ -1584,7 +1680,7 @@ def test_find_param_files_numeric_member_names(ensemble_config_dict, write_param
     ints)
     """
     directory = write_paramgen(members=["0001", "0002"])
-    param_files = _ensemble(ensemble_config_dict).find_param_files()
+    param_files = _ensemble(ensemble_config_dict)._find_param_files()
     assert param_files == {m: directory / f"{m}.nc" for m in ["0001", "0002"]}
 
 
@@ -1594,7 +1690,7 @@ def test_find_param_files_no_param_file_raises(ensemble_config_dict, write_param
     with pytest.raises(
         FileNotFoundError, match=r"ens_0000: no ens_0000\.nc or ens_0000\.json"
     ):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_both_extensions_raises(ensemble_config_dict, write_paramgen):
@@ -1602,7 +1698,7 @@ def test_find_param_files_both_extensions_raises(ensemble_config_dict, write_par
     directory = write_paramgen()
     (directory / "ens_0001.json").touch()
     with pytest.raises(FileNotFoundError, match="ens_0001: both .nc and .json"):
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
 
 
 def test_find_param_files_reports_all_problems(ensemble_config_dict, write_paramgen):
@@ -1612,7 +1708,7 @@ def test_find_param_files_reports_all_problems(ensemble_config_dict, write_param
     )
     (directory / "ens_0001.json").touch()
     with pytest.raises(FileNotFoundError) as excinfo:
-        _ensemble(ensemble_config_dict).find_param_files()
+        _ensemble(ensemble_config_dict)._find_param_files()
     lines = str(excinfo.value).splitlines()[1:]
     assert lines[0].startswith("  ens_0000: ens_0000 not in")
     assert lines[1] == "  ens_0001: both .nc and .json exist"
@@ -1625,11 +1721,11 @@ def test_find_param_files_problem_outside_selection_ignored(
     """Test that problems with unrequested members don't raise"""
     directory = write_paramgen(key_members=["ens_0000"], param_files=["ens_0000"])
     ensemble = _with_members(ensemble_config_dict, ["ens_0000"])
-    assert ensemble.find_param_files() == {"ens_0000": directory / "ens_0000.nc"}
+    assert ensemble._find_param_files() == {"ens_0000": directory / "ens_0000.nc"}
 
 
 # ---------------------------------------------------------------------------
-# check_base_case
+# _check_base_case
 # ---------------------------------------------------------------------------
 
 
@@ -1637,27 +1733,27 @@ def test_find_param_files_problem_outside_selection_ignored(
 def test_check_base_case_built_passes(ensemble_config_dict, write_base_case, value):
     """Test that a base case with BUILD_COMPLETE TRUE (any case) passes"""
     write_base_case(build_complete=value)
-    _ensemble(ensemble_config_dict).check_base_case()
+    _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_missing_dir_raises(ensemble_config_dict):
     """Test that a nonexistent base case raises"""
     with pytest.raises(FileNotFoundError, match="cannot find base case"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_is_file_raises(ensemble_config_dict):
     """Test that a base case path that's a file, not a dir, raises"""
     Path(ensemble_config_dict["base_case"]).touch()
     with pytest.raises(FileNotFoundError, match="cannot find base case"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_no_xmlquery_raises(ensemble_config_dict):
     """Test that a dir without xmlquery (not a CIME case) raises"""
     Path(ensemble_config_dict["base_case"]).mkdir()
     with pytest.raises(FileNotFoundError, match="no xmlquery"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 @pytest.mark.parametrize("value", ["FALSE", "''"])
@@ -1665,7 +1761,7 @@ def test_check_base_case_not_built_raises(ensemble_config_dict, write_base_case,
     """Test that a base case whose BUILD_COMPLETE isn't TRUE raises"""
     write_base_case(build_complete=value)
     with pytest.raises(ValueError, match="is not built.*case.build"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_xmlquery_fails_raises(ensemble_config_dict, write_base_case):
@@ -1674,7 +1770,7 @@ def test_check_base_case_xmlquery_fails_raises(ensemble_config_dict, write_base_
     """
     write_base_case(exit_code=3, stderr="ERROR: env_build.xml is corrupt")
     with pytest.raises(RuntimeError, match=r"exit 3\): ERROR: env_build\.xml"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_xmlquery_fails_without_stderr_reports_stdout(
@@ -1683,7 +1779,7 @@ def test_check_base_case_xmlquery_fails_without_stderr_reports_stdout(
     """Test that a failing xmlquery with nothing on stderr reports its stdout"""
     write_base_case(build_complete="oops", exit_code=1)
     with pytest.raises(RuntimeError, match=r"exit 1\): oops"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_xmlquery_not_executable_raises(
@@ -1693,7 +1789,7 @@ def test_check_base_case_xmlquery_not_executable_raises(
     base_case = write_base_case()
     (base_case / "xmlquery").chmod(0o644)
     with pytest.raises(PermissionError, match="xmlquery is not executable"):
-        _ensemble(ensemble_config_dict).check_base_case()
+        _ensemble(ensemble_config_dict)._check_base_case()
 
 
 def test_check_base_case_runs_in_base_case_dir(
@@ -1704,18 +1800,18 @@ def test_check_base_case_runs_in_base_case_dir(
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    _ensemble(ensemble_config_dict).check_base_case()
+    _ensemble(ensemble_config_dict)._check_base_case()
 
 
 # ---------------------------------------------------------------------------
-# check_param_files
+# _check_param_files
 # ---------------------------------------------------------------------------
 
 
 def test_check_param_files_all_present(created_ensemble):
-    """Test that check_param_files passes when every parameter file exists"""
-    created_ensemble.check_param_files()
-    created_ensemble.check_param_files([MEMBERS[0]])
+    """Test that _check_param_files passes when every parameter file exists"""
+    created_ensemble._check_param_files()
+    created_ensemble._check_param_files([MEMBERS[0]])
 
 
 def test_check_param_files_missing_raises(created_ensemble):
@@ -1725,13 +1821,13 @@ def test_check_param_files_missing_raises(created_ensemble):
     with pytest.raises(
         FileNotFoundError, match=f"{MEMBERS[1]}: {re.escape(str(path))}"
     ):
-        created_ensemble.check_param_files()
+        created_ensemble._check_param_files()
 
 
 def test_check_param_files_only_checks_given_members(created_ensemble):
     """Test that a missing file for a member not asked about doesn't raise"""
     created_ensemble.param_files[MEMBERS[1]].unlink()
-    created_ensemble.check_param_files([MEMBERS[0]])
+    created_ensemble._check_param_files([MEMBERS[0]])
 
 
 def test_check_param_files_unknown_member_raises(created_ensemble):
@@ -1740,7 +1836,7 @@ def test_check_param_files_unknown_member_raises(created_ensemble):
     """
     unknown = ["x1", "x2", "x3", "x4", "x5"]
     with pytest.raises(ValueError) as excinfo:
-        created_ensemble.check_param_files([MEMBERS[0], *unknown])
+        created_ensemble._check_param_files([MEMBERS[0], *unknown])
     assert str(excinfo.value) == (
         "unknown member(s) ['x1', 'x2', 'x3'] and 2 more; the ensemble has "
         f"{len(MEMBERS)} members, e.g. {MEMBERS[:3]}."
@@ -1761,7 +1857,7 @@ def test_preview(names, expected):
 
 
 # ---------------------------------------------------------------------------
-# check_stage_scripts
+# _check_stage_scripts
 # ---------------------------------------------------------------------------
 
 
@@ -1774,7 +1870,7 @@ def _stage(name: str, script: Path | None = None) -> dict:
 
 def test_check_stage_scripts_no_script_stages_pass(ensemble_config_dict):
     """Test that stages without a script need no file"""
-    _ensemble(ensemble_config_dict).check_stage_scripts()
+    _ensemble(ensemble_config_dict)._check_stage_scripts()
 
 
 def test_check_stage_scripts_existing_scripts_pass(ensemble_config_dict, tmp_path):
@@ -1782,7 +1878,7 @@ def test_check_stage_scripts_existing_scripts_pass(ensemble_config_dict, tmp_pat
     script = tmp_path / "setup.sh"
     script.touch()
     ensemble_config_dict["member_stages"] = [_stage("setup", script), _stage("run")]
-    _ensemble(ensemble_config_dict).check_stage_scripts()
+    _ensemble(ensemble_config_dict)._check_stage_scripts()
 
 
 def test_check_stage_scripts_directory_raises(ensemble_config_dict, tmp_path):
@@ -1791,7 +1887,7 @@ def test_check_stage_scripts_directory_raises(ensemble_config_dict, tmp_path):
     script.mkdir()
     ensemble_config_dict["member_stages"] = [_stage("setup", script)]
     with pytest.raises(FileNotFoundError, match="setup"):
-        _ensemble(ensemble_config_dict).check_stage_scripts()
+        _ensemble(ensemble_config_dict)._check_stage_scripts()
 
 
 def test_check_stage_scripts_reports_all_missing(ensemble_config_dict, tmp_path):
@@ -1807,7 +1903,7 @@ def test_check_stage_scripts_reports_all_missing(ensemble_config_dict, tmp_path)
         _stage("last", tmp_path / "b.sh"),
     ]
     with pytest.raises(FileNotFoundError) as excinfo:
-        _ensemble(ensemble_config_dict).check_stage_scripts()
+        _ensemble(ensemble_config_dict)._check_stage_scripts()
     lines = str(excinfo.value).splitlines()
     assert lines[0] == "member stage script(s) not found:"
     assert lines[1:] == [

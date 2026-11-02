@@ -140,7 +140,7 @@ own resources come from the CIME case, as usual.
 meristem run create --config run.yaml
   Initialize a new run from a YAML config file.
 
-meristem status --root <path>
+meristem run status --root <path>
   Ask the job scheduler about each submitted stage and print the status, showing any
   lost stage as "lost" (see Lost stages below). Changes nothing. Exits 3
   if a stage is lost, 0 otherwise.
@@ -162,7 +162,7 @@ meristem run submit-fail --root <path> --stage <name> --cime-job-id <id>
   Submit the fail job for a stage, in case the CIME job dies. Called
   automatically from inside the setup job; not typically run manually.
 
-meristem run --root <path> --advance --stage <name>
+meristem run advance --root <path> --stage <name>
   Mark a stage complete and submit the next stage. Called
   automatically from inside the advance job.
 
@@ -218,7 +218,7 @@ meristem run status --root <path>
 Run: my_spinup (/glade/derecho/scratch/user/my_spinup)
   ✓ spinup_ad             done      [98765.desched1]
   ? spinup_postad         lost      [98770.desched1]
-Stage 'spinup_postad' is lost. Retry with: meristem run --root <path> --retry --stage spinup_postad --lost
+Stage 'spinup_postad' is lost. Retry with: meristem run retry --root <path> --stage spinup_postad --lost
 ```
 
 `status` exits with code 3 when it finds a lost stage, so a script can loop over many runs and

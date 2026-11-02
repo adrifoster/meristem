@@ -97,11 +97,11 @@ class Ensemble:
                 "Use Ensemble.load() to resume an existing ensemble."
             )
 
-        ensemble.param_files = ensemble.find_param_files()
-        ensemble.check_base_case()
-        ensemble.check_stage_scripts()
+        ensemble.param_files = ensemble._find_param_files()
+        ensemble._check_base_case()
+        ensemble._check_stage_scripts()
         member_runs = ensemble._member_runs()
-        ensemble.check_case_roots_free()
+        ensemble._check_case_roots_free()
 
         ensemble.root.mkdir(parents=True, exist_ok=True)
         for run in member_runs:
@@ -181,7 +181,7 @@ class Ensemble:
             print(f"{self.config.ensemble_id}: no pending members")
             return {}
 
-        self.check_param_files(pending)
+        self._check_param_files(pending)
 
         with redirect_stdout(io.StringIO()):
             job_ids = {
@@ -235,7 +235,7 @@ class Ensemble:
             )
 
         selected = list(self.param_files) if members is None else members
-        self.check_param_files(selected)
+        self._check_param_files(selected)
 
         runs = {member: self.member_run(member) for member in selected}
         to_retry = self._find_retries(runs, stage, lost, failed)
@@ -249,6 +249,51 @@ class Ensemble:
             )
             for member, (name, was_lost) in to_retry.items()
         }
+
+    def cancel(
+        self, members: list[str] | None = None, dry_run: bool = False
+    ) -> dict[str, list[str]]:
+        """Cancel all (or some) ensemble members' current stages/jobs.
+        Submitted stages are marked failed, so ensemble retry --failed resubmits them
+
+        Args:
+            members (list[str] | None, optional): Optional members to cancel.
+                Defaults to None. If None, defaults to canceling all members.
+            dry_run (bool, optional): Do not actually cancel, just print what
+                job_ids would be canceled. Defaults to False.
+
+        Raises:
+            ValueError: unknown members
+            RuntimeError: if qstat/qdel fails
+
+        Returns:
+            dict[str, list[str]]: dictionary with member: job_ids
+        """
+        if members is not None:
+            self._check_members(members)
+            selected = members
+        else:
+            selected = list(self.param_files)
+
+        with redirect_stdout(io.StringIO()):
+            job_ids = {}
+            for member in selected:
+                ids = self.member_run(member).cancel(dry_run=dry_run)
+                if ids:
+                    job_ids[member] = ids
+
+        if not job_ids:
+            print(f"{self.config.ensemble_id}: no queued or running jobs to cancel")
+            return {}
+
+        n_jobs = sum(len(ids) for ids in job_ids.values())
+        verb = "would cancel" if dry_run else "canceled"
+        print(
+            f"{self.config.ensemble_id}: {verb} {n_jobs} jobs in {len(job_ids)} members "
+            f"({_preview(list(job_ids))})"
+        )
+
+        return job_ids
 
     def status(
         self, members: list[str] | None = None, check_queue: bool = False
@@ -268,7 +313,7 @@ class Ensemble:
 
         rows = []
         selected = list(self.param_files) if members is None else members
-        self.check_param_files(selected)
+        self._check_param_files(selected)
 
         for member in selected:
             run = self.member_run(member)
@@ -451,7 +496,7 @@ class Ensemble:
             RuntimeError: a CIME command (create_clone, case.setup) failed
         """
         self._check_member_stage(member, stage)
-        self.check_base_case()
+        self._check_base_case()
         run = self.member_run(member)
         case_root = self._case_root(member, stage)
 
@@ -492,7 +537,7 @@ class Ensemble:
         }
         write_atomically(self.root / _STATE_FILE, json.dumps(state, indent=2))
 
-    def find_param_members(self) -> list[str]:
+    def _find_param_members(self) -> list[str]:
         """Get the list of parameter members that will be used in this ensemble
 
         Raises:
@@ -537,7 +582,7 @@ class Ensemble:
         wanted = set(self.config.members)
         return [m for m in all_members if m in wanted]
 
-    def find_param_files(self) -> dict[str, Path]:
+    def _find_param_files(self) -> dict[str, Path]:
         """Find parameter files associated with the member list
 
         Raises:
@@ -549,7 +594,7 @@ class Ensemble:
             dict[str, Path]: dictionary with member name and path to parameter file
         """
 
-        selected = self.find_param_members()
+        selected = self._find_param_members()
 
         # read in key file
         key_file = self.config.paramgen_dir / f"{self.config.paramgen_prefix}_key.csv"
@@ -593,7 +638,7 @@ class Ensemble:
             )
         return param_files
 
-    def check_base_case(self):
+    def _check_base_case(self):
         """Check to make sure the supplied base case exists and can be cloned
 
         Raises:
@@ -618,7 +663,7 @@ class Ensemble:
                 f"{result!r}); run ./case.build first."
             )
 
-    def check_param_files(self, members: list[str] | None = None):
+    def _check_param_files(self, members: list[str] | None = None):
         """Check that the stored parameter files still exist
 
         Args:
@@ -630,13 +675,7 @@ class Ensemble:
             FileNotFoundError: if any of the checked members' parameter files is missing
         """
         if members is not None:
-            unknown = sorted(set(members) - set(self.param_files))
-            if unknown:
-                raise ValueError(
-                    f"unknown member(s) {_preview(unknown)}; the ensemble has "
-                    f"{len(self.param_files)} members, e.g. "
-                    f"{_preview(list(self.param_files))}."
-                )
+            self._check_members(members)
 
         to_check = (
             self.param_files
@@ -649,7 +688,7 @@ class Ensemble:
                 "parameter file(s) no longer exist:\n" + "\n".join(missing)
             )
 
-    def check_case_roots_free(self):
+    def _check_case_roots_free(self):
         """Check no member stage's case directory exists yet
 
         prepare reuses an existing case with the expected name as the member's
@@ -674,7 +713,7 @@ class Ensemble:
                 "different case_dir or ensemble_id."
             )
 
-    def check_stage_scripts(self):
+    def _check_stage_scripts(self):
         """Check that every member stage's script exists
 
         Raises:
@@ -688,6 +727,23 @@ class Ensemble:
         if missing:
             raise FileNotFoundError(
                 "member stage script(s) not found:\n" + "\n".join(missing)
+            )
+
+    def _check_members(self, members: list[str]):
+        """Check that member keys actually point to real members
+
+        Args:
+            members (list[str]): Input member key list
+
+        Raises:
+            ValueError: Unknown members
+        """
+        unknown = sorted(set(members) - set(self.param_files))
+        if unknown:
+            raise ValueError(
+                f"unknown member(s) {_preview(unknown)}; the ensemble has "
+                f"{len(self.param_files)} members, e.g. "
+                f"{_preview(list(self.param_files))}."
             )
 
     def _member_stages(self, member: str) -> list[Stage]:
@@ -845,7 +901,7 @@ class Ensemble:
             raise ValueError(
                 f"unknown member stage {stage!r}; member stages are {stage_names}."
             )
-        self.check_param_files([member])
+        self._check_param_files([member])
 
     def _check_stage(self, member: str, stage: str):
         """Checks to see if stage is ready for submission

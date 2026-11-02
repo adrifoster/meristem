@@ -10,6 +10,7 @@ import pytest
 from meristem.ensemble.cli import (
     EXIT_LOST,
     build_parser,
+    cmd_cancel,
     cmd_create,
     cmd_finalize,
     cmd_manifest,
@@ -76,6 +77,7 @@ def mock_create(mocker, mock_ensemble):
         (["retry", "--root", ROOT], cmd_retry),
         (["status", "--root", ROOT], cmd_status),
         (["manifest", "--root", ROOT], cmd_manifest),
+        (["cancel", "--root", ROOT], cmd_cancel),
     ],
 )
 def test_parser_subcommand_sets_handler(argv, handler):
@@ -90,7 +92,7 @@ def test_parser_submit_limit_is_int():
     assert args.limit == 2
 
 
-@pytest.mark.parametrize("command", ["retry", "status"])
+@pytest.mark.parametrize("command", ["retry", "status", "cancel"])
 @pytest.mark.parametrize(
     "flags",
     [
@@ -105,7 +107,7 @@ def test_parser_members_collects_list(command, flags):
     assert args.members == ["a", "b"]
 
 
-@pytest.mark.parametrize("command", ["retry", "status"])
+@pytest.mark.parametrize("command", ["retry", "status", "cancel"])
 def test_parser_members_default_none(command):
     """Test that members defaults to None (all members)"""
     args = build_parser().parse_args([command, "--root", ROOT])
@@ -129,6 +131,8 @@ def test_parser_members_default_none(command):
         ["retry", "--root", ROOT, "--members"],  # --members with no names
         ["status"],  # missing --root
         ["manifest"],  # missing --root
+        ["cancel"],  # missing --root
+        ["cancel", "--root", ROOT, "--members"],  # --members with no names
     ],
 )
 def test_main_argument_errors_exit_with_code_2(argv):
@@ -161,6 +165,7 @@ def test_dry_run_rejected_where_unsupported(argv):
         ["submit", "--root", ROOT],
         ["status", "--root", ROOT],
         ["prepare", "--root", ROOT, *MEMBER_STAGE],
+        ["cancel", "--root", ROOT],
     ],
 )
 def test_retry_only_flags_rejected_elsewhere(argv, flag):
@@ -270,6 +275,35 @@ def test_retry_nothing_selected_exits_one(mock_load, mock_ensemble, capsys):
     assert main(["retry", "--root", ROOT]) == 1
     assert mock_load.called
     assert "ERROR: nothing selected to retry" in capsys.readouterr().err
+
+
+# cancel
+
+
+@pytest.mark.usefixtures("mock_load")
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ([], {}),
+        (["--dry-run"], {"dry_run": True}),
+        (["--members", "a", "b"], {"members": ["a", "b"]}),
+        (["--member", "a", "--dry-run"], {"members": ["a"], "dry_run": True}),
+    ],
+)
+def test_cancel_calls_cancel(mock_ensemble, extra, expected):
+    """Test that cancel calls Ensemble.cancel, passing every option through"""
+    assert main(["cancel", "--root", ROOT, *extra]) == 0
+    kwargs = {"members": None, "dry_run": False}
+    kwargs.update(expected)
+    mock_ensemble.cancel.assert_called_once_with(**kwargs)
+
+
+def test_cancel_error_exits_one(mock_load, mock_ensemble, capsys):
+    """Test that a cancel failure (e.g. qdel) exits 1 with the message"""
+    mock_ensemble.cancel.side_effect = RuntimeError("qdel failed (exit 1): no server")
+    assert main(["cancel", "--root", ROOT]) == 1
+    assert mock_load.called
+    assert "ERROR: qdel failed" in capsys.readouterr().err
 
 
 # status

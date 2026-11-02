@@ -155,6 +155,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     manifest.set_defaults(handler=cmd_manifest)
 
+    # meristem ensemble cancel --root R [--members M [M...]] [--debug] [--dry-run]
+    cancel = subparsers.add_parser(
+        "cancel",
+        parents=[debug, root, dry_run],
+        help="Cancel the queued or running jobs of all (or some) members and "
+        "mark their stages failed.",
+    )
+    cancel.add_argument(
+        "--member",
+        "--members",
+        dest="members",
+        nargs="+",
+        action="extend",
+        help="Members to cancel (e.g. --members 0001 0002). If not present, defaults to all.",
+    )
+    cancel.set_defaults(handler=cmd_cancel)
+
     return parser
 
 
@@ -216,6 +233,16 @@ def cmd_manifest(args: argparse.Namespace) -> int:
     out = Path(args.output) if args.output else ensemble.root / "manifest.csv"
     ensemble.manifest().to_csv(out, index=False)
     print(f"Wrote manifest: {out}")
+    return 0
+
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """Execute cancel and return an exit code"""
+    ensemble = Ensemble.load(Path(args.root))
+    ensemble.cancel(
+        members=args.members,
+        dry_run=args.dry_run,
+    )
     return 0
 
 
