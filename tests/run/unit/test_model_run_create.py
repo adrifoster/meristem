@@ -11,7 +11,7 @@ import yaml
 
 from meristem.run.model_run import ModelRun, _STATE_FILE
 from meristem.run.scheduler import PbsScheduler
-from meristem.run.stages import Stage
+from meristem.run.stages import Stage, StageConfig
 
 
 def test_model_run_create_valid_config_passes(run_config_dict):
@@ -304,7 +304,7 @@ def test_model_run_load_keeps_command(tmp_path, command_stage_config_dict):
     run = ModelRun(
         root=tmp_path / "run",
         run_id="run",
-        stages=[Stage.from_dict(command_stage_config_dict)],
+        stages=[Stage(config=StageConfig.from_dict(command_stage_config_dict))],
         project="PROJ",
     )
     run.root.mkdir()

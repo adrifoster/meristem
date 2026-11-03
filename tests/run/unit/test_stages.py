@@ -4,7 +4,7 @@ Tests for meristem.run.stages:
 
 from __future__ import annotations
 
-import inspect
+from copy import deepcopy
 from pathlib import Path
 import pytest
 
@@ -13,7 +13,6 @@ from meristem.run.stages import (
     StageConfig,
     StageState,
     StageStatus,
-    _RUNTIME_KEYS,
 )
 
 # ---------------------------------------------------------------------------
@@ -269,17 +268,6 @@ def test_stage_state_inequality_on_each_field(submitted_state, field, value):
     other = StageState.from_dict(submitted_state.to_dict())
     object.__setattr__(other, field, value)
     assert submitted_state != other
-
-
-def test_runtime_keys_match_stage_state_init():
-    """Ensure _RUNTIME_KEYS stays in sync with StageState.__init__"""
-    actual = frozenset(
-        p for p in inspect.signature(StageState.__init__).parameters if p != "self"
-    )
-    assert _RUNTIME_KEYS == actual, (
-        f"_RUNTIME_KEYS is out of sync with StageState.__init__. "
-        f"Missing: {actual - _RUNTIME_KEYS}, Extra: {_RUNTIME_KEYS - actual}"
-    )
 
 
 @pytest.mark.parametrize(
@@ -643,14 +631,13 @@ def test_stage_status_reset(full_stage):
     assert full_stage.state.attempts == 0
 
 
-def test_stage_to_dict_is_flat(full_stage):
-    """Test that the Stage.to_dict produces a flat dict"""
+def test_stage_to_dict_is_nested(full_stage):
+    """Test that Stage.to_dict keeps config and state in separate sub-dicts"""
     stage_dict = full_stage.to_dict()
-    # want config and state keys all at the top level with no nesting
-    assert "name" in stage_dict
-    assert "status" in stage_dict
-    assert "config" not in stage_dict
-    assert "attempts" in stage_dict
+    assert stage_dict == {
+        "config": full_stage.config.to_dict(),
+        "state": full_stage.state.to_dict(),
+    }
 
 
 def test_stage_roundtrip_with_runtime_state(full_stage):
@@ -664,16 +651,10 @@ def test_stage_roundtrip_default_state(minimal_stage_config):
     assert Stage.from_dict(stage.to_dict()) == stage
 
 
-def test_stage_from_dict_missing_status_defaults_to_pending(minimal_stage_config_dict):
-    """Test that if runtime keys are absent entirely, state defaults to PENDING."""
-    stage = Stage.from_dict(minimal_stage_config_dict)
-    assert stage.state.status is StageStatus.PENDING
-
-
 def test_stage_from_dict_does_not_mutate_input(full_stage):
     """Test that the Stage.from_dict() doesn't mutate the input dict"""
     stage_dict = full_stage.to_dict()
-    copy = dict(stage_dict)
+    copy = deepcopy(stage_dict)
     Stage.from_dict(stage_dict)
     assert stage_dict == copy
 
@@ -697,7 +678,7 @@ def test_stage_from_dict_partial_state(minimal_stage_config_dict, partial_state)
     """Test that Stage.from_dict correctly handles partial runtime state,
     as might occur when recovering from a checkpoint written mid-run.
     """
-    stage_dict = {**minimal_stage_config_dict, **partial_state}
+    stage_dict = {"config": minimal_stage_config_dict, "state": partial_state}
     stage = Stage.from_dict(stage_dict)
 
     assert stage.state.status == StageStatus.from_str(partial_state["status"])

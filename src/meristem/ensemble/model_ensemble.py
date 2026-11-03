@@ -198,7 +198,13 @@ class Ensemble:
             job_ids = {
                 member: runs[member].submit(dry_run=dry_run) for member in pending
             }
-        print(f"{self.config.ensemble_id}: submitted {len(job_ids)} members")
+        if dry_run:
+            print(
+                f"{self.config.ensemble_id}: dry run, wrote job scripts for "
+                f"{len(job_ids)} members in {self.root / 'members'}"
+            )
+        else:
+            print(f"{self.config.ensemble_id}: submitted {len(job_ids)} members")
 
         return job_ids
 

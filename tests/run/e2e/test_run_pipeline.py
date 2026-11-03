@@ -390,13 +390,16 @@ def test_next_stage_script_missing_fails_it_then_retry(
         # status only shows attempts once a stage has been submitted twice
         assert "✓" in line and "attempts=" not in line, result.stdout + fake.logs()
     state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
-    assert [s["attempts"] for s in state["stages"]] == [1, 1], state
+    assert [s["state"]["attempts"] for s in state["stages"]] == [1, 1], state
 
 
 def _stage_states(root: Path) -> dict[str, tuple[str, int]]:
     """Each stage's (status, attempts), as saved"""
     state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
-    return {s["name"]: (s["status"], s["attempts"]) for s in state["stages"]}
+    return {
+        s["config"]["name"]: (s["state"]["status"], s["state"]["attempts"])
+        for s in state["stages"]
+    }
 
 
 def test_failed_attempt_with_live_jobs_then_retry(make_run, fake, meristem):
@@ -472,7 +475,7 @@ def test_setup_fails_before_advance_job_cime_still_tracked(make_run, fake, meris
     jobs = {j["name"]: j for j in fake.jobs()}
     assert sorted(jobs) == ["e2e_test_stage1", "stage1.run", "stage1.st_archive"]
     state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
-    stage = state["stages"][0]
+    stage = state["stages"][0]["state"]
     assert stage["status"] == "failed", fake.logs()
     assert stage["advance_job_id"] is None and stage["fail_job_ids"] == []
     run_id, archive_id = jobs["stage1.run"]["id"], jobs["stage1.st_archive"]["id"]

@@ -15,21 +15,6 @@ from meristem.utils import check_id, to_absolute_path
 _WALLTIME_RE = re.compile(r"^\d+(?::\d+)*$")
 _MEMORY_RE = re.compile(r"^\d+(\.\d+)?(B|KB|MB|GB|TB)$", re.IGNORECASE)
 
-# keys that belong to StageState in a flat Stage dict.
-# must be kept in sync with StageState.__init__ parameters.
-_RUNTIME_KEYS: frozenset[str] = frozenset(
-    {
-        "status",
-        "job_id",
-        "advance_job_id",
-        "fail_job_ids",
-        "cime_job_ids",
-        "submit_time",
-        "end_time",
-        "attempts",
-    }
-)
-
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -465,28 +450,27 @@ class Stage:
 
     @classmethod
     def from_dict(cls, input_dict: dict) -> Stage:
-        """Reconstruct class Stage from a flat dictionary
+        """Reconstruct class Stage from a dictionary written by to_dict
 
         Args:
-            input_dict (dict): input dictionary
+            input_dict (dict): input dictionary with "config" and "state" keys
 
         Returns:
             Stage: Stage instance
         """
-        in_dict = dict(input_dict)
-        runtime_dict = {k: in_dict.pop(k) for k in _RUNTIME_KEYS if k in in_dict}
         return cls(
-            config=StageConfig.from_dict(in_dict),
-            state=StageState.from_dict(runtime_dict) if runtime_dict else StageState(),
+            config=StageConfig.from_dict(input_dict["config"]),
+            state=StageState.from_dict(input_dict["state"]),
         )
 
     def to_dict(self) -> dict:
-        """Flatten a class Stage to a single-level dictionary
+        """Serialize a class Stage to a dictionary with separate "config" and
+        "state" sub-dictionaries
 
         Returns:
             dict: output dictionary
         """
-        return {**self.config.to_dict(), **self.state.to_dict()}
+        return {"config": self.config.to_dict(), "state": self.state.to_dict()}
 
 
 def _validate_walltime(walltime: str):

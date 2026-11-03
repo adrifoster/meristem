@@ -140,7 +140,7 @@ def full_stage(full_stage_config, submitted_state) -> Stage:
 @pytest.fixture
 def ad_stage(ad_stage_config_dict) -> Stage:
     """A instanted Stage instance from ad_stage_config_dict"""
-    return Stage.from_dict(ad_stage_config_dict)
+    return Stage(config=StageConfig.from_dict(ad_stage_config_dict))
 
 
 @pytest.fixture

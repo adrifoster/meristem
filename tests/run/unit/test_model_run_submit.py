@@ -12,7 +12,7 @@ import pytest
 from meristem.commands import meristem_cmd
 from meristem.run import model_run
 from meristem.run.model_run import ModelRun
-from meristem.run.stages import Stage, StageStatus
+from meristem.run.stages import Stage, StageConfig, StageStatus
 from jinja2 import TemplateNotFound
 
 
@@ -142,7 +142,7 @@ def _run_with_stages(root: Path, stage_dicts: list[dict], scheduler) -> ModelRun
     run = ModelRun(
         root=root,
         run_id="member_0001",
-        stages=[Stage.from_dict(stage) for stage in stage_dicts],
+        stages=[Stage(config=StageConfig.from_dict(stage)) for stage in stage_dicts],
         project="PROJ123",
         scheduler=scheduler,
     )

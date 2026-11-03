@@ -236,8 +236,9 @@ def cmd_create(args: argparse.Namespace) -> int:
 def cmd_submit(args: argparse.Namespace) -> int:
     """Execute submit and return an exit code"""
     ensemble = Ensemble.load(Path(args.root))
-    ensemble.submit(limit=args.limit, dry_run=args.dry_run)
-    print(f"Submitted ensemble '{ensemble.config.ensemble_id}' at {ensemble.root}")
+    job_ids = ensemble.submit(limit=args.limit, dry_run=args.dry_run)
+    if job_ids and not args.dry_run:
+        print(f"Submitted ensemble '{ensemble.config.ensemble_id}' at {ensemble.root}")
     return 0
 
 

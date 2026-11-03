@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from meristem.run.model_run import ModelRun
-from meristem.run.stages import Stage
+from meristem.run.stages import Stage, StageConfig
 
 
 def test_model_run_empty_run_id_raises(tmp_path, ad_stage):
@@ -95,7 +95,7 @@ def test_model_run_missing_script_does_not_raise(tmp_path, ad_stage_config_dict)
     ModelRun(
         root=tmp_path,
         run_id="run",
-        stages=[Stage.from_dict(ad_stage_config_dict)],
+        stages=[Stage(config=StageConfig.from_dict(ad_stage_config_dict))],
         email="name@ucar.edu",
         project="PROJ",
     )

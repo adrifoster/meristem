@@ -24,7 +24,7 @@ from meristem.utils import (
     run_command,
 )
 from .scheduler import DEFAULT_SCHEDULER, JobState, Scheduler, get_scheduler
-from .stages import Stage, StageStatus
+from .stages import Stage, StageConfig, StageStatus
 
 # templates dir
 _TEMPLATES = Path(__file__).parent / "templates"
@@ -208,7 +208,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
                 "Use ModelRun.load() to resume an existing run."
             )
 
-        stages = [Stage.from_dict(stage) for stage in cfg["stages"]]
+        stages = [Stage(config=StageConfig.from_dict(stage)) for stage in cfg["stages"]]
         run = cls(
             root=root,
             run_id=cfg.get("run_id", "run"),

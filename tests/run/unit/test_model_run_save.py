@@ -81,9 +81,10 @@ def test_save_stage_content(created_run):
     """Test that each stage in the state file contains expected keys"""
     state = json.loads((created_run.root / "run_state.json").read_text())
     stage_dict = state["stages"][0]
-    assert stage_dict["name"] == created_run.stages[0].config.name
-    assert stage_dict["status"] == created_run.stages[0].state.status.to_str()
-    assert isinstance(stage_dict["script"], str)  # not a Path object
+    assert set(stage_dict) == {"config", "state"}
+    assert stage_dict["config"]["name"] == created_run.stages[0].config.name
+    assert stage_dict["state"]["status"] == created_run.stages[0].state.status.to_str()
+    assert isinstance(stage_dict["config"]["script"], str)  # not a Path object
 
 
 def test_model_run_load_restores_scheduler_from_state(run_config_dict):

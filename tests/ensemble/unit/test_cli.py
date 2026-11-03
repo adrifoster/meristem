@@ -198,18 +198,22 @@ def test_create_calls_ensemble_create(mock_create, mock_ensemble, capsys):
 
 @pytest.mark.usefixtures("mock_load")
 @pytest.mark.parametrize(
-    "extra,limit,dry_run",
+    "extra,limit,dry_run,job_ids,printed",
     [
-        ([], None, False),
-        (["--limit", "2"], 2, False),
-        (["--dry-run"], None, True),
+        ([], None, False, {"001": "123"}, True),
+        (["--limit", "2"], 2, False, {"001": "123"}, True),
+        (["--dry-run"], None, True, {"001": "DRY_x"}, False),
+        ([], None, False, {}, False),  # nothing pending
     ],
 )
-def test_submit_calls_submit(mock_ensemble, capsys, extra, limit, dry_run):
+def test_submit_calls_submit(
+    mock_ensemble, capsys, extra, limit, dry_run, job_ids, printed
+):
     """Test that submit calls Ensemble.submit, passing --limit and --dry-run"""
+    mock_ensemble.submit.return_value = job_ids
     assert main(["submit", "--root", ROOT, *extra]) == 0
     mock_ensemble.submit.assert_called_once_with(limit=limit, dry_run=dry_run)
-    assert "Submitted ensemble 'my_ens-1'" in capsys.readouterr().out
+    assert ("Submitted ensemble 'my_ens-1'" in capsys.readouterr().out) == printed
 
 
 @pytest.mark.parametrize(
