@@ -24,8 +24,13 @@ from meristem.utils import write_atomically, run_command
 # state file name
 _STATE_FILE = "ensemble_state.json"
 
-# parameter file extensions
-_PARAM_EXTENSIONS = (".nc", ".json")
+# parameter file extensions each paramfile_key can read: CLM only reads
+# netCDF, FATES reads JSON or (older versions) netCDF
+_PARAM_EXTENSIONS = {
+    "paramfile": (".nc",),
+    "fates_paramfile": (".nc", ".json"),
+}
+_ALL_PARAM_EXTENSIONS = (".nc", ".json")
 
 # status order for printing
 _STATUS_ORDER = [s.value for s in StageStatus] + ["lost"]
@@ -731,24 +736,37 @@ class Ensemble:
             )
         key_members = set(key["ensemble"])
 
-        # check to make sure parameter files exist
+        # check to make sure parameter files exist, with an extension the
+        # paramfile_key can read
+        param_key = self.config.paramfile_key
+        extensions = _PARAM_EXTENSIONS[param_key]
         param_files: dict[str, Path] = {}
         problems: list[str] = []
         for member in selected:
             if member not in key_members:
                 problems.append(f"  {member}: {member} not in {key_file}")
                 continue
+            # check every extension, so a stray file of another format is
+            # ambiguous even when the key can't read it
             found = [
                 self.config.paramgen_dir / f"{member}{ext}"
-                for ext in _PARAM_EXTENSIONS
+                for ext in _ALL_PARAM_EXTENSIONS
                 if (self.config.paramgen_dir / f"{member}{ext}").is_file()
             ]
-            if len(found) == 1:
-                param_files[member] = found[0]
-            elif not found:
-                problems.append(f"  {member}: no {member}.nc or {member}.json")
-            else:
+            if len(found) > 1:
                 problems.append(f"  {member}: both .nc and .json exist")
+            elif not found:
+                problems.append(
+                    f"  {member}: no "
+                    + " or ".join(f"{member}{ext}" for ext in extensions)
+                )
+            elif found[0].suffix not in extensions:
+                problems.append(
+                    f"  {member}: {found[0].name} can't be used for {param_key}, "
+                    f"which needs {' or '.join(extensions)}"
+                )
+            else:
+                param_files[member] = found[0]
 
         if problems:
             raise FileNotFoundError(

@@ -72,7 +72,8 @@ The base case and the paramgen directory are only read, never changed.
 - **Paramgen output** for the ensemble in one directory (see [paramgen](paramgen.md)):
   - `<prefix>.txt`: the member names, one per line
   - `<prefix>_key.csv`: a table with an `ensemble` column naming each member
-  - one parameter file per member, `<member>.nc` or `<member>.json` (exactly one of the two)
+  - one parameter file per member: `<member>.nc` for `paramfile_key: paramfile`, or `<member>.nc` or
+    `<member>.json` (exactly one of the two) for `paramfile_key: fates_paramfile`
 - meristem installed in a Python environment on a filesystem the compute nodes can see, as for
   [`meristem.run`](run.md#requirements). Don't move or rebuild that environment while the ensemble is
   running.
@@ -109,7 +110,8 @@ member_stages:                                 # run once per member, in order
 Quote member names that are all digits (`"0001"`) so YAML doesn't read them as numbers.
 
 A stage's `script` is optional. If given, it runs on the member's clone and is called as
-`bash <script> <case_root> <previous_case_name> <previous_case_root>`.
+`bash <script> <case_root> <previous_case_name> <previous_case_root>`. The clone already exists
+when the script runs, but the script starts in the run's `root`, so `cd "$1"` first.
 
 ### 2. Initialise the ensemble
 
@@ -220,7 +222,7 @@ member has jobs queued or running, `clean` refuses and deletes nothing in any me
 | `ensemble_id` | yes | | Short identifier (letters, digits, hyphens, underscores), used in case and job names |
 | `root` | yes | | Directory for the ensemble's and members' state files, job scripts and logs |
 | `base_case` | yes | | Built CIME case (`BUILD_COMPLETE` is `TRUE`) that every member is cloned from |
-| `paramfile_key` | yes | | `user_nl_clm` variable to set to each member's parameter file: `paramfile` or `fates_paramfile` |
+| `paramfile_key` | yes | | `user_nl_clm` variable to set to each member's parameter file: `paramfile` (`.nc` files only) or `fates_paramfile` (`.nc` or `.json`) |
 | `paramgen` | yes | | Where to find the parameter files (see below) |
 | `member_stages` | yes | | Stages run once per member, in order (see below) |
 | `case_dir` | no | `<root>/cases` | Directory where member clones are created |

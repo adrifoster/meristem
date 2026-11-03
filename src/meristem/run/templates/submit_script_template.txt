@@ -23,11 +23,14 @@ meristem() { {{ meristem }} "$@"; }
 export -f meristem
 
 RUN_ROOT={{ root | shquote }}
+
 STAGE={{ name | shquote }}
 # which attempt of the stage this job is: meristem ignores calls from an
 # older attempt's jobs, so a stale job can't change a retried stage
 ATTEMPT={{ attempt }}
 trap 'meristem run fail --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT"' ERR
+
+cd "$RUN_ROOT"
 
 echo "=== Run: {{ run_id }} / stage: {{ name }} ==="
 echo "=== Started: $(date) ==="

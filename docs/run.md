@@ -270,6 +270,9 @@ For the first stage, neither previous-case argument is passed, so `$#` is 1.
 
 The script runs with `set -euo pipefail` enforced, so any failing command fails the stage.
 
+The script starts in the run's `root`, not the case directory. `cd "$1"` before calling case tools
+like `./xmlchange` or `./case.setup` (after `create_newcase`, if your script creates the case).
+
 > [!WARNING]
 > Do NOT add `./case.submit` to the end of your scripts! The pipeline takes care of this.
 

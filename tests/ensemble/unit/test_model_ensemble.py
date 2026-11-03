@@ -1876,6 +1876,48 @@ def test_find_param_files_both_extensions_raises(ensemble_config_dict, write_par
         _ensemble(ensemble_config_dict)._find_param_files()
 
 
+def test_find_param_files_paramfile_uses_nc(ensemble_config_dict, write_paramgen):
+    """Test that paramfile (CLM) finds .nc parameter files"""
+    directory = write_paramgen()
+    ensemble_config_dict["paramfile_key"] = "paramfile"
+    param_files = _ensemble(ensemble_config_dict)._find_param_files()
+    assert param_files == {m: directory / f"{m}.nc" for m in MEMBERS}
+
+
+def test_find_param_files_paramfile_rejects_json(ensemble_config_dict, write_paramgen):
+    """Test that a .json file is reported for paramfile, which only reads .nc"""
+    write_paramgen(ext=".json")
+    ensemble_config_dict["paramfile_key"] = "paramfile"
+    with pytest.raises(
+        FileNotFoundError,
+        match=r"ens_0000: ens_0000\.json can't be used for paramfile, which needs \.nc",
+    ):
+        _ensemble(ensemble_config_dict)._find_param_files()
+
+
+def test_find_param_files_paramfile_both_extensions_raises(
+    ensemble_config_dict, write_paramgen
+):
+    """Test that a member with both a .nc and a .json file is ambiguous for
+    paramfile too, even though it only reads .nc
+    """
+    directory = write_paramgen()
+    (directory / "ens_0001.json").touch()
+    ensemble_config_dict["paramfile_key"] = "paramfile"
+    with pytest.raises(FileNotFoundError, match="ens_0001: both .nc and .json"):
+        _ensemble(ensemble_config_dict)._find_param_files()
+
+
+def test_find_param_files_paramfile_no_file_raises(
+    ensemble_config_dict, write_paramgen
+):
+    """Test that a missing file for paramfile names only the .nc file"""
+    write_paramgen(param_files=MEMBERS[1:])
+    ensemble_config_dict["paramfile_key"] = "paramfile"
+    with pytest.raises(FileNotFoundError, match=r"ens_0000: no ens_0000\.nc$"):
+        _ensemble(ensemble_config_dict)._find_param_files()
+
+
 def test_find_param_files_reports_all_problems(ensemble_config_dict, write_paramgen):
     """Test that every problem member is reported in one error, not just the first"""
     directory = write_paramgen(

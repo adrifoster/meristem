@@ -216,7 +216,7 @@ class ParamEnsemble(ABC):
                 'param_dir': 'param_dir/',
                 'ensemble_dir': 'output/',
                 'file_prefix': 'my_run',
-                'default_param_file': 'fates_params_default.nc',
+                'default_param_file': 'fates_params_default.json',
                 'ensemble_members': 50,
                 'fixed_indices': {'fates_pft': [7, 8, 9]},
                 'posterior_sources': 'posteriors.yaml',
