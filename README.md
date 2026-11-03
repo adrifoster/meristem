@@ -11,7 +11,7 @@ meristem is developed for CLM and CLM-FATES, but its core is model-agnostic:
 - **Sampling** (Latin Hypercube, one-at-a-time, Morris, parameter groups, posterior draws) works on normalized
   parameter values in [0, 1] and knows nothing about the model.
 - **Parameter files** are read and written through a small `ParameterDataset` interface. NetCDF (CLM) and
-  FATES JSON are supported today.
+  FATES JSON are currently supported.
 - **Job chaining** runs each stage's setup script and submits the next stage on success. Stages built on
   CIME cases are supported directly, and stages with `no_cime: true` can run any script.
 
@@ -28,7 +28,7 @@ meristem has three parts:
 2. **`meristem.run`**: run one model run. Describe its stages (e.g. spinup → transient) in a YAML
    file, and submit them as a chain of PBS jobs that advance on success and stop cleanly on failure.
    A run can also be a single stage. This runs on a PBS cluster with CESM/CTSM.
-3. **`meristem.ensemble`** *(in progress)*: run an ensemble. One run per paramgen parameter file,
+3. **`meristem.ensemble`**: run an ensemble. One run per paramgen parameter file,
    each with one or more stages, submitted and tracked together.
 
 ## Installation
@@ -56,6 +56,8 @@ To install into an existing environment instead, run `pip install -e .` from the
   and posterior sampling.
 - [docs/run.md](docs/run.md): runs in detail: how the tethered PBS jobs fit together,
   the config reference, writing setup scripts, and the `meristem run` command reference.
+- [docs/ensemble.md](docs/ensemble.md): ensemble runs in detail: how the parameter ensembles 
+  generated in `paramgen` are used to create, submit, and manage ensembles of jobs.
 - [examples/paramgen](examples/paramgen): worked CLM and FATES examples, including posterior sampling.
 
 ## Quick start
@@ -127,6 +129,42 @@ meristem run status --root /glade/derecho/scratch/user/my_spinup
 ```
 
 Once each stage of a model run finishes successfully, the next stage is automatically submitted.
+
+### Submit a parameter file ensemble
+
+Write a `ensemble.yaml` listing your simulation stages (e.g., spinup, historical, transient) and any optional scripts for 
+each one:
+
+```yaml
+# ensemble.yaml
+ensemble_id: morris_test                       # short identifier (letters, digits, hyphens, underscores)
+root: /glade/derecho/scratch/user/morris_test  # ensemble state, job scripts and logs
+project: PXXXXXXX                              # PBS project code
+email: name@ucar.edu                           # email
+
+base_case: /glade/work/user/cases/base_case    # built case every member is cloned from
+paramfile_key: fates_paramfile                 # user_nl_clm variable: paramfile or fates_paramfile
+
+paramgen:
+  dir: /glade/work/user/morris_files           # paramgen output directory
+  prefix: morris                               # reads morris.txt and morris_key.csv
+  members: all                                 # or a list, e.g. ["0001", "0002"]
+
+member_stages:                                 # run once per member, in order
+  - name: spinup
+    queue: develop
+  - name: transient
+    script: /path/to/setup_transient.sh        # optional
+    queue: develop
+```
+
+Then create the ensemble, submit the first stage, and check on it:
+
+```bash
+meristem ensemble create --config ensemble.yaml
+meristem ensemble submit --root /glade/derecho/scratch/user/morris_test
+meristem ensemble status --root /glade/derecho/scratch/user/morris_test
+```
 
 ## Contributing
 

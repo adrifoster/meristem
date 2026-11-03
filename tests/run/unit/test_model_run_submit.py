@@ -436,9 +436,7 @@ def _run_cime_block(
     lines = lines.splitlines()
     # the cd into the case root, not the earlier cd into the run root
     start = next(
-        i
-        for i, line in enumerate(lines)
-        if line == f"cd {shlex.quote(str(case_root))}"
+        i for i, line in enumerate(lines) if line == f"cd {shlex.quote(str(case_root))}"
     )
     end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
     calls = run.root / "meristem_calls.txt"
