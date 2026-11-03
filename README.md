@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/meristem_logo.png" alt="meristem logo" width="250">
+</p>
+
 # meristem
 
 meristem[^name] is a Python toolkit for building and running parameter ensembles with the Community Land Model (CLM) and CLM-FATES.
