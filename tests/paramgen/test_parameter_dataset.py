@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import xarray as xr
 import pytest
 
 from meristem.paramgen.parameter_dataset import (
@@ -404,3 +405,104 @@ def test_json_save_empty_dims_raises(tmp_path):
     _ = ds["my_scalar"]
     with pytest.raises(ValueError, match="empty dims"):
         ds.save(path)
+
+
+# ===========================================================================
+# Integer variables: sampled values are rounded and written back as integers
+# ===========================================================================
+
+
+def _int_netcdf_dataset() -> NetCDFParameterDataset:
+    """A NetCDF dataset with an int32 per-PFT variable"""
+    ds = xr.Dataset(
+        {"iv": ("fates_pft", np.array([1, 2, 3], dtype=np.int32))},
+    )
+    return NetCDFParameterDataset(ds)
+
+
+def test_netcdf_integer_variable_values_load_as_float():
+    """An integer NetCDF variable reads as floats, so sampled values written into
+    a copy of it aren't truncated before they're rounded
+    """
+    values = _int_netcdf_dataset()["iv"].values
+    assert values.dtype == np.float64
+    np.testing.assert_array_equal(values, [1.0, 2.0, 3.0])
+
+
+def test_netcdf_integer_variable_setter_rounds_and_keeps_dtype(tmp_path):
+    """Setting an integer NetCDF variable rounds to the nearest integer and keeps
+    its integer type through save and reload
+    """
+    ds = _int_netcdf_dataset()
+    ds["iv"].values = np.array([0.4, 1.6, 2.7])
+    np.testing.assert_array_equal(ds["iv"].values, [0, 2, 3])
+
+    path = tmp_path / "int.nc"
+    ds.save(path)
+    with xr.open_dataset(path) as reloaded:
+        assert reloaded["iv"].dtype == np.int32
+        np.testing.assert_array_equal(reloaded["iv"].values, [0, 2, 3])
+
+
+def _int_json_dataset() -> FATESJSONParameterDataset:
+    """A FATES JSON dataset with integer per-PFT, 2-D and scalar parameters"""
+    return FATESJSONParameterDataset(
+        {
+            "dimensions": {"fates_pft": 3, "fates_leafage_class": 2},
+            "parameters": {
+                "iv": {"dtype": "integer", "dims": ["fates_pft"], "data": [1, 2, 3]},
+                "im": {
+                    "dtype": "integer",
+                    "dims": ["fates_leafage_class", "fates_pft"],
+                    "data": [[1, 2, 3], [4, 5, 6]],
+                },
+                "isc": {"dtype": "integer", "dims": ["scalar"], "data": [100]},
+            },
+        }
+    )
+
+
+def _saved_json(ds: FATESJSONParameterDataset, tmp_path) -> dict:
+    """Save ds and return the parameters as written to the file"""
+    path = tmp_path / "int.json"
+    ds.save(path)
+    return json.loads(path.read_text(encoding="utf-8"))["parameters"]
+
+
+def _all_ints(data) -> bool:
+    """Whether every value in a (nested) JSON list is an int"""
+    if isinstance(data, list):
+        return all(_all_ints(item) for item in data)
+    return isinstance(data, int)
+
+
+def test_json_integer_variable_setter_rounds(tmp_path):
+    """Setting an integer FATES JSON parameter rounds to the nearest integer and
+    writes integers (e.g. 229, not 229.13), for vector, 2-D and scalar parameters
+    """
+    ds = _int_json_dataset()
+    ds["iv"].values = np.array([0.4, 1.6, 2.7])
+    ds["im"].values = np.array([[0.4, 1.6, 2.7], [228.9, 229.13, 6.0]])
+    ds["isc"].values = np.float64(229.13)
+
+    np.testing.assert_array_equal(ds["iv"].values, [0, 2, 3])
+    params = _saved_json(ds, tmp_path)
+    assert params["iv"]["data"] == [0, 2, 3]
+    assert params["im"]["data"] == [[0, 2, 3], [229, 229, 6]]
+    assert params["isc"]["data"] == [229]
+    assert all(_all_ints(params[name]["data"]) for name in ("iv", "im", "isc"))
+
+
+def test_json_integer_variable_read_only_stays_integer(tmp_path):
+    """An integer FATES JSON parameter that's only read (so cached) is still
+    written as integers, not e.g. 3.0
+    """
+    ds = _int_json_dataset()
+    for name in ("iv", "im", "isc"):
+        _ = ds[name].values
+
+    params = _saved_json(ds, tmp_path)
+
+    assert params["iv"]["data"] == [1, 2, 3]
+    assert params["isc"]["data"] == [100]
+    assert all(_all_ints(params[name]["data"]) for name in ("iv", "im", "isc"))

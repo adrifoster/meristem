@@ -169,11 +169,21 @@ class NetCDFParameterVariable(ParameterVariable):
         self._da = da
 
     @property
+    def _is_integer(self) -> bool:
+        return np.issubdtype(self._da.dtype, np.integer)
+
+    @property
     def values(self) -> np.ndarray:
+        # an integer variable reads as floats, so sampled values written into a
+        # copy of it aren't truncated; the setter rounds them back
+        if self._is_integer:
+            return self._da.values.astype(float)
         return self._da.values
 
     @values.setter
     def values(self, arr: np.ndarray) -> None:
+        if self._is_integer:
+            arr = np.rint(arr).astype(self._da.dtype)
         self._da.values = arr
 
     @property
@@ -280,17 +290,34 @@ class FATESJSONParameterVariable(ParameterVariable):
 
     @values.setter
     def values(self, arr: np.ndarray) -> None:
-        self._values = np.asarray(arr)
+        arr = np.asarray(arr)
+        # an integer parameter is held as floats (see _load_values), so round
+        # sampled values here; to_data writes them as integers
+        self._values = np.rint(arr) if self._is_integer else arr
+        self._entry["data"] = self.to_data()
+
+    @property
+    def _is_integer(self) -> bool:
+        return self._entry.get("dtype") == "integer"
+
+    def to_data(self) -> list:
+        """The values as this parameter's JSON "data" entry, with an integer
+        parameter's values written as integers
+
+        Raises:
+            ValueError: if the parameter has empty dims (FATES JSON scalars use
+                dims=['scalar'])
+        """
         dims = self._entry.get("dims", [])
+        values = self._values.astype(int) if self._is_integer else self._values
         if dims == ["scalar"]:
-            self._entry["data"] = [float(self._values)]
-        elif dims:
-            self._entry["data"] = self._values.tolist()
-        else:
-            raise ValueError(
-                "Unexpected empty dims for FATES JSON parameter. "
-                "Scalar parameters should use dims=['scalar'] in FATES JSON format."
-            )
+            return [int(values) if self._is_integer else float(values)]
+        if dims:
+            return values.tolist()
+        raise ValueError(
+            f"Parameter '{self._name}' has unexpected empty dims in FATES JSON "
+            "format. Scalar parameters should use dims=['scalar']."
+        )
 
     @property
     def dims(self) -> list[str]:
@@ -372,16 +399,7 @@ class FATESJSONParameterDataset(ParameterDataset):
 
     def save(self, path: Path) -> None:
         for name, var in self._cache.items():
-            dims = self._params[name].get("dims", [])
-            if dims == ["scalar"]:
-                self._params[name]["data"] = [float(var.values)]
-            elif var.values.ndim > 0:
-                self._params[name]["data"] = var.values.tolist()
-            else:
-                raise ValueError(
-                    f"Parameter '{name}' has unexpected empty dims in FATES JSON format. "
-                    "Scalar parameters should use dims=['scalar']."
-                )
+            self._params[name]["data"] = var.to_data()
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self._data, f, indent=2)
 

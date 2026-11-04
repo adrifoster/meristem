@@ -64,6 +64,11 @@ A folder containing CSV files that describe which parameters to vary:
 | `root_param` | For `scale_from_root` type: the parameter to scale from |
 | `precision` | Optional number of decimal places to round output values to, written `.4f`, `0.4f` or `4` |
 
+Integer variables (an integer type in a NetCDF file, or `"dtype": "integer"` in a FATES JSON file)
+can be sampled like any other: each sampled value is rounded to the nearest integer (halves to
+even) and written back as an integer. The ensemble key still records the normalized sample, so it
+may differ slightly from the rounded value in the member's file.
+
 ### 3. (*optional*) Posterior source files and a posterior sources configuration file
 
 If you have posterior samples from a previous calibration and want to draw from those instead of uniform ranges, provide a `posterior_sources` YAML file and text files for the posterior sources (see below).
