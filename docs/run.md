@@ -103,7 +103,7 @@ you'd expect, use it to ask the job scheduler whether it is still running (see [
 
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
-| `root` | yes | | Working directory for the run. Job scripts, logs, the state file and each stage's case live here. Must not contain whitespace, since PBS writes job logs here |
+| `root` | yes | | Working directory for the run. Job scripts, logs, the state file and each stage's case live here. Must not contain whitespace, since PBS writes job logs here. Must not exist yet: `create` makes it, and a full `clean` removes it |
 | `stages` | yes | | List of stages, run in order (see below) |
 | `run_id` | no | `run` | Short identifier used in job names |
 | `project` | no | `$PROJECT` | PBS project/account code (`#PBS -A`). If omitted, the `PROJECT` environment variable is used, and it's an error if neither is set |
@@ -176,7 +176,10 @@ meristem run cancel --root <path> [--dry-run]
 
 meristem run clean --root <path> [--stage/--stages <name1> <name2> ...] [--cancel] [--dry-run] [--include-archive] [--yes]
   Delete a run's files. With no --stage, deletes every stage's case directory and
-  CIME run directory (RUNDIR), then the whole run root, including the state file.
+  CIME run directory (RUNDIR) and job scripts/logs, then the state file, then
+  removes the run root if nothing else is left in it. Anything else in the root
+  (e.g. your own notes or plots) is kept, along with the root, and listed. If a
+  delete fails partway, the state file is kept, so run clean again to finish.
   With --stage, deletes only those stages' case directories, run directories and
   job scripts/logs; the run root and state file are kept, and the stages' status
   is left as it is (use retry to rerun one), unless --cancel cancels their jobs.

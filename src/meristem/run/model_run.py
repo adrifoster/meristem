@@ -19,6 +19,8 @@ from meristem.commands import meristem_cmd
 from meristem.utils import (
     check_email,
     check_id,
+    check_root_new,
+    remove_root_if_empty,
     to_absolute_path,
     write_atomically,
     run_command,
@@ -194,6 +196,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             root is relative
             FileExistsError: if a state file already exists at the target root,
             indicating that the run has already been initialized
+            FileExistsError: if root already exists (even empty), since a whole
+            clean deletes root
         """
         cfg = _load_config(config)
         _validate_config(cfg)
@@ -207,6 +211,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
                 f"A state file already exists at {state_path}. "
                 "Use ModelRun.load() to resume an existing run."
             )
+        # a whole clean deletes root, so root must be one meristem makes
+        check_root_new(root)
 
         stages = [Stage(config=StageConfig.from_dict(stage)) for stage in cfg["stages"]]
         run = cls(
@@ -220,7 +226,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             or get_scheduler(cfg.get("scheduler", DEFAULT_SCHEDULER)),
         )
         run._validate_stages()
-        run.root.mkdir(parents=True, exist_ok=True)
+        run.root.mkdir(parents=True)
         run.save()
         return run
 
@@ -958,6 +964,9 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         with cancel, a job that was running may still be exiting; if the delete fails,
         run clean again
 
+        Cleaning all stages deletes the state file last, then removes root only if
+        nothing else is left in it; otherwise root is kept and what's left printed.
+
         Args:
             stages (list[str] | None, optional): Input stages to clean. Defaults to None.
                 If None, cleans all stages
@@ -977,7 +986,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             RuntimeError if the scheduler query or cancel fails, or xmlquery fails.
 
         Returns:
-            list[Path]: List of paths cleaned or what would be cleaned (if dry_run=True)
+            list[Path]: List of paths cleaned or what would be cleaned (if dry_run=True),
+            not counting root
         """
 
         selected = self._select_stages(stages)
@@ -1001,6 +1011,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
                 shutil.rmtree(path)
             elif path.exists() or path.is_symlink():
                 path.unlink()
+        if stages is None:
+            remove_root_if_empty(self.root)
 
         return targets
 
@@ -1240,8 +1252,10 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
                 if pattern.match(path.name):
                     to_clean.append(path)
 
-        if stages is None and self.root not in to_clean:
-            to_clean.append(self.root)
+        # the state file goes last, so a clean that fails partway can be rerun;
+        # root itself isn't a target: clean removes it only if it's then empty
+        if stages is None:
+            to_clean.append(self.root / _STATE_FILE)
 
         return to_clean
 

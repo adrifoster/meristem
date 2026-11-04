@@ -313,18 +313,26 @@ def cmd_clean(args: argparse.Namespace) -> int:
         print("Nothing to clean")
         return 0
 
+    root_note = (
+        f"...then the ensemble root {ensemble.root}, if nothing else is left in it"
+        if args.members is None and args.stages is None
+        else None
+    )
+
     if args.dry_run:
         print("Will delete:")
         print("------------")
         for path in targets:
             print(f"  {path}")
+        if root_note:
+            print(root_note)
         return 0
 
     print(f"Will delete {len(targets)} paths, e.g.:")
     for path in targets[:5]:
         print(f"  {path}")
-    if args.members is None and args.stages is None:
-        print(f"...including the ensemble root {ensemble.root}")
+    if root_note:
+        print(root_note)
 
     if args.cancel:
         print("Running or queued jobs will be canceled first.")

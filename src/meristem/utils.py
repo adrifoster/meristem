@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -63,6 +64,51 @@ def check_email(name: str, value: str) -> None:
             f"{name} {value!r} must be an email address, or a comma-separated list "
             f"of them with no spaces (e.g. name@ucar.edu); not valid: {bad}."
         )
+
+
+def check_root_new(root: Path) -> None:
+    """Check a run or ensemble root doesn't exist yet, so that create makes it
+
+    A whole clean deletes root, so root must hold nothing meristem didn't make.
+
+    Args:
+        root (Path): root directory to check
+
+    Raises:
+        FileExistsError: if root already exists, even as an empty directory
+    """
+    if root.exists():
+        raise FileExistsError(
+            f"root {root} already exists. Choose a path that doesn't exist yet; "
+            "meristem creates root itself, and a whole clean removes it."
+        )
+
+
+def remove_root_if_empty(root: Path) -> list[Path]:
+    """Remove a run or ensemble root once clean has deleted what meristem made in
+    it, but only if nothing else is left; otherwise keep it and say what's left
+
+    Empty directories don't count as something left. A symlink does (rmtree would
+    only unlink it, but it may be how someone reaches their data).
+
+    Args:
+        root (Path): root directory
+
+    Returns:
+        list[Path]: what's left under root (empty if root was removed or is gone)
+    """
+    if not root.is_dir() or root.is_symlink():
+        return []
+    left = sorted(p for p in root.rglob("*") if p.is_symlink() or not p.is_dir())
+    if left:
+        shown = "\n".join(f"  {path}" for path in left[:10])
+        more = f"\n  ...and {len(left) - 10} more" if len(left) > 10 else ""
+        print(
+            f"kept {root}: it still holds files meristem didn't make:\n{shown}{more}"
+        )
+        return left
+    shutil.rmtree(root)
+    return []
 
 
 def to_absolute_path(

@@ -121,6 +121,21 @@ def test_model_run_raises_if_state_file_already_exists(run_config_dict):
         ModelRun.create(run_config_dict)
 
 
+@pytest.mark.parametrize("contents", [[], ["keep.txt"]])
+def test_model_run_create_existing_root_raises(run_config_dict, contents):
+    """Test that ModelRun.create refuses a root that already exists, even an empty
+    one, since a whole clean deletes root and must not take anything meristem
+    didn't make with it
+    """
+    root = Path(run_config_dict["root"])
+    root.mkdir(parents=True)
+    for name in contents:
+        (root / name).write_text("data", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="root .* already exists"):
+        ModelRun.create(run_config_dict)
+    assert sorted(p.name for p in root.iterdir()) == contents
+
+
 def test_model_run_creates_nested_root(tmp_path, run_config_dict):
     """Test that ModelRun.create can create a nested root file"""
     run_config_dict["root"] = str(tmp_path / "a" / "b" / "c")

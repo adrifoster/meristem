@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from meristem.run.model_run import ModelRun
+from meristem.run import model_run
+from meristem.run.model_run import ModelRun, _STATE_FILE
 from meristem.run.scheduler import JobState
 from meristem.run.stages import StageStatus
 
@@ -35,9 +36,11 @@ def _fake_case(case_root: Path, rundir: Path, archive: Path) -> None:
     xmlquery.chmod(0o755)
 
 
-def test_clean_targets_all_stages_ends_with_root(two_stage_run):
-    """Test that _clean_targets() includes all the required items and that the last item
-    is the run.root"""
+def test_clean_targets_all_stages_ends_with_state_file(two_stage_run):
+    """Test that _clean_targets() includes all the required items, ends with the
+    state file (so a clean that fails partway can be rerun), and never lists the
+    root itself (it's removed only if nothing else is left in it)
+    """
 
     expected = []
     for stage in two_stage_run.stages:
@@ -48,7 +51,8 @@ def test_clean_targets_all_stages_ends_with_root(two_stage_run):
 
     targets = two_stage_run._clean_targets()
     assert set(expected) <= set(targets)
-    assert targets[-1] == two_stage_run.root
+    assert targets[-1] == two_stage_run.root / _STATE_FILE
+    assert two_stage_run.root not in targets
 
 
 def test_clean_targets_one_stage(two_stage_run):
@@ -201,9 +205,61 @@ def test_clean_deletes_everything(tmp_path, created_run):
 
     targets = created_run.clean()
 
-    assert targets[-1] == created_run.root
+    assert targets[-1] == created_run.root / _STATE_FILE
     assert not created_run.root.exists()
     assert not rundir.exists()
+
+
+def test_clean_keeps_root_with_other_files(tmp_path, created_run, capsys):
+    """Test that a whole clean deletes only what meristem made, and keeps the
+    root (naming what's left) when it holds anything else, including a symlink
+    """
+    _make_stage_files(created_run)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("data")
+    notes = created_run.root / "notes.txt"
+    notes.write_text("mine")
+    plot = created_run.root / "plots" / "lai.png"
+    plot.parent.mkdir()
+    plot.write_text("mine")
+    link = created_run.root / "obs"
+    link.symlink_to(outside)
+    capsys.readouterr()
+
+    targets = created_run.clean()
+
+    assert not any(path.exists() for path in targets)
+    assert not (created_run.root / _STATE_FILE).exists()
+    assert notes.is_file() and plot.is_file() and link.is_symlink()
+    assert (outside / "keep.txt").is_file()
+    assert created_run.root not in targets
+    out = capsys.readouterr().out
+    assert f"kept {created_run.root}" in out
+    assert str(notes) in out
+
+
+def test_clean_failure_keeps_state_file(created_run, fake_scheduler, monkeypatch):
+    """Test that if deleting a target fails, the state file is kept, so the run
+    still loads and clean can be run again to finish
+    """
+    _make_stage_files(created_run)
+    case_root = created_run.root / "spinup_ad"
+    real_rmtree = model_run.shutil.rmtree
+
+    def failing_rmtree(path, *args, **kwargs):
+        if Path(path) == case_root:
+            raise OSError("Device or resource busy")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(model_run.shutil, "rmtree", failing_rmtree)
+    with pytest.raises(OSError, match="busy"):
+        created_run.clean()
+    assert (created_run.root / _STATE_FILE).is_file()
+
+    monkeypatch.setattr(model_run.shutil, "rmtree", real_rmtree)
+    ModelRun.load(created_run.root, scheduler=fake_scheduler).clean()
+    assert not created_run.root.exists()
 
 
 def test_clean_one_stage_keeps_others(two_stage_run, fake_scheduler):

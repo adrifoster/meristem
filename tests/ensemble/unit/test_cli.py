@@ -322,8 +322,12 @@ CLEAN_ARGV = ["clean", "--root", ROOT]
 
 
 def _clean_targets(n: int) -> list[Path]:
-    """n fake clone paths, then the ensemble root, as a whole clean lists them"""
-    return [Path(f"/cases/clone_{i}") for i in range(n)] + [Path(ROOT)]
+    """n fake clone paths, then the ensemble state file, as a whole clean lists
+    them
+    """
+    return [Path(f"/cases/clone_{i}") for i in range(n)] + [
+        Path(ROOT) / "ensemble_state.json"
+    ]
 
 
 def _no_input(_prompt=""):
@@ -383,6 +387,7 @@ def test_clean_dry_run_lists_every_path(mock_clean, monkeypatch, capsys):
     assert mock_clean.clean.call_args_list == [_clean_call(dry_run=True)]
     out = capsys.readouterr().out
     assert all(str(path) in out for path in _clean_targets(7))
+    assert f"ensemble root {mock_clean.root}, if nothing else is left" in out
 
 
 @pytest.mark.usefixtures("mock_load")
@@ -396,7 +401,10 @@ def test_clean_prompt_shows_summary(mock_clean, monkeypatch, capsys):
     assert "Will delete 8 paths" in out
     assert "/cases/clone_0" in out
     assert "/cases/clone_6" not in out
-    assert f"ensemble root {mock_clean.root}" in out
+    assert (
+        f"then the ensemble root {mock_clean.root}, if nothing else is left in it"
+        in out
+    )
     assert "--dry-run" in out
 
 

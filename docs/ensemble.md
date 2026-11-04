@@ -192,10 +192,13 @@ meristem ensemble clean --root /glade/derecho/scratch/user/morris_test
 ```
 
 With no options, this deletes the whole ensemble: every member's clones and their CIME run
-directories (RUNDIR), then the ensemble root itself, including the state files, job scripts, logs
-and any `manifest.csv` there (write the manifest somewhere else first with `-o` if you want to keep
-it). The base case, the paramgen directory and a `case_dir` outside the root are left in place;
-only the clones inside `case_dir` are deleted.
+directories (RUNDIR), job scripts, logs and state files, then any `manifest.csv` in the root (write
+the manifest somewhere else first with `-o` if you want to keep it), then the ensemble state file.
+Finally it removes the ensemble root, but only if nothing else is left in it: anything meristem
+didn't make (e.g. your own notes or plots) is kept, along with the root, and listed. The base case,
+the paramgen directory and a `case_dir` outside the root are left in place; only the clones inside
+`case_dir` are deleted. If a delete fails partway, run `clean` again: members it already finished
+are skipped.
 
 To clean part of the ensemble, name members with `--members 0001 0002` and/or stages with
 `--stages spinup transient`. Only those member stages' clones, run directories and job scripts/logs
@@ -220,7 +223,7 @@ member has jobs queued or running, `clean` refuses and deletes nothing in any me
 | Key | Required | Default | Description |
 | --- | --- | --- | --- |
 | `ensemble_id` | yes | | Short identifier (letters, digits, hyphens, underscores), used in case and job names |
-| `root` | yes | | Directory for the ensemble's and members' state files, job scripts and logs |
+| `root` | yes | | Directory for the ensemble's and members' state files, job scripts and logs. Must not exist yet: `create` makes it, and a full `clean` removes it |
 | `base_case` | yes | | Built CIME case (`BUILD_COMPLETE` is `TRUE`) that every member is cloned from |
 | `paramfile_key` | yes | | `user_nl_clm` variable to set to each member's parameter file: `paramfile` (`.nc` files only) or `fates_paramfile` (`.nc` or `.json`) |
 | `paramgen` | yes | | Where to find the parameter files (see below) |
@@ -276,8 +279,10 @@ meristem ensemble cancel --root <path> [--members <m1> <m2> ...] [--dry-run]
 meristem ensemble clean --root <path> [--members <m1> <m2> ...] [--stage/--stages <name1> <name2> ...]
         [--include-archive] [--cancel] [--dry-run] [--yes]
   Delete an ensemble's files. With neither --members nor --stages, deletes every
-  member's clones and CIME run directories (RUNDIR), then the whole ensemble root,
-  including the state files and any manifest.csv there.
+  member's clones, CIME run directories (RUNDIR), job scripts/logs and state files,
+  then any manifest.csv in the root and the ensemble state file, then removes the
+  root if nothing else is left in it (anything else is kept, and listed). If a
+  delete fails partway, rerun clean; members already finished are skipped.
   With --members and/or --stages, deletes only those member stages' clones, run
   directories and job scripts/logs; the members' state files are kept, and the
   stages' status is left as it is (use retry to rerun one), unless --cancel

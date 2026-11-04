@@ -145,11 +145,19 @@ def test_create_existing_state_file_raises(created_ensemble, ready_config_dict):
     assert state_path.read_text(encoding="utf-8") == before
 
 
-def test_create_existing_root_without_state_file(ready_config_dict):
-    """Test that create works in a root directory that exists but has no state"""
-    Path(ready_config_dict["root"]).mkdir(parents=True)
-    ensemble = Ensemble.create(ready_config_dict)
-    assert (ensemble.root / _STATE_FILE).is_file()
+@pytest.mark.parametrize("contents", [[], ["keep.txt"]])
+def test_create_existing_root_without_state_file_raises(ready_config_dict, contents):
+    """Test that create refuses a root that already exists, even an empty one,
+    since a whole clean deletes root and must not take anything meristem didn't
+    make with it
+    """
+    root = Path(ready_config_dict["root"])
+    root.mkdir(parents=True)
+    for name in contents:
+        (root / name).write_text("data", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="root .* already exists"):
+        Ensemble.create(ready_config_dict)
+    assert sorted(p.name for p in root.iterdir()) == contents
 
 
 def test_create_missing_paramgen_output_raises(ensemble_config_dict, write_base_case):
@@ -1113,7 +1121,8 @@ def test_clean_whole_ensemble(clean_ensemble, capsys):
 
     targets = clean_ensemble.clean()
 
-    assert targets[-1] == clean_ensemble.root
+    assert targets[-1] == clean_ensemble.root / _STATE_FILE
+    assert clean_ensemble.root not in targets
     assert not clean_ensemble.root.exists()
     assert not any(clone.exists() for clone in clones.values())
     assert clean_ensemble.base_case.is_dir()
@@ -1136,6 +1145,68 @@ def test_clean_whole_ensemble_default_case_dir(
     ensemble.clean()
 
     assert not ensemble.root.exists()
+
+
+def test_clean_whole_ensemble_deletes_manifest(clean_ensemble):
+    """Test that a whole clean deletes the default manifest.csv"""
+    manifest = clean_ensemble.root / "manifest.csv"
+    manifest.write_text("member\n")
+
+    assert manifest in clean_ensemble.clean(dry_run=True)
+    clean_ensemble.clean()
+
+    assert not clean_ensemble.root.exists()
+
+
+def test_clean_whole_ensemble_keeps_root_with_other_files(clean_ensemble, capsys):
+    """Test that a whole clean deletes only what meristem made, and keeps the
+    root (naming what's left) when it, or a member root, holds anything else
+    """
+    clones = _make_clones(clean_ensemble)
+    notes = clean_ensemble.root / "notes.txt"
+    notes.write_text("mine")
+    member_notes = clean_ensemble.root / "members" / "ens_0001" / "notes.txt"
+    member_notes.write_text("mine")
+    capsys.readouterr()
+
+    clean_ensemble.clean()
+
+    assert not any(clone.exists() for clone in clones.values())
+    assert not (clean_ensemble.root / _STATE_FILE).exists()
+    assert not (clean_ensemble.root / "members" / "ens_0000").exists()
+    assert not (member_notes.parent / _RUN_STATE_FILE).exists()
+    assert notes.is_file() and member_notes.is_file()
+    out = capsys.readouterr().out
+    assert f"kept {clean_ensemble.root}" in out
+    assert str(notes) in out and str(member_notes) in out
+
+
+def test_clean_whole_ensemble_rerun_after_failure(
+    clean_ensemble, fake_scheduler, monkeypatch
+):
+    """Test that a whole clean that fails partway (e.g. a delete fails after
+    earlier members are already gone) can be finished by running it again
+    """
+    clones = _make_clones(clean_ensemble)
+    stuck = clones[("ens_0001", "spinup_ad")]
+    real_rmtree = model_run.shutil.rmtree
+
+    def failing_rmtree(path, *args, **kwargs):
+        if Path(path) == stuck:
+            raise OSError("Device or resource busy")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(model_run.shutil, "rmtree", failing_rmtree)
+    with pytest.raises(OSError, match="busy"):
+        clean_ensemble.clean()
+    assert not (clean_ensemble.root / "members" / "ens_0000").exists()
+    assert (clean_ensemble.root / _STATE_FILE).is_file()
+
+    monkeypatch.setattr(model_run.shutil, "rmtree", real_rmtree)
+    Ensemble.load(clean_ensemble.root).clean()
+
+    assert not clean_ensemble.root.exists()
+    assert not any(clone.exists() for clone in clones.values())
 
 
 def test_clean_selected_members_keeps_state(clean_ensemble):
@@ -1194,13 +1265,13 @@ def test_clean_unknown_member_or_stage_raises(clean_ensemble, kwargs, match):
 
 
 def test_clean_dry_run_deletes_nothing(clean_ensemble):
-    """Test that a dry run lists the clones and the root but deletes nothing"""
+    """Test that a dry run lists the clones and the state file but deletes nothing"""
     clones = _make_clones(clean_ensemble)
 
     targets = clean_ensemble.clean(dry_run=True)
 
     assert set(clones.values()) <= set(targets)
-    assert targets[-1] == clean_ensemble.root
+    assert targets[-1] == clean_ensemble.root / _STATE_FILE
     assert all(path.exists() for path in targets)
 
 

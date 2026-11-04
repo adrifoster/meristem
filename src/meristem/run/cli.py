@@ -444,6 +444,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
     print("------------")
     for path in targets:
         print(f"  {path}")
+    if args.stages is None:
+        print(f"...then {run.root}, if nothing else is left in it")
 
     if args.cancel:
         print("------------")

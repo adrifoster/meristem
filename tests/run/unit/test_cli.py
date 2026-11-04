@@ -553,6 +553,21 @@ def test_clean_yes_skips_prompt(mock_clean_run, monkeypatch):
 
 
 @pytest.mark.usefixtures("mock_load")
+def test_clean_whole_run_says_root_goes_only_if_empty(mock_clean_run, capsys):
+    """Test that a whole clean's preview says root is removed only if empty"""
+    assert main(CLEAN_ARGV + ["--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert f"then {mock_clean_run.root}, if nothing else is left in it" in out
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_one_stage_does_not_mention_root(mock_clean_run, capsys):
+    """Test that cleaning some stages doesn't say root goes"""
+    assert main(CLEAN_ARGV + ["--stage", "spinup_ad", "--dry-run"]) == 0
+    assert "if nothing else is left" not in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("mock_load")
 def test_clean_cancel_says_jobs_will_be_canceled(mock_clean_run, capsys):
     """Test that --cancel is passed through and the preview says so"""
     assert main(CLEAN_ARGV + ["--cancel", "--dry-run"]) == 0

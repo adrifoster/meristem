@@ -6,7 +6,6 @@ import os
 import re
 import json
 import shlex
-import shutil
 from collections import Counter
 from pathlib import Path
 from dataclasses import replace
@@ -18,8 +17,13 @@ import pandas as pd
 from meristem.commands import meristem_cmd
 from meristem.ensemble.config import EnsembleConfig
 from meristem.run.stages import Stage, StageStatus
-from meristem.run.model_run import ModelRun
-from meristem.utils import write_atomically, run_command
+from meristem.run.model_run import _STATE_FILE as _RUN_STATE_FILE, ModelRun
+from meristem.utils import (
+    check_root_new,
+    remove_root_if_empty,
+    write_atomically,
+    run_command,
+)
 
 # state file name
 _STATE_FILE = "ensemble_state.json"
@@ -95,6 +99,8 @@ class Ensemble:
             TypeError: if config is not an EnsembleConfig, dict, str, or Path
             FileExistsError: if a state file already exists at the target root,
             indicating that the ensemble has already been initialized
+            FileExistsError: if root already exists (even empty), since a whole
+            clean deletes root
             FileExistsError: if any member stage's case directory already exists
             (e.g. left in a shared case_dir by an ensemble with the same
             ensemble_id), since prepare would reuse it as this member's clone
@@ -107,6 +113,8 @@ class Ensemble:
                 f"A state file already exists at {state_path}. "
                 "Use Ensemble.load() to resume an existing ensemble."
             )
+        # a whole clean deletes root, so root must be one meristem makes
+        check_root_new(ensemble.root)
 
         ensemble.param_files = ensemble._find_param_files()
         ensemble._check_base_case()
@@ -114,7 +122,7 @@ class Ensemble:
         member_runs = ensemble._member_runs()
         ensemble._check_case_roots_free()
 
-        ensemble.root.mkdir(parents=True, exist_ok=True)
+        ensemble.root.mkdir(parents=True)
         for run in member_runs:
             run.root.mkdir(parents=True, exist_ok=True)
             run.save()
@@ -315,7 +323,10 @@ class Ensemble:
         (or all if None supplied)
 
         Cleaning only some members or stages keeps each member's state, while a whole-ensemble
-        clean deletes <root>, including any manifest.csv there. With cancel, the
+        clean deletes every member, then <root>/manifest.csv and the ensemble state
+        file, then removes <root> only if nothing else is left in it (otherwise
+        it's kept and what's left printed). Members already cleaned by a whole
+        clean that failed partway are skipped, so rerunning it finishes. With cancel, the
         selected members' active jobs are canceled first and their submitted stages
         marked failed (as in cancel), so retry --failed can rerun them.
 
@@ -349,6 +360,13 @@ class Ensemble:
         whole = members is None and stages is None
         if whole:
             run_stages = None
+            # a member whose state file is gone was finished by a whole clean that
+            # then failed on a later member; skip it so rerunning clean can finish
+            selected = [
+                member
+                for member in selected
+                if (self.root / "members" / member / _RUN_STATE_FILE).is_file()
+            ]
         else:
             run_stages = stages or self.stage_names
 
@@ -371,8 +389,11 @@ class Ensemble:
                 _preview(blocked),
             )
 
-        if whole:
-            targets.append(self.root)
+        # the ensemble's own files; its state file goes last, so a clean that fails
+        # partway can be rerun. root itself is removed only if it's then empty
+        own = [self.root / "manifest.csv", self.root / _STATE_FILE] if whole else []
+        own = [path for path in own if path.is_file()]
+        targets += own
 
         if dry_run:
             return targets
@@ -386,9 +407,11 @@ class Ensemble:
                     cancel=cancel,
                     dry_run=False,
                 )
+        for path in own:
+            path.unlink(missing_ok=True)
+        targets += own
         if whole:
-            shutil.rmtree(self.root)
-            targets.append(self.root)
+            remove_root_if_empty(self.root)
 
         print(
             f"{self.config.ensemble_id}: cleaned {len(targets)} paths "
