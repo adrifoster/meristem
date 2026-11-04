@@ -12,8 +12,8 @@ from enum import Enum
 
 from meristem.utils import check_id, to_absolute_path
 
-_WALLTIME_RE = re.compile(r"^\d+(?::\d+)*$")
-_MEMORY_RE = re.compile(r"^\d+(\.\d+)?(B|KB|MB|GB|TB)$", re.IGNORECASE)
+_WALLTIME_RE = re.compile(r"\d+(?::\d+)*")
+_MEMORY_RE = re.compile(r"\d+(\.\d+)?(B|KB|MB|GB|TB)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +372,7 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
             raise ValueError(f"ncpus must be >=1, got {self.ncpus!r}.")
         if self.select < 1:
             raise ValueError(f"select must be >=1, got {self.select!r}.")
-        if not _MEMORY_RE.match(self.memory):
+        if not _MEMORY_RE.fullmatch(self.memory):
             raise ValueError(
                 f"memory {self.memory!r} does not match expected format "
                 "<number><unit> where unit is one of B, KB, MB, GB, TB. "
@@ -479,7 +479,7 @@ def _validate_walltime(walltime: str):
     Args:
         walltime (str): input string
     """
-    if not _WALLTIME_RE.match(walltime):
+    if not _WALLTIME_RE.fullmatch(walltime):
         raise ValueError(
             f"walltime {walltime!r} must be a colon-separated time string, "
             "e.g. '6:00:00' or '06:00:00' or '24:00:00'. "

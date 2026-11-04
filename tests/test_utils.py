@@ -93,6 +93,7 @@ def test_check_id_valid_passes(value):
         "a.b",
         "a\tb",
         "a\nb",
+        "abc\n",  # $ matches before a final newline; would end the #PBS header
     ],
 )
 def test_check_id_invalid_characters_raises(value):
@@ -132,6 +133,7 @@ def test_check_email_valid_passes(value):
     [
         ("name@ucar.edu -l select=100", ["name@ucar.edu -l select=100"]),
         ("name@ucar.edu\ntouch PWNED", ["name@ucar.edu\ntouch PWNED"]),
+        ("name@ucar.edu\n", ["name@ucar.edu\n"]),  # trailing newline
         ('"name"@ucar.edu', ['"name"@ucar.edu']),
         ("name", ["name"]),
         ("a@b.org, c@d.org", [" c@d.org"]),  # PBS lists have no spaces

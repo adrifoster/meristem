@@ -8,11 +8,11 @@ from pathlib import Path
 
 # identifiers (run IDs, ensemble IDs, stage names) end up in PBS job names,
 # file and directory names, and job scripts, so only these characters are safe
-_ID_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_ID_RE = re.compile(r"[A-Za-z0-9_\-]+")
 
 # one address in a #PBS -M list; deliberately loose, but with nothing that can
 # break out of the #PBS line (whitespace, newlines, quotes, shell characters)
-_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+$")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+")
 
 
 def check_id(name: str, value: str, where: str = "") -> None:
@@ -34,7 +34,8 @@ def check_id(name: str, value: str, where: str = "") -> None:
         )
     if not value:
         raise ValueError(f"{name}{where} must not be empty.")
-    if not _ID_RE.match(value):
+    # fullmatch, not match with ^...$: $ also matches before a trailing newline
+    if not _ID_RE.fullmatch(value):
         raise ValueError(
             f"{name} {value!r}{where} contains invalid characters. "
             "Only letters, digits, hyphens, and underscores are allowed."
@@ -56,7 +57,7 @@ def check_email(name: str, value: str) -> None:
         raise ValueError(
             f"{name} must be a string, got {type(value).__name__} {value!r}."
         )
-    bad = [entry for entry in value.split(",") if not _EMAIL_RE.match(entry)]
+    bad = [entry for entry in value.split(",") if not _EMAIL_RE.fullmatch(entry)]
     if bad:
         raise ValueError(
             f"{name} {value!r} must be an email address, or a comma-separated list "

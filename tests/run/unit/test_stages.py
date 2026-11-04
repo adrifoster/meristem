@@ -420,6 +420,7 @@ def test_stage_config_empty_queue_raises(minimal_stage_config_dict):
         "0:0:0",  # zero walltime, no padding
         "0",  # zero walltime, single component
         "",  # empty
+        "06:00:00\n",  # trailing newline would end the #PBS header
     ],
 )
 def test_stage_config_invalid_walltime_raises(minimal_stage_config_dict, bad_walltime):
@@ -444,7 +445,7 @@ def test_stage_config_valid_walltime(minimal_stage_config_dict, good_walltime):
     assert stage_config.walltime == good_walltime
 
 
-@pytest.mark.parametrize("bad_memory", ["1", "GB", "1 GB", "16gb x", ""])
+@pytest.mark.parametrize("bad_memory", ["1", "GB", "1 GB", "16gb x", "", "16GB\n"])
 def test_stage_config_invalid_memory_raises(minimal_stage_config_dict, bad_memory):
     """Test that StageConfig initialized with bad memory values raises a ValueError"""
     config = {**minimal_stage_config_dict, "memory": bad_memory}
