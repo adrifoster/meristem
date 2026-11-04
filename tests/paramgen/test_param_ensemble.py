@@ -587,6 +587,48 @@ def test_lh_create_ensemble_key(lh_ensemble):
     assert len(key) == 5
 
 
+def _check_key_order_past_9999(ensemble: ParamEnsemble) -> None:
+    """Check the key stays in member order past 10,000 members, where names stop
+    sorting as text (test_10000 would sort between test_1000 and test_1001), so
+    key row i is still member i, as SALib's Morris analysis needs
+    """
+    n = 10_002
+    samples = [
+        EnsembleMemberSample(
+            [ParameterSample(group, i / n) for group in ensemble.sampling_units]
+        )
+        for i in range(n)
+    ]
+
+    key = ensemble.create_ensemble_key(samples)
+
+    assert list(key["ensemble"]) == [f"test_{i:04d}" for i in range(n)]
+    first = ensemble.sampling_units[0].name
+    assert list(key[first]) == [i / n for i in range(n)]
+
+
+def test_lh_create_ensemble_key_keeps_member_order_past_9999(lh_ensemble):
+    """Test that an LH key stays in member order past 10,000 members"""
+    _check_key_order_past_9999(lh_ensemble)
+
+
+def test_morris_create_ensemble_key_keeps_member_order_past_9999(morris_ensemble):
+    """Test that a Morris key stays in member order past 10,000 members"""
+    _check_key_order_past_9999(morris_ensemble)
+
+
+def test_lh_create_ensemble_key_duplicate_unit_name_raises(lh_ensemble):
+    """Test that two samples with the same sampling unit name in one member
+    raise, rather than one silently replacing the other in the key
+    """
+    group = lh_ensemble.sampling_units[0]
+    samples = [
+        EnsembleMemberSample([ParameterSample(group, 0.1), ParameterSample(group, 0.2)])
+    ]
+    with pytest.raises(ValueError, match=f"{group.name!r} is used more than once"):
+        lh_ensemble.create_ensemble_key(samples)
+
+
 def test_oat_create_ensemble_key(oat_ensemble):
     """Test that create_ensemble_key works for an OAT ensemble"""
     samples = oat_ensemble.create_samples()

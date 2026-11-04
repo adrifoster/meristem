@@ -576,26 +576,7 @@ class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):
         Returns:
             pd.DataFrame: output data frame that serves as ensemble key
         """
-
-        param_dfs = []
-        for i, sample in enumerate(samples):
-            group_names = []
-            sample_values = []
-            for param_sample in sample:
-                group_names.append(param_sample.group.name)
-                sample_values.append(param_sample.normalized_value)
-            df = pd.DataFrame({"parameter": group_names, "value": sample_values})
-            df["ensemble"] = f"{self.file_prefix}_{_generate_suffix(i)}"
-            param_dfs.append(df)
-        param_df = pd.concat(param_dfs, ignore_index=True)
-
-        order = [g.name for g in self.sampling_units]
-        return (
-            param_df.pivot(index="ensemble", columns="parameter", values="value")
-            .reindex(columns=order)
-            .reset_index()
-            .rename_axis(None, axis=1)
-        )
+        return _normalized_value_key(samples, self.file_prefix, self.sampling_units)
 
     def build_lh(self, prebuilt: np.ndarray | None = None) -> np.ndarray:
         """Create a Latin Hypercube, or validate a pre-built one
@@ -831,26 +812,7 @@ class MorrisEnsemble(ParamEnsemble, ensemble_type="Morris"):
         Returns:
             pd.DataFrame: output data frame that serves as ensemble key
         """
-
-        param_dfs = []
-        for i, sample in enumerate(samples):
-            group_names = []
-            sample_values = []
-            for param_sample in sample:
-                group_names.append(param_sample.group.name)
-                sample_values.append(param_sample.normalized_value)
-            df = pd.DataFrame({"parameter": group_names, "value": sample_values})
-            df["ensemble"] = f"{self.file_prefix}_{_generate_suffix(i)}"
-            param_dfs.append(df)
-        param_df = pd.concat(param_dfs, ignore_index=True)
-
-        order = [g.name for g in self.sampling_units]
-        return (
-            param_df.pivot(index="ensemble", columns="parameter", values="value")
-            .reindex(columns=order)
-            .reset_index()
-            .rename_axis(None, axis=1)
-        )
+        return _normalized_value_key(samples, self.file_prefix, self.sampling_units)
 
     def build_morris_samples(self) -> np.ndarray:
         """Create a matrix for the Morris sampling
@@ -918,6 +880,43 @@ def _existing_outputs(out_dir: Path, file_prefix: str) -> list[Path]:
         for path in out_dir.iterdir()
         if path.is_file() and (path.name in fixed or member.fullmatch(path.name))
     )
+
+
+def _normalized_value_key(
+    samples: list[EnsembleMemberSample],
+    file_prefix: str,
+    sampling_units: list[ParamGroup],
+) -> pd.DataFrame:
+    """Build a key with one row per member, in member (sample) order, and one
+    column of normalized values per sampling unit, in sampling-unit order
+
+    Rows are built in sample order rather than sorted by member name, since names
+    stop sorting as text past 9999 members (e.g. _10000 sorts before _1001).
+
+    Args:
+        samples (list[EnsembleMemberSample]): One EnsembleMemberSample per member
+        file_prefix (str): member name prefix
+        sampling_units (list[ParamGroup]): sampling units, in column order
+
+    Raises:
+        ValueError: if a member has two samples for the same sampling unit name
+
+    Returns:
+        pd.DataFrame: key with an "ensemble" column, then one per sampling unit
+    """
+    rows = []
+    for i, sample in enumerate(samples):
+        row = {"ensemble": f"{file_prefix}_{_generate_suffix(i)}"}
+        for param_sample in sample:
+            name = param_sample.group.name
+            if name in row:
+                raise ValueError(
+                    f"sampling unit name {name!r} is used more than once; "
+                    "parameter and group names must be unique."
+                )
+            row[name] = param_sample.normalized_value
+        rows.append(row)
+    return pd.DataFrame(rows, columns=["ensemble", *(g.name for g in sampling_units)])
 
 
 def _generate_suffix(ensemble_number: int, pad_length: int = 4) -> str:

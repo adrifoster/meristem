@@ -561,7 +561,7 @@ def test_clean_whole_run_says_root_goes_only_if_empty(mock_clean_run, capsys):
 
 
 @pytest.mark.usefixtures("mock_load")
-def test_clean_one_stage_does_not_mention_root(mock_clean_run, capsys):
+def test_clean_one_stage_does_not_mention_root(capsys):
     """Test that cleaning some stages doesn't say root goes"""
     assert main(CLEAN_ARGV + ["--stage", "spinup_ad", "--dry-run"]) == 0
     assert "if nothing else is left" not in capsys.readouterr().out

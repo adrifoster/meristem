@@ -103,9 +103,7 @@ def remove_root_if_empty(root: Path) -> list[Path]:
     if left:
         shown = "\n".join(f"  {path}" for path in left[:10])
         more = f"\n  ...and {len(left) - 10} more" if len(left) > 10 else ""
-        print(
-            f"kept {root}: it still holds files meristem didn't make:\n{shown}{more}"
-        )
+        print(f"kept {root}: it still holds files meristem didn't make:\n{shown}{more}")
         return left
     shutil.rmtree(root)
     return []

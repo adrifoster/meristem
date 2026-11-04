@@ -1181,9 +1181,7 @@ def test_clean_whole_ensemble_keeps_root_with_other_files(clean_ensemble, capsys
     assert str(notes) in out and str(member_notes) in out
 
 
-def test_clean_whole_ensemble_rerun_after_failure(
-    clean_ensemble, fake_scheduler, monkeypatch
-):
+def test_clean_whole_ensemble_rerun_after_failure(clean_ensemble, monkeypatch):
     """Test that a whole clean that fails partway (e.g. a delete fails after
     earlier members are already gone) can be finished by running it again
     """
