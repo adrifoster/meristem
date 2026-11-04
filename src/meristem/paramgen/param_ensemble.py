@@ -280,7 +280,9 @@ class ParamEnsemble(ABC):
         ds = self.default_ds.copy()
         for param, normalized_value in to_write:
             value = param.sample(normalized_value, self.default_ds)
-            param.set_value(ds, self.default_ds, value, fixed_indices=self.fixed_indices)
+            param.set_value(
+                ds, self.default_ds, value, fixed_indices=self.fixed_indices
+            )
         return ds
 
     def create_ensemble(self, overwrite: bool = False):

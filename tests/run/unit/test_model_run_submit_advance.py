@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 import pytest
 
@@ -135,9 +134,9 @@ def test_submit_advance_qsub_failure_raises(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+        side_effect=RuntimeError("qsub job.pbs failed (exit 1): qsub: bad"),
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit_advance("spinup_ad", "55555.pbs")
 
 

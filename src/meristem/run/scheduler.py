@@ -28,7 +28,8 @@ class Scheduler(Protocol):
     name: str
 
     def submit(self, job_file: Path) -> str:
-        """Submit a job"""
+        """Submit a job and return its job ID; raise RuntimeError if submission
+        fails"""
         ...
 
     def query(self, job_ids: list[str]) -> dict[str, JobState]:
@@ -102,16 +103,29 @@ class PbsScheduler:
         Args:
             job_file (Path): path to job file
 
+        Raises:
+            RuntimeError: if qsub fails (with PBS's own message, e.g. a resource
+                limit or unknown project), or prints no job ID
+
         Returns:
-            str: output string from return of qsub command
+            str: job ID printed by qsub
         """
         result = subprocess.run(
             ["qsub", str(job_file)],
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
         )
-        return result.stdout.strip()
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"qsub {job_file} failed (exit {result.returncode}): "
+                f"{(result.stderr or result.stdout).strip()}"
+            )
+        job_id = result.stdout.strip()
+        if not job_id:
+            # an empty job ID would be recorded as if it were a dry run
+            raise RuntimeError(f"qsub {job_file} printed no job ID.")
+        return job_id
 
     def query(self, job_ids: list[str]) -> dict[str, JobState]:
         """Get the state of each job with one ``qstat -x -f`` call

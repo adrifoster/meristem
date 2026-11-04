@@ -691,9 +691,9 @@ def test_submit_qsub_failure_leaves_stage_pending(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+        side_effect=RuntimeError("qsub job.pbs failed (exit 1): qsub: bad"),
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit()
     assert created_run.stages[0].state.status is StageStatus.PENDING
 
@@ -703,9 +703,9 @@ def test_submit_qsub_failure_does_not_persist(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+        side_effect=RuntimeError("qsub job.pbs failed (exit 1): qsub: bad"),
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit()
     loaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
     assert loaded.stages[0].state.status is StageStatus.PENDING
@@ -716,9 +716,9 @@ def test_submit_qsub_failure_does_not_increment_attempts(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+        side_effect=RuntimeError("qsub job.pbs failed (exit 1): qsub: bad"),
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit()
     assert created_run.stages[0].state.attempts == 0
 

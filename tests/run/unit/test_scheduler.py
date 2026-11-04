@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-
 import pytest
 
 from meristem.run.scheduler import JobState, PbsScheduler, get_scheduler
@@ -40,8 +38,7 @@ def _mock_qdel(mocker, stdout: str = "", returncode: int = 0, stderr: str = ""):
 
 def test_pbs_submit_calls_qsub_with_correct_args(tmp_path, mocker):
     """Test that PbsScheduler.submit() calls qsub with the correct arguments"""
-    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
-    mock_run.return_value.stdout = "12345.pbs\n"
+    mock_run = _mock_qsub(mocker, stdout="12345.pbs\n")
     job_file = tmp_path / "job.pbs"
 
     PbsScheduler().submit(job_file)
@@ -50,24 +47,55 @@ def test_pbs_submit_calls_qsub_with_correct_args(tmp_path, mocker):
         ["qsub", str(job_file)],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
 
 
 def test_pbs_submit_returns_stripped_job_id(tmp_path, mocker):
     """Test that PbsScheduler.submit() returns the job ID without trailing whitespace"""
-    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
-    mock_run.return_value.stdout = "12345.pbs\n"
+    _mock_qsub(mocker, stdout="12345.pbs\n")
     assert PbsScheduler().submit(tmp_path / "job.pbs") == "12345.pbs"
 
 
-def test_pbs_submit_failure_raises(tmp_path, mocker):
-    """Test that a failing qsub raises CalledProcessError"""
-    mocker.patch(
-        "meristem.run.scheduler.subprocess.run",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+def _mock_qsub(mocker, stdout: str = "", returncode: int = 0, stderr: str = ""):
+    """Patch subprocess.run to return the given qsub result"""
+    mock_run = mocker.patch("meristem.run.scheduler.subprocess.run")
+    mock_run.return_value.stdout = stdout
+    mock_run.return_value.stderr = stderr
+    mock_run.return_value.returncode = returncode
+    return mock_run
+
+
+def test_pbs_submit_failure_raises_with_qsub_message(tmp_path, mocker):
+    """Test that a failing qsub raises a RuntimeError carrying PBS's own message
+    (e.g. a resource limit or bad project), with the job file and exit code
+    """
+    _mock_qsub(
+        mocker,
+        returncode=38,
+        stderr="qsub: Job exceeds queue resource limits\n",
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    job_file = tmp_path / "job.pbs"
+    with pytest.raises(RuntimeError) as err:
+        PbsScheduler().submit(job_file)
+    assert str(err.value) == (
+        f"qsub {job_file} failed (exit 38): qsub: Job exceeds queue resource limits"
+    )
+
+
+def test_pbs_submit_failure_falls_back_to_stdout(tmp_path, mocker):
+    """Test that a failing qsub that writes its message to stdout still shows it"""
+    _mock_qsub(mocker, returncode=1, stdout="qsub: Unknown queue\n")
+    with pytest.raises(RuntimeError, match=r"\(exit 1\): qsub: Unknown queue$"):
+        PbsScheduler().submit(tmp_path / "job.pbs")
+
+
+def test_pbs_submit_empty_job_id_raises(tmp_path, mocker):
+    """Test that a qsub that succeeds without printing a job ID raises, rather
+    than recording an empty job ID (which would read as a dry run)
+    """
+    _mock_qsub(mocker, stdout="\n")
+    with pytest.raises(RuntimeError, match="printed no job ID"):
         PbsScheduler().submit(tmp_path / "job.pbs")
 
 

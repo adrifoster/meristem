@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 import pytest
 
@@ -133,9 +132,9 @@ def test_submit_fail_qsub_failure_raises(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=subprocess.CalledProcessError(1, "qsub"),
+        side_effect=RuntimeError("qsub job.pbs failed (exit 1): qsub: bad"),
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit_fail("spinup_ad", "55555.pbs")
 
 
@@ -251,9 +250,9 @@ def test_submit_fail_second_qsub_failure_keeps_first_job(created_run, mocker):
     mocker.patch.object(
         created_run.scheduler,
         "submit",
-        side_effect=["1.fake", subprocess.CalledProcessError(1, "qsub")],
+        side_effect=["1.fake", RuntimeError("qsub job.pbs failed (exit 1): qsub: bad")],
     )
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(RuntimeError, match="qsub"):
         created_run.submit_fail("spinup_ad", [RUN_JOB, ARCHIVE_JOB])
     reloaded = ModelRun.load(created_run.root, scheduler=created_run.scheduler)
     assert reloaded.stages[0].state.fail_job_ids == ["1.fake"]

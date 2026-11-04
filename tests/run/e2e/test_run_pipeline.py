@@ -335,6 +335,9 @@ def test_advance_qsub_fails(make_run, fake, meristem):
     assert "✗" in next(l for l in lines if "stage1" in l), result.stdout + fake.logs()
     assert "·" in next(l for l in lines if "stage2" in l), result.stdout + fake.logs()
     assert all(j["state"] == "F" for j in fake.jobs()), fake.logs()
+    # qsub's own message reaches the setup job's log
+    setup_log = (root / "e2e_test_stage1.log").read_text(encoding="utf-8")
+    assert "qsub: injected failure" in setup_log, setup_log
 
 
 def test_advance_qsub_fails_then_retry(make_run, stage_script, fake, meristem):
