@@ -736,6 +736,35 @@ def test_submit_after_dry_run(submit_ensemble, fake_scheduler):
     assert len(fake_scheduler.submitted) == len(MEMBERS)
 
 
+def test_submit_one_member_fails_others_still_submitted(
+    submit_ensemble, fake_scheduler, monkeypatch, capsys
+):
+    """Test that a qsub failure for one member doesn't stop the rest: every
+    other member is submitted, the summary says how many, and the error names
+    the member that failed and qsub's message
+    """
+    real_submit = fake_scheduler.submit
+
+    def _submit(job_file):
+        if "ens_0001" in str(job_file):
+            raise RuntimeError("qsub failed (exit 38): Job exceeds queue limits")
+        return real_submit(job_file)
+
+    monkeypatch.setattr(fake_scheduler, "submit", _submit)
+
+    with pytest.raises(RuntimeError) as err:
+        submit_ensemble.submit()
+
+    message = str(err.value)
+    assert "submit failed for 1 of 3 members" in message
+    assert "ens_0001: qsub failed (exit 38): Job exceeds queue limits" in message
+    assert "the other 2 went through" in message
+    assert _first_status(submit_ensemble, "ens_0000") is StageStatus.SUBMITTED
+    assert _first_status(submit_ensemble, "ens_0001") is StageStatus.PENDING
+    assert _first_status(submit_ensemble, "ens_0002") is StageStatus.SUBMITTED
+    assert "submitted 2 members" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # retry
 # ---------------------------------------------------------------------------
@@ -994,6 +1023,33 @@ def test_retry_returns_member_to_job_id(created_ensemble, retry_calls):
     assert [call[0] for call in retry_calls] == MEMBERS
 
 
+def test_retry_one_member_refused_others_still_retried(created_ensemble, monkeypatch):
+    """Test that one member's retry refusing (e.g. its CIME jobs are still
+    queued) doesn't stop the rest, and the error names it and says how many
+    went through
+    """
+    for member in MEMBERS:
+        _set_status(created_ensemble, member, StageStatus.FAILED)
+    retried = []
+
+    def _retry(self, stage_name, dry_run=False, skip_script=False, lost=False):
+        if self.root.name == "ens_0001":
+            raise ValueError("spinup_ad has jobs still queued or running")
+        retried.append(self.root.name)
+        return f"job-{self.root.name}"
+
+    monkeypatch.setattr(ModelRun, "retry", _retry)
+
+    with pytest.raises(RuntimeError) as err:
+        created_ensemble.retry(failed=True)
+
+    message = str(err.value)
+    assert "retry failed for 1 of 3 members" in message
+    assert "ens_0001: spinup_ad has jobs still queued or running" in message
+    assert "the other 2 went through" in message
+    assert retried == ["ens_0000", "ens_0002"]
+
+
 # ---------------------------------------------------------------------------
 # cancel
 # ---------------------------------------------------------------------------
@@ -1012,6 +1068,35 @@ def running_ensemble(submit_ensemble, fake_scheduler) -> Ensemble:
 def _setup_job_id(ensemble: Ensemble, member: str) -> str:
     """Job ID of a member's first setup job, as saved on disk"""
     return _member_run(ensemble, member).stages[0].state.job_id
+
+
+def test_cancel_one_member_fails_others_still_canceled(
+    running_ensemble, fake_scheduler, monkeypatch, capsys
+):
+    """Test that a qdel failure for one member doesn't stop the rest: every
+    other member is canceled, the summary says so, and the error names the
+    member that failed
+    """
+    stuck = _setup_job_id(running_ensemble, "ens_0001")
+    real_cancel = fake_scheduler.cancel
+
+    def _cancel(job_ids):
+        if stuck in job_ids:
+            raise RuntimeError("qdel failed (exit 1): server busy")
+        real_cancel(job_ids)
+
+    monkeypatch.setattr(fake_scheduler, "cancel", _cancel)
+    capsys.readouterr()
+
+    with pytest.raises(RuntimeError) as err:
+        running_ensemble.cancel()
+
+    message = str(err.value)
+    assert "cancel failed for 1 of 3 members" in message
+    assert "ens_0001: qdel failed (exit 1): server busy" in message
+    assert _first_status(running_ensemble, "ens_0000") is StageStatus.FAILED
+    assert _first_status(running_ensemble, "ens_0002") is StageStatus.FAILED
+    assert "canceled 2 jobs in 2 members" in capsys.readouterr().out
 
 
 def test_cancel_all_members(running_ensemble, fake_scheduler):

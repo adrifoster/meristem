@@ -7,10 +7,12 @@ import re
 import json
 import shlex
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from dataclasses import replace
 import io
 from contextlib import redirect_stdout
+from typing import TypeVar
 
 import pandas as pd
 
@@ -24,6 +26,8 @@ from meristem.utils import (
     write_atomically,
     run_command,
 )
+
+T = TypeVar("T")
 
 # state file name
 _STATE_FILE = "ensemble_state.json"
@@ -179,6 +183,8 @@ class Ensemble:
         Raises:
             ValueError: if limit is less than 1
             FileNotFoundError: if any selected member's parameter file is missing
+            RuntimeError: if submitting any member failed (e.g. qsub refused it),
+                naming each; every other member is still submitted
 
         Returns:
             dict[str, str]: member name -> job ID of its first stage's setup job
@@ -203,9 +209,9 @@ class Ensemble:
         self._check_param_files(pending)
 
         with redirect_stdout(io.StringIO()):
-            job_ids = {
-                member: runs[member].submit(dry_run=dry_run) for member in pending
-            }
+            job_ids, errors = _for_each_member(
+                pending, lambda member: runs[member].submit(dry_run=dry_run)
+            )
         if dry_run:
             print(
                 f"{self.config.ensemble_id}: dry run, wrote job scripts for "
@@ -213,6 +219,7 @@ class Ensemble:
             )
         else:
             print(f"{self.config.ensemble_id}: submitted {len(job_ids)} members")
+        _raise_member_errors(self.config.ensemble_id, "submit", errors, len(pending))
 
         return job_ids
 
@@ -239,10 +246,13 @@ class Ensemble:
         Raises:
             ValueError: unknown member stage
             ValueError: nothing selected to retry
+            RuntimeError: if retrying any member failed (e.g. its jobs are still
+                queued, or qsub refused it), naming each; every other member is
+                still retried
 
         Returns:
-            dict[str, str | None]: dictionary of member and the stage name and
-            whether it was lost
+            dict[str, str | None]: member -> job ID of its retried stage's setup
+            job (a DRY_ placeholder for a dry run)
         """
 
         explicit = not failed and not lost
@@ -264,12 +274,15 @@ class Ensemble:
             print(f"{self.config.ensemble_id}: nothing to retry")
             return {}
 
-        return {
-            member: runs[member].retry(
+        def _retry(member: str) -> str | None:
+            name, was_lost = to_retry[member]
+            return runs[member].retry(
                 name, dry_run=dry_run, skip_script=skip_script, lost=was_lost
             )
-            for member, (name, was_lost) in to_retry.items()
-        }
+
+        job_ids, errors = _for_each_member(list(to_retry), _retry)
+        _raise_member_errors(self.config.ensemble_id, "retry", errors, len(to_retry))
+        return job_ids
 
     def cancel(
         self, members: list[str] | None = None, dry_run: bool = False
@@ -285,29 +298,30 @@ class Ensemble:
 
         Raises:
             ValueError: unknown members
-            RuntimeError: if qstat/qdel fails
+            RuntimeError: if canceling any member failed (e.g. qstat/qdel failed),
+                naming each; every other member is still canceled
 
         Returns:
             dict[str, list[str]]: dictionary with member: job_ids
         """
         selected = self._select_members(members)
         with redirect_stdout(io.StringIO()):
-            job_ids = {}
-            for member in selected:
-                ids = self.member_run(member).cancel(dry_run=dry_run)
-                if ids:
-                    job_ids[member] = ids
+            results, errors = _for_each_member(
+                selected,
+                lambda member: self.member_run(member).cancel(dry_run=dry_run),
+            )
+        job_ids = {member: ids for member, ids in results.items() if ids}
 
-        if not job_ids:
+        if job_ids:
+            n_jobs = sum(len(ids) for ids in job_ids.values())
+            verb = "would cancel" if dry_run else "canceled"
+            print(
+                f"{self.config.ensemble_id}: {verb} {n_jobs} jobs in "
+                f"{len(job_ids)} members ({_preview(list(job_ids))})"
+            )
+        elif not errors:
             print(f"{self.config.ensemble_id}: no queued or running jobs to cancel")
-            return {}
-
-        n_jobs = sum(len(ids) for ids in job_ids.values())
-        verb = "would cancel" if dry_run else "canceled"
-        print(
-            f"{self.config.ensemble_id}: {verb} {n_jobs} jobs in {len(job_ids)} members "
-            f"({_preview(list(job_ids))})"
-        )
+        _raise_member_errors(self.config.ensemble_id, "cancel", errors, len(selected))
 
         return job_ids
 
@@ -1242,6 +1256,63 @@ def _explicit_retry(
         )
         return None
     return target.config.name
+
+
+# what one member's submit, retry or cancel can raise (qsub/qstat/qdel failures,
+# a refused retry, a missing file) without the other members being affected
+_MEMBER_ERRORS = (RuntimeError, ValueError, OSError)
+
+
+def _for_each_member(
+    members: list[str], action: Callable[[str], T]
+) -> tuple[dict[str, T], dict[str, Exception]]:
+    """Run action on each member, carrying on past a member that fails
+
+    Args:
+        members (list[str]): members, in order
+        action (Callable[[str], T]): what to do for one member
+
+    Returns:
+        tuple[dict[str, T], dict[str, Exception]]: each successful member's
+        result, and each failed member's error
+    """
+    results: dict[str, T] = {}
+    errors: dict[str, Exception] = {}
+    for member in members:
+        try:
+            results[member] = action(member)
+        except _MEMBER_ERRORS as exc:
+            errors[member] = exc
+    return results, errors
+
+
+def _raise_member_errors(
+    ensemble_id: str, action: str, errors: dict[str, Exception], n_members: int
+) -> None:
+    """Raise one error naming every member action failed for, if any
+
+    Args:
+        ensemble_id (str): ensemble ID, for the message
+        action (str): what was being done, e.g. "submit"
+        errors (dict[str, Exception]): failed member -> its error
+        n_members (int): how many members action was run on
+
+    Raises:
+        RuntimeError: if errors isn't empty, chained from the first error
+    """
+    if not errors:
+        return
+    n_shown = 10
+    lines = [
+        f"  {member}: " + str(exc).replace("\n", "\n    ")
+        for member, exc in list(errors.items())[:n_shown]
+    ]
+    if len(errors) > n_shown:
+        lines.append(f"  ...and {len(errors) - n_shown} more")
+    raise RuntimeError(
+        f"{ensemble_id}: {action} failed for {len(errors)} of {n_members} members "
+        f"(the other {n_members - len(errors)} went through):\n" + "\n".join(lines)
+    ) from next(iter(errors.values()))
 
 
 def _preview(names: list[str], n: int = 3) -> str:

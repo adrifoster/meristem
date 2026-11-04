@@ -313,4 +313,10 @@ Add `--dry-run` to `submit` or `retry` to write the job scripts without calling 
 `cancel` to see what would be cancelled, or to `clean` to see what would be deleted. A dry run
 doesn't change the ensemble's state.
 
+If `submit`, `retry` or `cancel` fails for some members (e.g. `qsub` refuses a job), it still
+handles every other member, then exits with an error listing each member that failed and why.
+Fix the cause and run the command again. `submit`, `cancel`, and `retry --failed`/`--lost` skip
+members they already handled; after an explicit `retry --stage ...`, rerun it with `--members`
+naming just the members that failed, since the rest are now submitted and would be refused.
+
 Add `--debug` to any command to show the full traceback on errors.
