@@ -1032,7 +1032,7 @@ def test_retry_one_member_refused_others_still_retried(created_ensemble, monkeyp
         _set_status(created_ensemble, member, StageStatus.FAILED)
     retried = []
 
-    def _retry(self, stage_name, dry_run=False, skip_script=False, lost=False):
+    def _retry(self):
         if self.root.name == "ens_0001":
             raise ValueError("spinup_ad has jobs still queued or running")
         retried.append(self.root.name)
