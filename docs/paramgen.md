@@ -321,4 +321,6 @@ Expansion happens before grouping, so a group of expanded parameters is split in
 **Constraints on groups:**
 
 * All parameters in a group must have the same `expand_dim` (or all have none). Mixing expanded and unexpanded parameters in the same group is not allowed.
-* A `scale_from_root` parameter and its root must be in the same group, or both ungrouped. Placing them in different groups would break the write-order dependency.
+
+A `scale_from_root` parameter and its root can be grouped however you like (together, apart, or
+ungrouped): paramgen always writes the root before its dependents.

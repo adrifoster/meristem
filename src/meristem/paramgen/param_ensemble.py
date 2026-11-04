@@ -265,13 +265,22 @@ class ParamEnsemble(ABC):
         Returns:
             ParameterDataset: one member of the ensemble with updated values from default
         """
+        # write in self.params order (sorted so roots come before their
+        # scale_from_root dependents), not sampling-unit order: a group's unit sits
+        # at its first member's place, which can be ahead of a dependent's root
+        position = {id(param): i for i, param in enumerate(self.params)}
+        to_write = sorted(
+            (
+                (param, param_sample.normalized_value)
+                for param_sample in sample
+                for param in param_sample.group.params
+            ),
+            key=lambda item: position.get(id(item[0]), len(position)),
+        )
         ds = self.default_ds.copy()
-        for param_sample in sample:
-            for param in param_sample.group.params:
-                value = param.sample(param_sample.normalized_value, self.default_ds)
-                param.set_value(
-                    ds, self.default_ds, value, fixed_indices=self.fixed_indices
-                )
+        for param, normalized_value in to_write:
+            value = param.sample(normalized_value, self.default_ds)
+            param.set_value(ds, self.default_ds, value, fixed_indices=self.fixed_indices)
         return ds
 
     def create_ensemble(self, overwrite: bool = False):
@@ -401,38 +410,12 @@ class ParamEnsemble(ABC):
     def _validate_groups(self):
         """Validate group constraints.
 
+        A scale_from_root parameter and its root may be in different groups:
+        create_ensemble_member writes in dependency order whatever the grouping.
+
         Raises:
             ValueError: If a group contains parameters with mixed expand_dim values.
-            ValueError: If a scale_from_root param and its root are in different groups.
         """
-        # validate scale_from_root params and their roots are in the same group
-        for param in self.params:
-            if param.spec.root_param is None:
-                continue
-            root = next(
-                (
-                    p
-                    for p in self.params
-                    if p.spec.name == param.spec.root_param
-                    or (
-                        param.active_index is not None
-                        and p.spec.name
-                        == f"{param.spec.root_param}_{param.active_index.index}"
-                    )
-                ),
-                None,
-            )
-            if root is None:
-                continue
-            if param.spec.group_name != root.spec.group_name:
-                raise ValueError(
-                    f"Parameter '{param.spec.name}' (scale_from_root) is in group "
-                    f"'{param.spec.group_name}' but its root '{param.spec.root_param}' "
-                    f"is in group '{root.spec.group_name}'. "
-                    "A scale_from_root parameter and its root must be in the same group "
-                    "or both ungrouped."
-                )
-
         # validate all params in a group have the same expand_dim
         groups: dict[str, list[str | None]] = {}
         for param in self.params:

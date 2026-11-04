@@ -391,10 +391,13 @@ def test_grouped_params_constructs_successfully(
     assert ensemble is not None
 
 
-def test_scale_from_root_different_group_raises(
+def test_scale_from_root_different_group_uses_sampled_root(
     scale_from_root_different_group_dir, default_param_file, tmp_path
 ):
-    """ParamEnsemble raises ValueError when scale_from_root and root are in different groups."""
+    """Test that a scale_from_root parameter and its root can be in different
+    groups (write order doesn't depend on grouping), and the dependent is still
+    computed from the root's sampled value
+    """
     config = LatinHypercubeConfig(
         param_dir=scale_from_root_different_group_dir,
         ensemble_dir=tmp_path / "ensemble",
@@ -402,8 +405,95 @@ def test_scale_from_root_different_group_raises(
         default_param_file=default_param_file,
         ensemble_members=5,
     )
-    with pytest.raises(ValueError, match="same group"):
-        LatinHypercubeEnsemble(config)
+    ensemble = LatinHypercubeEnsemble(config)
+    assert {unit.name for unit in ensemble.sampling_units} == {"water", "soil"}
+
+    # delta at its minimum (-600000), wherever the root's sample puts it
+    sample = EnsembleMemberSample(
+        [
+            ParameterSample(unit, 0.0 if unit.name == "soil" else 0.7)
+            for unit in ensemble.sampling_units
+        ]
+    )
+    member = ensemble.create_ensemble_member(sample)
+
+    root = member["fates_nonhydro_smpso"].values
+    assert not np.allclose(root, [-50000.0, -60000.0, -70000.0])  # sampled
+    np.testing.assert_allclose(member["fates_nonhydro_smpsc"].values, root - 600000.0)
+
+
+def test_scale_from_root_uses_sampled_expanded_root(tmp_path, default_param_file):
+    """Test that a scale_from_root parameter is computed from its root's sampled
+    value, not its default, when the root is expanded and ungrouped but the
+    dependent's group comes first (its unit sits at its first member's place)
+    """
+    base = {
+        "category": "stomatal",
+        "subcategory": "vegetation water",
+        "coord": "['fates_pft']",
+        "strategy": "uniform",
+        "slice_dim": None,
+        "slice_index": None,
+        "root_param": None,
+        "base_params": None,
+        "group_name": None,
+        "expand_dim": None,
+    }
+    pd.DataFrame(
+        [
+            {
+                **base,
+                "parameter_name": "fates_leaf_slatop",
+                "long_name": "SLA at top of canopy",
+                "units": "m^2/gC",
+                "param_type": "default",
+                "param_min": "0.005",
+                "param_max": "0.05",
+                "group_name": "G",
+            },
+            {
+                **base,
+                "parameter_name": "fates_nonhydro_smpso",
+                "long_name": "Soil water potential at full stomatal opening",
+                "units": "mm",
+                "param_type": "default",
+                "param_min": "-90000",
+                "param_max": "-30000",
+                "expand_dim": "fates_pft",
+            },
+            {
+                **base,
+                "parameter_name": "smpsc_delta",
+                "long_name": "Soil water potential at full stomatal closing (delta)",
+                "units": "mm",
+                "param_type": "scale_from_root",
+                "param_min": "-600000",
+                "param_max": "-20000",
+                "root_param": "fates_nonhydro_smpso",
+                "base_params": "fates_nonhydro_smpsc",
+                "group_name": "G",
+            },
+        ]
+    ).to_csv(tmp_path / "main.csv", index=False)
+    ensemble = LatinHypercubeEnsemble(
+        LatinHypercubeConfig(
+            param_dir=tmp_path,
+            ensemble_dir=tmp_path / "ensemble",
+            file_prefix="test",
+            default_param_file=default_param_file,
+            ensemble_members=5,
+        )
+    )
+    assert ensemble.sampling_units[0].name == "G"
+
+    # every unit at its minimum: root -90000 at each PFT, delta -600000
+    sample = EnsembleMemberSample(
+        [ParameterSample(unit, 0.0) for unit in ensemble.sampling_units]
+    )
+    member = ensemble.create_ensemble_member(sample)
+
+    np.testing.assert_allclose(member["fates_nonhydro_smpso"].values, [-90000.0] * 3)
+    np.testing.assert_allclose(member["fates_nonhydro_smpsc"].values, [-690000.0] * 3)
 
 
 def test_scale_from_root_root_not_varied_is_valid(tmp_path, default_param_file):
