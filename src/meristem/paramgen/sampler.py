@@ -44,9 +44,9 @@ class SampleContext:
         Axis of default_value that array_index selects along. None when
         array_index is None.
     n_indices : list[int] | None
-        Number of positions along each free dimension ([1] for scalars), e.g.
+        Number of positions along each free dimension ([] for scalars), e.g.
         [3] for a per-PFT parameter. Used by PosteriorSampler in broadcast mode
-        as the shape of the output arrays.
+        as the shape of the output arrays, so a scalar's are 0-d.
         Ignored by UniformSampler.
     pft_axis: int | None
         Axis along which the pft-dimension exists
@@ -433,7 +433,7 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
             result = [np.zeros(context.n_indices) for _ in self.parameters]
             row = self.sources[0].draw_row(normalized_value)
             for k, var in enumerate(self.parameters):
-                result[k][:] = row[var]
+                result[k][...] = row[var]  # [...] also fills a 0-d (scalar) array
         else:
             # index-specific sources (_check_sources: none is broadcast). Start
             # from the defaults so a position no source covers keeps its default

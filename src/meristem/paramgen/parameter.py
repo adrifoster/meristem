@@ -395,7 +395,8 @@ class Parameter(ABC):
                 self.active_index.index if self.active_index is not None else None
             ),
             index_axis=index_axis,
-            n_indices=self.n_indices,
+            # a scalar's draws are 0-d, to match its variable (n_indices is [1])
+            n_indices=self.n_indices if self.free_dims else [],
             pft_axis=self.pft_axis,
         )
 

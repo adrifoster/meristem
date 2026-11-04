@@ -86,6 +86,48 @@ def test_posterior_default_expanded_still_works(
     assert posterior_default.normalize(0.05, param_dataset) == pytest.approx(1.0)
 
 
+@pytest.fixture
+def posterior_scalar(scalar_row, param_dataset, tmp_path) -> Parameter:
+    """fates_canopy_closure_thresh (scalar, default 0.5) drawn from a posterior
+    from 0.4 to 0.9
+    """
+    scalar_row["strategy"] = "posterior"
+    scalar_row["param_min"] = ""
+    scalar_row["param_max"] = ""
+    config = _posterior(tmp_path, "fates_canopy_closure_thresh", 0.4, 0.9)
+    return Parameter.from_row(scalar_row, param_dataset, posterior_config=config)
+
+
+def test_posterior_scalar_samples_scalar(posterior_scalar, param_dataset):
+    """Test that a scalar parameter samples one value, not a (1,) array"""
+    value = posterior_scalar.sample(0.5, param_dataset)
+    assert np.ndim(value) == 0
+    assert float(value) == pytest.approx(0.65)
+
+
+@pytest.mark.parametrize("u, expected", [(0.0, 0.4), (1.0, 0.9)])
+def test_posterior_scalar_set_value_writes_draw(
+    posterior_scalar, param_dataset, working_param_dataset, u, expected
+):
+    """Test that a scalar parameter's draw can be written (it used to fail with
+    a (1,) vs () shape error)
+    """
+    value = posterior_scalar.sample(u, param_dataset)
+    posterior_scalar.set_value(working_param_dataset, param_dataset, value)
+    assert float(
+        working_param_dataset["fates_canopy_closure_thresh"].values
+    ) == pytest.approx(expected)
+
+
+def test_posterior_scalar_normalize(posterior_scalar, param_dataset):
+    """Test that normalize() takes a scalar parameter's value and gives back one
+    normalized value
+    """
+    normalized = posterior_scalar.normalize(0.65, param_dataset)
+    assert np.ndim(normalized) == 0
+    assert float(normalized) == pytest.approx(0.5)
+
+
 def test_posterior_sliced_samples_and_writes(
     sliced_row, param_dataset, working_param_dataset, tmp_path
 ):
@@ -158,3 +200,41 @@ def test_normalize_defaults_posterior_default_param(tmp_path, default_param_file
     expected = np.searchsorted(draws, [0.01, 0.02, 0.03]) / (len(draws) - 1)
     np.testing.assert_allclose(df["normalized_value"], expected)
     assert df["normalized_value"].is_monotonic_increasing
+
+
+def test_normalize_defaults_posterior_scalar_param(tmp_path, default_param_file):
+    """Test that diagnostics can place a scalar posterior parameter's default"""
+    param_dir = tmp_path / "params"
+    param_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "parameter_name": "fates_canopy_closure_thresh",
+                "long_name": "canopy closure threshold",
+                "category": "biogeochemistry",
+                "subcategory": "vegetation dynamics",
+                "units": "1",
+                "coord": "[]",
+                "param_type": "default",
+                "strategy": "posterior",
+                "param_min": "",
+                "param_max": "",
+                "slice_dim": None,
+                "slice_index": None,
+                "root_param": None,
+                "base_params": "",
+            }
+        ]
+    ).to_csv(param_dir / "main.csv", index=False)
+    sources = tmp_path / "posterior_sources.yaml"
+    config = _posterior(tmp_path, "fates_canopy_closure_thresh", 0.4, 0.9)
+    sources.write_text(
+        "fates_canopy_closure_thresh:\n"
+        "  parameters: [fates_canopy_closure_thresh]\n"
+        f"  files: [{{path: {config['files'][0]['path']}, array_indices: all}}]\n"
+    )
+
+    df = normalize_defaults(param_dir, default_param_file, posterior_sources=sources)
+    assert len(df) == 1
+    # default 0.5 is a fifth of the way through the draws from 0.4 to 0.9
+    assert df["normalized_value"].iloc[0] == pytest.approx(0.2)
