@@ -491,6 +491,67 @@ def test_stage_config_to_dict_extra_pbs_is_list(full_stage_config):
     assert isinstance(full_stage_config.to_dict()["extra_pbs"], list)
 
 
+@pytest.mark.parametrize(
+    "key, value, match",
+    [
+        # a quoted "false" is a non-empty string, so it would read as true
+        ("no_cime", "false", r"no_cime must be true or false, got str 'false'"),
+        ("no_cime", 0, r"no_cime must be true or false, got int 0"),
+        ("ncpus", "4", r"ncpus must be an integer, got str '4'"),
+        ("ncpus", True, r"ncpus must be an integer, got bool True"),
+        ("select", 2.5, r"select must be an integer, got float 2\.5"),
+        # YAML reads an unquoted 6:00:00 as 21600 (seconds, base 60)
+        ("walltime", 21600, r"walltime must be a quoted string.*got int 21600"),
+        ("memory", 16, r"memory must be a string, got int 16"),
+        ("queue", 5, r"queue for stage 'spinup_ad' must be a string"),
+        ("queue", "main\necho INJECTED", r"queue .* contains invalid characters"),
+        # a string would become one #PBS line per character
+        ("extra_pbs", "-l place=scatter", r"extra_pbs must be a list .*got str"),
+        ("extra_pbs", ["-l place=scatter", 3], r"extra_pbs entries must be strings"),
+        ("extra_pbs", ["-l place=scatter\necho x"], r"extra_pbs entry .* newline"),
+        ("submit_args", 5, r"submit_args must be a string, got int 5"),
+        ("command", ["meristem"], r"command must be a string, got list"),
+        ("post_command", 1, r"post_command must be a string, got int 1"),
+    ],
+)
+def test_stage_config_wrong_type_raises(minimal_stage_config_dict, key, value, match):
+    """Test that a wrongly typed value is rejected with a clear message rather
+    than misread (e.g. "false" read as true) or failing with a raw TypeError
+    """
+    config = {**minimal_stage_config_dict, key: value}
+    with pytest.raises(ValueError, match=match):
+        StageConfig.from_dict(config)
+
+
+def test_stage_config_extra_pbs_none_is_empty(minimal_stage_config_dict):
+    """Test that extra_pbs: null (an empty YAML key) means no extra directives"""
+    config = {**minimal_stage_config_dict, "extra_pbs": None}
+    extra_pbs = StageConfig.from_dict(config).extra_pbs
+    assert isinstance(extra_pbs, tuple) and not extra_pbs
+
+
+def test_stage_config_unknown_key_raises(minimal_stage_config_dict):
+    """Test that a misspelled key is named, with the valid keys, rather than
+    failing with an unexpected-keyword TypeError
+    """
+    config = {**minimal_stage_config_dict, "wallclock": "06:00:00"}
+    with pytest.raises(
+        ValueError, match=r"stage 'spinup_ad': unknown key\(s\) \['wallclock'\]"
+    ) as err:
+        StageConfig.from_dict(config)
+    assert "walltime" in str(err.value)
+
+
+@pytest.mark.parametrize("missing", ["name", "queue"])
+def test_stage_config_missing_required_key_raises(minimal_stage_config_dict, missing):
+    """Test that a missing required key is named rather than failing with a
+    missing-argument TypeError
+    """
+    del minimal_stage_config_dict[missing]
+    with pytest.raises(ValueError, match=rf"missing required key\(s\) \['{missing}'\]"):
+        StageConfig.from_dict(minimal_stage_config_dict)
+
+
 def test_stage_config_roundtrip_minimal(minimal_stage_config):
     """Test that StageConfig can be "round tripped" to a dict and back with a minimal config"""
     assert StageConfig.from_dict(minimal_stage_config.to_dict()) == minimal_stage_config

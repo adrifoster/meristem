@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 
 from meristem.utils import check_id, to_absolute_path
@@ -350,6 +350,8 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         # the name goes into PBS job names, file and case directory names, and
         # job scripts, so it must be safe in all of them
         check_id("stage name", self.name)
+        where = f" for stage {self.name!r}"
+        self._check_types(where)
 
         # checked before the Path conversion below, which would turn "" into "."
         if self.script is not None and not self.script:
@@ -366,8 +368,6 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
 
         _validate_walltime(self.walltime)
 
-        if not self.queue:
-            raise ValueError("queue must not be empty.")
         if self.ncpus < 1:
             raise ValueError(f"ncpus must be >=1, got {self.ncpus!r}.")
         if self.select < 1:
@@ -378,6 +378,57 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
                 "<number><unit> where unit is one of B, KB, MB, GB, TB. "
                 "Example: '16GB'"
             )
+
+    def _check_types(self, where: str) -> None:
+        """Check each field's type, so a wrongly typed YAML value is rejected
+        rather than misread (e.g. no_cime: "false" read as true)
+
+        Args:
+            where (str): appended to the queue in check_id's error message
+
+        Raises:
+            ValueError: if a field has the wrong type, or the queue or an extra_pbs
+                entry could break out of its #PBS line
+        """
+        # goes on a #PBS line, so held to the same characters as other IDs
+        check_id("queue", self.queue, where=where)
+        stage = f"stage {self.name!r}: "
+        if not isinstance(self.walltime, str):
+            raise ValueError(
+                f"{stage}walltime must be a quoted string, e.g. '06:00:00' (YAML "
+                f"reads an unquoted 6:00:00 as seconds), got {_describe(self.walltime)}."
+            )
+        if not isinstance(self.memory, str):
+            raise ValueError(
+                f"{stage}memory must be a string, got {_describe(self.memory)}."
+            )
+        for name in ("ncpus", "select"):
+            value = getattr(self, name)
+            # bool is a subclass of int, but true/false is never a count
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(
+                    f"{stage}{name} must be an integer, got {_describe(value)}."
+                )
+        if not isinstance(self.no_cime, bool):
+            raise ValueError(
+                f"{stage}no_cime must be true or false, got {_describe(self.no_cime)}."
+            )
+        for name in ("command", "post_command", "submit_args"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"{stage}{name} must be a string, got {_describe(value)}."
+                )
+        if not all(isinstance(entry, str) for entry in self.extra_pbs):
+            raise ValueError(
+                f"{stage}extra_pbs entries must be strings, got {list(self.extra_pbs)!r}."
+            )
+        for entry in self.extra_pbs:
+            # each entry is one #PBS line; a newline would start a shell line
+            if "\n" in entry or "\r" in entry:
+                raise ValueError(
+                    f"{stage}extra_pbs entry {entry!r} must not contain a newline."
+                )
 
     def validate(self):
         """Validate that this config is ready for submission.
@@ -421,11 +472,33 @@ class StageConfig:  # pylint: disable=too-many-instance-attributes
         Args:
             input_dict (dict): Mapping of configuration field names to values
 
+        Raises:
+            ValueError: if a key is unknown or a required key is missing, or
+                extra_pbs isn't a list
+
         Returns:
             StageConfig: StageConfig instance
         """
         in_dict = dict(input_dict)
-        in_dict["extra_pbs"] = tuple(in_dict.get("extra_pbs", []))
+        where = f"stage {in_dict.get('name')!r}: "
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(set(in_dict) - known)
+        if unknown:
+            raise ValueError(
+                f"{where}unknown key(s) {unknown}; valid keys are {sorted(known)}."
+            )
+        missing = [key for key in ("name", "queue") if key not in in_dict]
+        if missing:
+            raise ValueError(f"{where}missing required key(s) {missing}.")
+
+        extra_pbs = in_dict.get("extra_pbs") or []
+        # a string would otherwise become one #PBS line per character
+        if not isinstance(extra_pbs, (list, tuple)):
+            raise ValueError(
+                f"{where}extra_pbs must be a list of #PBS directives, "
+                f"got {_describe(extra_pbs)}."
+            )
+        in_dict["extra_pbs"] = tuple(extra_pbs)
         return cls(**in_dict)
 
 
@@ -471,6 +544,11 @@ class Stage:
             dict: output dictionary
         """
         return {"config": self.config.to_dict(), "state": self.state.to_dict()}
+
+
+def _describe(value) -> str:
+    """A value's type and repr for error messages, e.g. "str 'false'" """
+    return f"{type(value).__name__} {value!r}"
 
 
 def _validate_walltime(walltime: str):

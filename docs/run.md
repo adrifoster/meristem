@@ -121,12 +121,12 @@ e.g. `root: /glade/derecho/scratch/$USER/my_spinup`.
 | `script` | yes | | Path to the setup script for this stage (see [Setup scripts](#setup-scripts)) |
 | `queue` | yes | | PBS queue for the setup job (not the actual CLM/CIME case)|
 | `case_root` | no | `<root>/<name>` | Absolute path to the stage's case directory |
-| `walltime` | no | `01:00:00` | Walltime for the setup job (`HH:MM:SS`) |
+| `walltime` | no | `01:00:00` | Walltime for the setup job (`HH:MM:SS`). Quote it (`"6:00:00"`): YAML reads an unquoted `6:00:00` as a number of seconds |
 | `select` | no | `1` | Number of nodes for the setup job |
 | `ncpus` | no | `1` | CPUs per node for the setup job |
 | `memory` | no | `10GB` | Memory for the setup job, e.g. `16GB` |
-| `no_cime` | no | `false` | If true, the stage isn't a CIME case: run the script, then advance directly |
-| `extra_pbs` | no | `[]` | Extra raw PBS directives, e.g. `["-l place=group=rack"]` |
+| `no_cime` | no | `false` | If true, the stage isn't a CIME case: run the script, then advance directly. Must be unquoted `true` or `false` |
+| `extra_pbs` | no | `[]` | Extra raw PBS directives, as a list even for one, e.g. `["-l place=group=rack"]` |
 | `submit_args` | no | | Extra CIME case submission arguments |
 
 The resource keys (`walltime`, `select`, `ncpus`, `memory`) apply to the setup job only. The model run's
