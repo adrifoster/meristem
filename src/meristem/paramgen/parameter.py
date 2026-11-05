@@ -781,11 +781,17 @@ class JointParameter(Parameter, param_type="joint"):
     """
 
     def _validate_specs(self):
-        """Require base_params to be non-empty."""
+        """Require base_params to be non-empty and a posterior sample."""
         if not self.spec.base_params:
             raise ValueError(
                 f"Parameter '{self.spec.name}' has param_type 'joint' but "
                 "base_params is not set."
+            )
+        if not isinstance(self.sampler, PosteriorSampler):
+            raise ValueError(
+                f"Parameter '{self.spec.name}' has param_type 'joint', which "
+                "needs strategy 'posterior': its variables are drawn together ",
+                "from posterior samples.",
             )
 
     def _variables_to_validate(self) -> list[str]:

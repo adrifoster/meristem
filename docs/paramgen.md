@@ -296,7 +296,7 @@ paramgen supports four parameter types, set via the `param_type` column in `main
 
 **`scale_from_root`**: the parameter value is written as `root_param + delta`, where `delta` is what gets sampled. Used when two parameters must maintain a consistent offset relationship.
 
-**`joint`**: multiple parameters are sampled together. Used for parameters that are correlated and should not be varied independently.
+**`joint`**: multiple parameters are sampled together. Used for parameters that are correlated and should not be varied independently. A joint parameter must use strategy: posterior, since its variables are drawn together from posterior samples.
 
 ## Expand by index
 

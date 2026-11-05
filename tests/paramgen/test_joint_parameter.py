@@ -34,6 +34,17 @@ def test_joint_param_empty_base_params_raises(
         )
 
 
+def test_joint_param_uniform_strategy_raises(joint_param_row, param_dataset):
+    """A joint parameter needs a posterior: a uniform sampler gives one value,
+    not one array per base_params variable, so it fails at sampling.
+    """
+    joint_param_row["strategy"] = "uniform"
+    joint_param_row["param_min"] = "0.5"
+    joint_param_row["param_max"] = "1.5"
+    with pytest.raises(ValueError, match="needs strategy 'posterior'"):
+        Parameter.from_row(joint_param_row, param_dataset)
+
+
 def test_joint_get_default(joint_param_row, param_dataset, posterior_config):
     """JointParameter.get_default returns a list of arrays, one per base_param."""
     param = Parameter.from_row(
