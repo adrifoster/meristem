@@ -232,6 +232,11 @@ class Parameter(ABC):
         if not isinstance(self.sampler, PosteriorSampler):
             return
         for source in self.sampler.sources:
+            if not source.path.exists():
+                raise FileNotFoundError(
+                    f"Parameter '{self.spec.name}': posterior file "
+                    f"'{source.path}' does not exist."
+                )
             if not np.array_equal(source.parameters, self._variables_to_validate()):
                 raise ValueError(
                     f"Parameter '{self.spec.name}': mismatch in `base_params` "

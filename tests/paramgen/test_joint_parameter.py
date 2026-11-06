@@ -45,6 +45,20 @@ def test_joint_param_uniform_strategy_raises(joint_param_row, param_dataset):
         Parameter.from_row(joint_param_row, param_dataset)
 
 
+def test_joint_param_missing_posterior_file_raises(
+    joint_param_row, param_dataset, posterior_config, tmp_path
+):
+    """A posterior file that doesn't exist raises when the parameter is built,
+    not later when the ensemble is sampled.
+    """
+    missing = tmp_path / "no_such_posterior.txt"
+    posterior_config["files"][0]["path"] = str(missing)
+    with pytest.raises(FileNotFoundError, match="no_such_posterior.txt"):
+        Parameter.from_row(
+            joint_param_row, param_dataset, posterior_config=posterior_config
+        )
+
+
 def test_joint_get_default(joint_param_row, param_dataset, posterior_config):
     """JointParameter.get_default returns a list of arrays, one per base_param."""
     param = Parameter.from_row(

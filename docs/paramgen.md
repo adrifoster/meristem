@@ -248,6 +248,9 @@ under `parameters`. Together, the `array_indices` across all files should cover 
 index you want sampled from a posterior — any index not covered will not be modified
 from its default value
 
+meristem checks that every posterior file listed exists when the ensemble is set up, before
+any files are written.
+
 #### Per-index posteriors
 
 If you have different posterior distributions for different PFTs (for example, because
