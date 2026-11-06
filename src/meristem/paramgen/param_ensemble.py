@@ -297,7 +297,7 @@ class ParamEnsemble(ABC):
         """Create and write out all ensemble parameter files
 
         Creates ensemble_dir if needed. Files are written to a staging folder first, and
-        an existing ensemble with this file_prefix is only replaced if overwrite is True, 
+        an existing ensemble with this file_prefix is only replaced if overwrite is True,
         in which case it is replaced once the new one is fully written.
 
         Args:
