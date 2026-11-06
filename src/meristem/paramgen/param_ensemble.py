@@ -8,6 +8,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from collections import Counter
 import re
+import shutil
 import warnings
 
 from tqdm import tqdm
@@ -295,9 +296,9 @@ class ParamEnsemble(ABC):
     def create_ensemble(self, overwrite: bool = False):
         """Create and write out all ensemble parameter files
 
-        Creates ensemble_dir if needed. Outputs from an earlier ensemble with the
-        same file_prefix (member files, key, list, and config) are only replaced if
-        overwrite is True, in which case they're deleted first.
+        Creates ensemble_dir if needed. Files are written to a staging folder first, and
+        an existing ensemble with this file_prefix is only replaced if overwrite is True, 
+        in which case it is replaced once the new one is fully written.
 
         Args:
             overwrite (bool, optional): Delete and replace an existing ensemble with
@@ -316,46 +317,72 @@ class ParamEnsemble(ABC):
                 f"{self.ensemble_dir} ({shown}{more}). Pass overwrite=True "
                 "(or --overwrite on the command line) to replace it."
             )
-        for path in existing:
-            path.unlink()
+
         self.ensemble_dir.mkdir(parents=True, exist_ok=True)
 
-        self.write_config()
+        # write the new ensemble beside the old one, and only replace the old
+        # one once every file is written successfully, so failure leaves it untouched
+        staging = self.ensemble_dir / f".{self.file_prefix}_staging"
+        if staging.exists():
+            shutil.rmtree(staging)  # left by a run that was killed
+        staging.mkdir()
+        try:
+            self._write_outputs(staging)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+        for path in existing:
+            path.unlink()
+        for path in staging.iterdir():
+            path.replace(self.ensemble_dir / path.name)
+        staging.rmdir()
+
+    def _write_outputs(self, out_dir: Path):
+        """Write the config, member files, key, and member list to out_dir
+
+        Args:
+            out_dir (Path): folder to write to
+        """
+        self.write_config(out_dir)
         samples = self.create_samples()
         for i, sample in tqdm(enumerate(samples), total=len(samples), unit="member"):
             ds = self.create_ensemble_member(sample)
             file_name = f"{self.file_prefix}_{_generate_suffix(i)}{self.default_ds.file_extension}"
-            ds.save(self.ensemble_dir / file_name)
+            ds.save(out_dir / file_name)
             ds.close()
 
         ensemble_key = self.create_ensemble_key(samples)
-        ensemble_key.to_csv(
-            self.ensemble_dir / f"{self.file_prefix}_key.csv", index=False
-        )
+        ensemble_key.to_csv(out_dir / f"{self.file_prefix}_key.csv", index=False)
 
         _write_ensemble_list(
-            self.ensemble_dir,
+            out_dir,
             self.file_prefix,
             list(ensemble_key.ensemble.values),
         )
 
-    def write_config(self) -> Path:
+    def write_config(self, out_dir: Path | None = None) -> Path:
         """Write the resolved config, ensemble type, and meristem version to
         '{file_prefix}_config.yaml' in ensemble_dir.
 
         The file can be passed back to from_dict (or the CLI) to regenerate the
         ensemble. Paths are written as absolute paths.
 
+        Args:
+            out_dir (Path | None, optional): folder to write to. Defaults to
+                ensemble_dir
+
         Returns:
             Path: Path to the written file.
         """
+        out_dir = self.ensemble_dir if out_dir is None else out_dir
         out = {
             "meristem_version": __version__,
             "ensemble_type": self.ensemble_type,
             **{k: _to_yaml_value(v) for k, v in asdict(self.config).items()},
         }
-        self.ensemble_dir.mkdir(parents=True, exist_ok=True)
-        path = self.ensemble_dir / f"{self.file_prefix}_config.yaml"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{self.file_prefix}_config.yaml"
         with open(path, "w", encoding="utf-8") as f:
             yaml.safe_dump(out, f, sort_keys=False)
         return path

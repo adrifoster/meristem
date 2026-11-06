@@ -1416,6 +1416,37 @@ def test_create_ensemble_overwrite_removes_stale_members(
         "test_0001",
         "test_0002",
     ]
+    assert not list(ens_dir.glob(".*"))
+
+
+def test_create_ensemble_overwrite_failure_keeps_old_ensemble(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file, monkeypatch
+):
+    """If writing the new ensemble fails partway, overwrite leaves the old
+    ensemble exactly as it was, with no staging folder left behind.
+    """
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    _lh_with_members(*args, members=5).create_ensemble()
+    ens_dir = tmp_path / "ensemble"
+    before = {p.name: p.stat().st_mtime_ns for p in ens_dir.iterdir()}
+
+    new = _lh_with_members(*args, members=3)
+    real_create_member = new.create_ensemble_member
+    calls = []
+
+    def fail_on_third_member(sample):
+        calls.append(sample)
+        if len(calls) == 3:
+            raise RuntimeError("member write failed")
+        return real_create_member(sample)
+
+    monkeypatch.setattr(new, "create_ensemble_member", fail_on_third_member)
+
+    with pytest.raises(RuntimeError, match="member write failed"):
+        new.create_ensemble(overwrite=True)
+
+    after = {p.name: p.stat().st_mtime_ns for p in ens_dir.iterdir()}
+    assert after == before
 
 
 def test_create_ensemble_ignores_and_keeps_other_prefixes(

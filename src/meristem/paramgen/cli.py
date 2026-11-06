@@ -88,7 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Replace an existing ensemble with the same file_prefix in "
-            "ensemble_dir (its files are deleted first)."
+            "ensemble_dir. The old files are only removed once the new "
+            "ensemble is fully written."
         ),
     )
     return parser
