@@ -321,14 +321,28 @@ def test_job_callbacks_pass_attempt(mock_run, argv, method):
 
 
 @pytest.mark.usefixtures("mock_load")
-@pytest.mark.parametrize("extra,attempt", [([], None), (["--attempt", "2"], 2)])
-def test_record_cime_jobs_calls_record_cime_jobs(mock_run, extra, attempt):
+@pytest.mark.parametrize(
+    "extra,attempt,submit_log",
+    [
+        ([], None, None),
+        (["--attempt", "2"], 2, None),
+        (
+            ["--submit-log", "/tmp/run/case_submit.log"],
+            None,
+            Path("/tmp/run/case_submit.log"),
+        ),
+    ],
+)
+def test_record_cime_jobs_calls_record_cime_jobs(mock_run, extra, attempt, submit_log):
     """Test that record-cime-jobs passes the stage, JOB_IDS and attempt through"""
     argv = ["record-cime-jobs", "--root", "/tmp/run", "--stage", "spinup_ad"]
     argv += ["--job-ids", "case.run:100, case.st_archive:101", *extra]
     assert main(argv) == 0
     mock_run.record_cime_jobs.assert_called_once_with(
-        "spinup_ad", "case.run:100, case.st_archive:101", attempt=attempt
+        "spinup_ad",
+        "case.run:100, case.st_archive:101",
+        attempt=attempt,
+        submit_log=submit_log,
     )
 
 

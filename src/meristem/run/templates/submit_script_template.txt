@@ -54,16 +54,19 @@ bash -c {{ ("set -euo pipefail; " ~ post_command) | shquote }}
 {% endif %}
 
 {% if cime %}
-# submit the CIME case and capture its job IDs
+# submit the CIME case and capture its job IDs. tee keeps case.submit's output,
+# which lists every job it submits, and still prints it to this log; pipefail
+# makes a failing case.submit still trip the ERR trap
 cd {{ case_root | shquote }}
-./case.submit --resubmit-immediate {% if submit_args %} -a {{ submit_args | shquote }}{% endif +%}
+./case.submit --resubmit-immediate {% if submit_args %} -a {{ submit_args | shquote }}{% endif %} 2>&1 | tee meristem_case_submit.log
 # e.g. "case.run:123.desched1, case.st_archive:124.desched1"; with RESUBMIT > 0
-# only the last segment's jobs are listed
+# only the last segment's jobs are listed, so the earlier segments' are read
+# from case.submit's output
 JOB_IDS=$(./xmlquery --value JOB_IDS)
 # record them before anything else can fail, so a retry knows they may still
 # be running even if the advance and fail jobs never get submitted
 meristem run record-cime-jobs --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT" \
-    --job-ids "$JOB_IDS"
+    --job-ids "$JOB_IDS" --submit-log "$PWD/meristem_case_submit.log"
 RUN_JOB_ID=$(sed -n 's/.*case\.run:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
 ARCHIVE_JOB_ID=$(sed -n 's/.*case\.st_archive:\([^ ,]*\).*/\1/p' <<< "$JOB_IDS")
 if [[ -z $RUN_JOB_ID ]]; then

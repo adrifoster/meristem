@@ -83,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     submit.set_defaults(handler=cmd_submit)
 
-    # meristem run record-cime-jobs --root R --stage S --job-ids JOB_IDS [--debug]
+    # meristem run record-cime-jobs --root R --stage S --job-ids JOB_IDS
+    # [--submit-log FILE] [--attempt N] [--debug]
     record_cime_jobs = subparsers.add_parser(
         "record-cime-jobs",
         parents=[debug, root],
@@ -100,6 +101,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Attempt of the stage the calling job belongs to; a call from an "
         "older attempt is ignored. Set by meristem's job scripts.",
+    )
+    record_cime_jobs.add_argument(
+        "--submit-log",
+        type=Path,
+        help="File holding case.submit's output. With RESUBMIT > 0, JOB_IDS only "
+        "lists the last segment's jobs, so the earlier segments' jobs are read "
+        "from here. Set by meristem's job scripts.",
     )
     record_cime_jobs.set_defaults(handler=cmd_record_cime_jobs)
 
@@ -308,7 +316,9 @@ def cmd_record_cime_jobs(args: argparse.Namespace) -> int:
         int: 0 on success
     """
     run = ModelRun.load(Path(args.root))
-    run.record_cime_jobs(args.stage, args.job_ids, attempt=args.attempt)
+    run.record_cime_jobs(
+        args.stage, args.job_ids, attempt=args.attempt, submit_log=args.submit_log
+    )
     return 0
 
 

@@ -413,6 +413,8 @@ def _run_cime_block(
     run: ModelRun,
     job_ids: str,
     fail_on=None,
+    submit_output: str = "",
+    submit_exit: int = 0,
 ) -> tuple[subprocess.CompletedProcess, Path]:
     """Run the setup script's CIME block (cd case root through the meristem
     calls) against stub case.submit and xmlquery, with meristem recording its
@@ -425,6 +427,7 @@ def _run_cime_block(
     case_root.mkdir(parents=True, exist_ok=True)
     (case_root / "case.submit").write_text(
         '#!/bin/bash\nprintf "%s\\n" "$@" > submit_args.txt\n'
+        'printf "%s" "$FAKE_SUBMIT_OUTPUT"\nexit "$FAKE_SUBMIT_EXIT"\n'
     )
     (case_root / "xmlquery").write_text(
         '#!/bin/bash\n[[ "$*" == "--value JOB_IDS" ]] && printf "%s" "$FAKE_JOB_IDS"\n'
@@ -458,7 +461,12 @@ def _run_cime_block(
     )
     result = subprocess.run(
         ["/bin/bash", "-c", script],
-        env={"PATH": "/usr/bin:/bin", "FAKE_JOB_IDS": job_ids},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "FAKE_JOB_IDS": job_ids,
+            "FAKE_SUBMIT_OUTPUT": submit_output,
+            "FAKE_SUBMIT_EXIT": str(submit_exit),
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -500,7 +508,8 @@ def test_submit_script_cime_block_uses_case_run_and_archive_ids(
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
     # the CIME jobs are recorded first, before anything else can fail
     assert calls == [
-        f"run record-cime-jobs --root root --stage stage --attempt 1 --job-ids {job_ids}",
+        f"run record-cime-jobs --root root --stage stage --attempt 1 --job-ids {job_ids} "
+        f"--submit-log {case_root / 'meristem_case_submit.log'}",
         "run submit-advance --root root --stage stage --attempt 1 "
         f"--cime-job-id {advance_on}",
         f"run submit-fail --root root --stage stage --attempt 1 --cime-job-id {fail_on}",
@@ -529,12 +538,13 @@ def test_submit_script_cime_block_without_case_run_id_fails(created_run):
     JOB_IDS has no case.run ID
     """
     created_run.submit()
-    result, _ = _run_cime_block(created_run, "")
+    result, case_root = _run_cime_block(created_run, "")
     assert result.returncode != 0
     assert "No case.run job ID" in result.stderr
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
     assert calls == [
-        "run record-cime-jobs --root root --stage stage --attempt 1 --job-ids ",
+        "run record-cime-jobs --root root --stage stage --attempt 1 --job-ids  "
+        f"--submit-log {case_root / 'meristem_case_submit.log'}",
         "run fail --root root --stage stage --attempt 1",
     ]
 
@@ -550,6 +560,40 @@ def test_submit_script_cime_block_runs_fail_when_advance_errors(created_run):
     assert result.returncode != 0
     calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
     assert calls[-1] == "run fail --root root --stage stage --attempt 1"
+
+
+def test_submit_script_cime_block_keeps_case_submit_output(created_run):
+    """Test that case.submit's output is saved to a file passed to
+    record-cime-jobs (it lists every RESUBMIT segment's jobs), and still
+    printed to the setup job's log
+    """
+    created_run.submit()
+    output = (
+        "Submitted job id is 100.desched1\nSubmitted job id is 101.desched1\n"
+        "Submitted job id is 102.desched1\nSubmitted job id is 103.desched1\n"
+    )
+    result, case_root = _run_cime_block(
+        created_run,
+        "case.run:102.desched1, case.st_archive:103.desched1",
+        submit_output=output,
+    )
+    assert result.returncode == 0, result.stderr
+    log = case_root / "meristem_case_submit.log"
+    assert log.read_text() == output
+    assert output in result.stdout
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls[0].endswith(f"--submit-log {log}")
+
+
+def test_submit_script_cime_block_case_submit_failure_trips_trap(created_run):
+    """Test that a failing case.submit still fires tht
+    is piped to tee (pipefail), and nothing after it runs
+    """
+    created_run.submit()
+    result, _ = _run_cime_block(created_run, "case.run:100.desched1", submit_exit=1)
+    assert result.returncode != 0
+    calls = (created_run.root / "meristem_calls.txt").read_text().splitlines()
+    assert calls == ["run fail --root root --stage stage --attempt 1"]
 
 
 def test_submit_stage_status_set_to_submitted(created_run):

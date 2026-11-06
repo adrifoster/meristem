@@ -62,6 +62,9 @@ _MAX_JOB_NAME_LENGTH = 236
 # the job ID in each "job:ID" entry of a case's JOB_IDS
 _CIME_JOB_ID_RE = re.compile(r"[^\s,:]+:([^\s,]+)")
 
+# each job case.submit queues, as CIME logs it: "Submitted job id is 123.desched1"
+_SUBMITTED_JOB_ID_RE = re.compile(r"Submitted job id is (\S+)")
+
 # keys that must be present in a config dict.
 _REQUIRED_CONFIG_KEYS = frozenset({"root", "stages"})
 
@@ -641,11 +644,19 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             )
 
     def record_cime_jobs(
-        self, stage_name: str, job_ids: str, attempt: int | None = None
+        self,
+        stage_name: str,
+        job_ids: str,
+        attempt: int | None = None,
+        submit_log: Path | None = None,
     ) -> list[str]:
         """Record the CIME jobs case.submit queued for a stage, so they're known
         even if the setup job fails before submitting the advance and fail jobs
         Called from the setup job script right after case.submit
+
+        With RESUBMIT > 0, case.submit --resubmit-immediate queues every segment
+        but JOB_IDS only lists the last segment's jobs, so the earlier segments'
+        jobs are read from case.submit's output, which logs every job it submits
 
         Args:
             stage_name (str): name of stage
@@ -654,6 +665,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             attempt (int | None, optional): attempt of the stage the calling job
                 belongs to; a call from an older attempt is ignored. Defaults to
                 None (no check)
+            submit_log (Path | None, optional): file holding case.submit's output.
+                Defaults to None (only JOB_IDS is recorded)
 
         Returns:
             list[str]: the recorded job IDs ([] if ignored or JOB_IDS has none)
@@ -661,7 +674,17 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         stage = self._stage(stage_name)
         if self._is_stale(stage, attempt, "record-cime-jobs"):
             return []
-        stage.state.cime_job_ids = _CIME_JOB_ID_RE.findall(job_ids)
+        last_segment = _CIME_JOB_ID_RE.findall(job_ids)
+        logged = _read_submitted_job_ids(submit_log) if submit_log else []
+        unlogged = [job_id for job_id in last_segment if job_id not in logged]
+        if submit_log is not None and unlogged:
+            print(
+                f"WARNING: {self.run_id} / {stage_name}: JOB_IDS lists {unlogged} "
+                f"but case.submit's output ({submit_log}) doesn't. Only the jobs "
+                "in JOB_IDS are tracked, so with RESUBMIT > 0 cancel and retry "
+                "can't see the earlier segments' jobs."
+            )
+        stage.state.cime_job_ids = list(dict.fromkeys([*logged, *last_segment]))
         self.save()
         print(f"  {self.run_id} / {stage_name}: CIME jobs {stage.state.cime_job_ids}")
         return list(stage.state.cime_job_ids)
@@ -1366,3 +1389,19 @@ def _load_config(config: Path | str | dict) -> dict:
     raise TypeError(
         f"config must be a dict, str, or Path, got {type(config).__name__!r}."
     )
+
+
+def _read_submitted_job_ids(submit_log: Path) -> list[str]:
+    """Every job ID case.submit logged as submitted, in order
+
+    Args:
+        submit_log (Path): file holding case.submit's output
+
+    Returns:
+        list[str]: job IDs; [] if the file can't be read
+    """
+    try:
+        text = Path(submit_log).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    return _SUBMITTED_JOB_ID_RE.findall(text)
