@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from abc import ABC, abstractmethod
+from collections import Counter
 import re
 import warnings
 
@@ -133,6 +134,12 @@ class ParamEnsemble(ABC):
 
         # read in the parameter metadata
         main, pft_sheets = read_param_list(config.param_dir)
+        repeated = sorted(set(main.parameter_name[main.parameter_name.duplicated()]))
+        if repeated:
+            raise ValueError(
+                f"main.csv lists these parameters more than once: {repeated}. "
+                "Each parameter_name must appear in only one row."
+            )
 
         # subset to only a list of parameters if supplied
         if config.param_list is not None:
@@ -468,6 +475,15 @@ class ParamEnsemble(ABC):
                 group_lookup[key] = ParamGroup(name=name, params=[])
                 self.sampling_units.append(group_lookup[key])
             group_lookup[key].params.append(param)
+
+        counts = Counter(unit.name for unit in self.sampling_units)
+        repeated = sorted(name for name, n in counts.items() if n > 1)
+        if repeated:
+            raise ValueError(
+                f"These sampling unit names are used more than once: {repeated}. "
+                "Group names, ungrouped parameter names, and expanded names "
+                "(name_<index>) must all be different."
+            )
 
 
 class LatinHypercubeEnsemble(ParamEnsemble, ensemble_type="LatinHypercube"):

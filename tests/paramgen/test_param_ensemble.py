@@ -391,6 +391,40 @@ def test_grouped_params_constructs_successfully(
     assert ensemble is not None
 
 
+def test_duplicate_parameter_rows_raise(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """Two main.csv rows with the same parameter_name raise when the ensemble is
+    set up, instead of one silently replacing the other.
+    """
+    main_csv = ensemble_param_dir / "main.csv"
+    main = pd.read_csv(main_csv)
+    pd.concat([main, main.iloc[[0]]]).to_csv(main_csv, index=False)
+
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    with pytest.raises(ValueError, match="more than once.*fates_leaf_slatop"):
+        _lh_with_members(*args, members=5)
+
+
+def test_group_name_matching_parameter_name_raises(
+    ensemble_param_dir, default_param_file, tmp_path, posterior_config_file
+):
+    """A group named after an ungrouped parameter gives two sampling units with the
+    same name; this raises when the ensemble is set up, not after writing members.
+    """
+    main_csv = ensemble_param_dir / "main.csv"
+    main = pd.read_csv(main_csv)
+    main["group_name"] = None
+    main.loc[main.parameter_name == "fates_leaf_vcmax25top", "group_name"] = (
+        "fates_leaf_slatop"
+    )
+    main.to_csv(main_csv, index=False)
+
+    args = (ensemble_param_dir, default_param_file, tmp_path, posterior_config_file)
+    with pytest.raises(ValueError, match="sampling unit names.*fates_leaf_slatop"):
+        _lh_with_members(*args, members=5)
+
+
 def test_scale_from_root_different_group_uses_sampled_root(
     scale_from_root_different_group_dir, default_param_file, tmp_path
 ):

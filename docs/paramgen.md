@@ -45,7 +45,7 @@ A folder containing CSV files that describe which parameters to vary:
 
 | Column | Description |
 | --- | --- |
-| `parameter_name` | Name of the parameter (usually the same as it appears in the NetCDF dataset) |
+| `parameter_name` | Name of the parameter (usually the same as it appears in the NetCDF dataset). Must be unique. |
 | `coord` | Dimensions of this parameter, e.g. `['fates_pft']` or `[]` for scalars |
 | `param_type` | One of `default`, `sliced`, `scale_from_root`, or `joint` |
 | `strategy` | Sampling strategy: `uniform` or `posterior` |
@@ -306,7 +306,7 @@ Each expanded parameter keeps the bounds for its own index. With PFT-specific bo
 
 ## Grouping parameters
 
-Setting `group_name` on a parameter in `main.csv` links it to other parameters with the same group name. All parameters in a group receive the same normalized sample value in each ensemble member.
+Setting `group_name` on a parameter in `main.csv` links it to other parameters with the same group name. All parameters in a group receive the same normalized sample value in each ensemble member. Group names must not match any parameter name, including expanded name_<index> names.
 
 For a Latin Hypercube ensemble, each group occupies one column in the latin hypercube matrix rather than one column per parameter. The ensemble key records one value per group rather than per individual parameter.
 
