@@ -833,12 +833,26 @@ def test_retry_unknown_stage_raises(created_ensemble, retry_calls):
 
 
 def test_retry_missing_param_file_raises(created_ensemble, retry_calls):
-    """Test that a missing parameter file raises before anything is retried"""
+    """Test that a missing parameter file for a member being retried
+    raises before anything is retried
+    """
     _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
-    created_ensemble.param_files[MEMBERS[-1]].unlink()
+    created_ensemble.param_files[MEMBERS[0]].unlink()
     with pytest.raises(FileNotFoundError):
         created_ensemble.retry(failed=True)
     assert not retry_calls
+
+
+def test_retry_failed_ignores_param_files_of_members_not_retried(
+    created_ensemble, retry_calls
+):
+    """Test that retry --failed doesn't refuse because a member that isn't
+    being retried (e.g. one already done) has lots its parameter file
+    """
+    _set_status(created_ensemble, MEMBERS[0], StageStatus.FAILED)
+    created_ensemble.param_files[MEMBERS[-1]].unlink()
+    created_ensemble.retry(failed=True)
+    assert retry_calls == [(MEMBERS[0], "spinup_ad", False, False, False)]
 
 
 def test_retry_checks_only_selected_param_files(created_ensemble, retry_calls):
@@ -1495,11 +1509,25 @@ def test_status_unknown_member_raises(created_ensemble):
         created_ensemble.status(members=["nope"])
 
 
-def test_status_missing_param_file_raises(created_ensemble):
-    """Test that a missing parameter file for a selected member raises"""
+def test_status_missing_ignores_missing_param_file(created_ensemble):
+    """Test that status still reports every member when a parameter file is
+    missing; it only reads the members' run states
+    """
     created_ensemble.param_files[MEMBERS[0]].unlink()
-    with pytest.raises(FileNotFoundError):
-        created_ensemble.status()
+    status = created_ensemble.status()
+    assert set(status["member"]) == set(MEMBERS)
+
+
+def test_manifest_ignores_missing_param_file(created_ensemble):
+    """Test that manifest still lists every member, with its parameter file
+    path, when a parameter file is missing
+    """
+    missing = created_ensemble.param_files[MEMBERS[0]]
+    missing.unlink()
+    manifest = created_ensemble.manifest()
+    assert set(manifest["member"]) == set(MEMBERS)
+    row = manifest[manifest["member"] == MEMBERS[0]]
+    assert row["param_file"].item() == str(missing)
 
 
 def test_status_doesnt_check_queue_by_default(created_ensemble, lost):

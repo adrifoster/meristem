@@ -265,14 +265,16 @@ class Ensemble:
         if stage is not None:
             self._check_stages([stage])
 
+        if members is not None:
+            self._check_members(members)
         selected = list(self.param_files) if members is None else members
-        self._check_param_files(selected)
 
         runs = {member: self.member_run(member) for member in selected}
         to_retry = self._find_retries(runs, stage, lost, failed)
         if not to_retry:
             print(f"{self.config.ensemble_id}: nothing to retry")
             return {}
+        self._check_param_files(list(to_retry))
 
         def _retry(member: str) -> str | None:
             name, was_lost = to_retry[member]
@@ -444,14 +446,18 @@ class Ensemble:
             check_queue (bool, optional): also query job scheduler and report lost stages.
                 as 'lost'. Defaults to False.
 
+        Raises:
+            ValueError: if any member isn't in this ensemble
+
         Returns:
             pd.DataFrame: one row per member and stage, with columns member, stage,
             status, job_id, and attempts
         """
 
         rows = []
+        if members is not None:
+            self._check_members(members)
         selected = list(self.param_files) if members is None else members
-        self._check_param_files(selected)
 
         for member in selected:
             run = self.member_run(member)
