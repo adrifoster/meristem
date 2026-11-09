@@ -443,19 +443,18 @@ def _run_cime_block(
     )
     end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
     calls = run.root / "meristem_calls.txt"
-
-    set_line = next(line for line in lines if line.startswith("set -e"))
-    trap_line = next(line for line in lines if line.startswith("trap "))
-    attempt_line = next(line for line in lines if line.startswith("ATTEMPT="))
     fail_clause = f'if [[ "$*" == *{fail_on}* ]]; then false; fi; ' if fail_on else ""
+
+    def line_starting(prefix: str) -> str:
+        return next(line for line in lines if line.startswith(prefix))
 
     script = "\n".join(
         [
-            set_line,
+            line_starting("set -e"),
             "RUN_ROOT=root STAGE=stage",
-            attempt_line,
+            line_starting("ATTEMPT="),
             f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; {fail_clause}}}',
-            trap_line,
+            line_starting("trap "),
             *lines[start:end],
         ]
     )

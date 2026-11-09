@@ -15,7 +15,10 @@ Each stage consists of up to four jobs:
 
 1. **Setup job**: runs your setup script for the stage (create, configure and build the case),
    submits the CIME case, then submits the advance and fail jobs below.
-2. **CIME job**: the actual model run, submitted with `./case.submit --resubmit-immediate`.
+2. **CIME job**: the actual model run, submitted with `./case.submit --resubmit-immediate`. With
+   `RESUBMIT > 0`, every segment is queued at once, each waiting on the one before. meristem
+   records every segment's jobs (read from `case.submit`'s output, since CIME's `JOB_IDS` only
+   lists the last segment's), so `cancel`, `retry` and `clean` see the whole chain.
 3. **Advance job**: a lightweight bookkeeping job that runs `afterok` the CIME job. It marks the
    stage complete and submits the next stage's setup job.
 4. **Fail job**: a lightweight bookkeeping job that runs `afternotok` the CIME job. If the model run
@@ -153,6 +156,11 @@ meristem run retry --root <path> [--stage <name>] [--dry-run] [--skip-script] [-
   retries the current (first non-complete) stage. If --skip-script, it
   resubmits without re-running the setup script. With --lost, it instead
   retries a submitted stage that is lost, and refuses if it isn't.
+  
+meristem run record-cime-jobs --root <path> --stage <name> --job-ids <JOB_IDS> [--submit-log <file>]
+  Record the CIME jobs case.submit queued for a stage: the ones in JOB_IDS,
+  plus every job listed in case.submit's output. Called automatically
+  from inside the setup job; not typically run manually.
 
 meristem run submit-advance --root <path> --stage <name> --cime-job-id <id>
   Submit the advance job for a stage. Called automatically
@@ -207,10 +215,9 @@ neither runs, the stage stays `submitted` for good. This happens when:
   The setup job's error trap doesn't fire when PBS kills it.
 - the advance or fail job is deleted with `qdel`, or killed, before it updates the stage.
 
-meristem records the setup, advance and fail job IDs for each stage. A stage is lost if it is
-`submitted` and **none** of those jobs is still queued or running. While the model is running, the
-advance and fail jobs sit in the queue waiting on it, so a stage whose model run is still going is
-never lost.
+meristem records the setup, CIME (every segment's, with `RESUBMIT > 0`), advance and fail job
+IDs for each stage. A stage is lost if it is `submitted` and **none** of those jobs is still
+queued or running, so a stage whose model run is still going is never lost..
 
 To find lost stages:
 

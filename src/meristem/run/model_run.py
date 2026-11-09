@@ -342,9 +342,11 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         the same job IDs; this run's stages are updated to match the disk.
 
         This is also how a crash in an earlier segment of a resubmitting CIME run
-        (RESUBMIT > 0) shows up: CIME's JOB_IDS only holds the last segment's
-        jobs, so the fail jobs can't watch earlier segments, and PBS deletes
-        every later job (including the advance and fail jobs) along with them.
+        (RESUBMIT > 0) shows up: the fail jobs only watch the last segment, and
+        PBS deletes every later job (including the advance and fail jobs) along
+        with the crashed one. Every segment's jobs are recorded (from
+        case.submit's output), so the stage isn't lost while any segment is
+        still queued or running.
 
         Known gaps (the stage is reported lost while its CIME run is going):
         a setup job killed between case.submit and record-cime-jobs (before
