@@ -344,6 +344,43 @@ def test_fixed_indices_out_of_range_raises(
         LatinHypercubeEnsemble(config)
 
 
+def test_fixed_indices_on_sliced_parameter_slice_raises(
+    ensemble_param_dir, default_param_file, posterior_config_file, tmp_path
+):
+    """Test that fixing the index a sliced parameter targets raises: the
+    parameter can't be both varied and held at its default
+    """
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        posterior_sources=posterior_config_file,
+        default_param_file=default_param_file,
+        fixed_indices={"fates_leafage_class": [0]},
+    )
+    with pytest.raises(ValueError, match="fates_leaf_vcmax25top"):
+        LatinHypercubeEnsemble(config)
+    assert not (tmp_path / "ensemble").exists()
+
+
+def test_fixed_indices_on_other_slice_index_allowed(
+    ensemble_param_dir, default_param_file, posterior_config_file, tmp_path
+):
+    """Test that fixing an index on the slice dimension that the sliced parameter
+    doesn't target is fine
+    """
+    config = LatinHypercubeConfig(
+        param_dir=ensemble_param_dir,
+        ensemble_dir=tmp_path / "ensemble",
+        file_prefix="test",
+        posterior_sources=posterior_config_file,
+        default_param_file=default_param_file,
+        fixed_indices={"fates_leafage_class": [1]},
+    )
+    ensemble = LatinHypercubeEnsemble(config)
+    assert "fates_leaf_vcmax25top" in [p.spec.name for p in ensemble.params]
+
+
 def test_fixed_indices_valid(
     ensemble_param_dir, default_param_file, posterior_config_file, tmp_path
 ):

@@ -189,6 +189,10 @@ ensemble = ParamEnsemble.from_dict({
 })
 ```
 
+A sliced parameter can't target a fixed index: if a parameter is sliced at `fates_leafage_class`
+index 0 and `fixed_indices` holds `fates_leafage_class` index 0, setting up the ensemble
+raises an error.
+
 #### Varying only a subset of parameters
 
 If you have more parameters in your `main.csv` than you actually want to use in an

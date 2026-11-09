@@ -20,7 +20,7 @@ from SALib.sample import morris as sample_morris
 
 from .. import __version__
 from .parameter_dataset import ParameterDataset
-from .parameter import Parameter
+from .parameter import Parameter, SlicedParameter
 from .sampler import PosteriorSampler
 from .ensemble_config import (
     EnsembleConfig,
@@ -184,6 +184,10 @@ class ParamEnsemble(ABC):
                 for _, row in main.iterrows()
             ]
         )
+
+        # a sliced parameter whose slice is fixed would be sampled but never
+        # written; check here first
+        _check_sliced_not_fixed(self.params, self.fixed_indices)
 
         # if we have expand_dims on a parameter, expand them to be one per expanded index
         self._expand_params()
@@ -1030,3 +1034,30 @@ def _expand_one_param(
         # an index no posterior source covers stays at its default, like a fixed one
         active = [i for i in active if param.sampler.covers(i)]
     return [param.for_index(expand_dim, idx) for idx in active]
+
+
+def _check_sliced_not_fixed(
+    params: list[Parameter],
+    fixed_indices: dict[str, list[int]],
+):
+    """Check that no sliced parameter targets an index held by fixed indices
+
+    Args:
+        params (list[Parameter]): parameters in the ensemble
+        fixed_indices (dict[str, list[int]]): mapping of dimension name to 0-based indices
+        to hold at default.
+
+    Raises:
+        ValueError: a sliced parameter's slice_index is fixed on its slice_dim
+    """
+    for param in params:
+        if not isinstance(param, SlicedParameter):
+            continue
+        slice_dim = param.spec.slice_dim
+        if param.spec.slice_index in fixed_indices.get(slice_dim, []):
+            raise ValueError(
+                f"Parameter '{param.spec.name}' is sliced at {slice_dim} index "
+                f"{param.spec.slice_index}, but fixed_indices holds that index "
+                "at its default. Remove the parameter from main.csv or the "
+                f"index from fixed_indices['{slice_dim}']"
+            )
