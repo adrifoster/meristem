@@ -246,7 +246,10 @@ dimension (i.e. all PFTs get values drawn from the same distribution).
 If `array_indices` is a 0-based integer, each file must contain columns for all parameters listed
 under `parameters`. Together, the `array_indices` across all files should cover every
 index you want sampled from a posterior — any index not covered will not be modified
-from its default value
+from its default value.
+
+A relative `path` is relative to the folder the posterior sources YAML is in, not the folder
+you run `meristem.paramgen` from.
 
 meristem checks that every posterior file listed exists when the ensemble is set up, before
 any files are written.

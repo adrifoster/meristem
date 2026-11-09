@@ -69,7 +69,18 @@ def read_posterior_sources(posterior_sources: Path | None) -> dict:
             f"Posterior sources file '{posterior_sources}' does not exist."
         )
     with open(posterior_sources, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        config = yaml.safe_load(f) or {}
+
+        # relative posterior file paths resolved relative to this YAML file's folder,
+        # not to wherever meristem paramgen is run from
+        for entry in config.values():
+            if not isinstance(entry, dict):
+                continue
+            for file_entry in entry.get("files") or []:
+                if isinstance(file_entry, dict) and "path" in file_entry:
+                    file_entry["path"] = posterior_sources.parent / file_entry["path"]
+
+        return config
 
 
 def validate_normalized_value(normalized_value: float) -> None:

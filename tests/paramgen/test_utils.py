@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 import pandas as pd
-from meristem.paramgen.utils import read_param_list
+from meristem.paramgen.utils import read_param_list, read_posterior_sources
 
 
 def test_read_param_list_returns_main(param_dir):
@@ -62,3 +62,26 @@ def test_read_param_list_headers_only_main(tmp_path):
     (tmp_path / "main.csv").write_text("parameter_name,param_type\n")
     with pytest.raises(ValueError, match="empty"):
         read_param_list(tmp_path)
+
+
+def test_read_posterior_sources_paths_relative_to_yaml(tmp_path, monkeypatch):
+    """Test that relative posterior file paths are relative to the posterior
+    sources YAML's folder, not the current directory; absolute files are kept
+    """
+    sources_dir = tmp_path / "posteriors"
+    sources_dir.mkdir()
+    yaml_file = sources_dir / "posterior_sources.yaml"
+    yaml_file.write_text(
+        "fates_leafn_vert_scaler:\n"
+        "  parameters: [coeff1, coeff2]\n"
+        "  files:\n"
+        "    - path: samples.txt\n"
+        "      array_indices: all\n"
+        "    - path: /abs/samples.txt\n"
+        "      array_indices: [0]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    files = read_posterior_sources(yaml_file)["fates_leafn_vert_scaler"]["files"]
+    assert Path(files[0]["path"]) == sources_dir / "samples.txt"
+    assert Path(files[1]["path"]) == Path("/abs/samples.txt")
