@@ -84,6 +84,9 @@ meristem run submit-advance --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTE
 meristem run submit-fail --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT" \
     --cime-job-id "$RUN_JOB_ID" --cime-job-id "$FINAL_JOB_ID"
 {% else %}
+# this stage's work is done: stop the ERR trap so a failure while advancing
+# can't mark THIS stage FAILED
+trap - ERR
 meristem run advance --root "$RUN_ROOT" --stage "$STAGE" --attempt "$ATTEMPT"
 {% endif %}
 

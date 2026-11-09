@@ -473,6 +473,47 @@ def _run_cime_block(
     return result, case_root
 
 
+def _run_no_cime_tail(run: ModelRun, fail_on: str) -> list[str]:
+    """Run a no_cime stage's setup script from after its start banner to the
+    end, with meristem recording its arguments (and failing on fail_on)
+
+    Args:
+        run (ModelRun): a submitted run whose first stage is no_cime
+        fail_on (str): meristem fails when its arguments contain this
+
+    Returns:
+        list[str]: the meristem calls, in order
+    """
+    lines = (run.root / f"{run.run_id}_{run.stages[0].config.name}.pbs").read_text()
+    lines = lines.splitlines()
+    start = next(i for i, line in enumerate(lines) if "=== Started" in line) + 1
+    end = next(i for i, line in enumerate(lines) if "Setup complete" in line)
+    calls = run.root / "meristem_calls.txt"
+
+    def line_starting(prefix: str) -> str:
+        return next(line for line in lines if line.startswith(prefix))
+
+    script = "\n".join(
+        [
+            line_starting("set -e"),
+            "RUN_ROOT=root STAGE=stage",
+            line_starting("ATTEMPT="),
+            f'meristem() {{ echo "$*" >> {shlex.quote(str(calls))}; '
+            f'if [[ "$*" == *{shlex.quote(fail_on)}* ]]; then false; fi; }}',
+            line_starting("trap "),
+            *lines[start:end],
+        ]
+    )
+    subprocess.run(
+        ["/bin/bash", "-c", script],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return calls.read_text().splitlines() if calls.exists() else []
+
+
 @pytest.mark.parametrize(
     "job_ids,advance_on,fail_on",
     [
@@ -894,3 +935,32 @@ def test_submit_skipped_does_not_validate(created_run, script_file):
     created_run.submit()
     script_file.unlink()
     assert created_run.submit() is None
+
+
+def test_no_cime_advance_failure_does_not_fail_finished_stage(
+    run_config_dict, no_cime_stage_config_dict, fake_scheduler
+):
+    """Test that when a no_cime stage's advance fails (e.g. the next stage
+    can't be submitted), the ERR trap doesn't mark the finished stage FAILED;
+    advanced marks the next stage FAILED itself
+    """
+    run_config_dict["stages"] = [no_cime_stage_config_dict]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    calls = _run_no_cime_tail(run, fail_on="run advance")
+    assert calls[-1].startswith("run advance")
+    assert not any(call.startswith("run fail") for call in calls)
+
+
+def test_no_cime_setup_failure_still_fails_stage(
+    run_config_dict, no_cime_stage_config_dict, script_file, fake_scheduler
+):
+    """Test that a failure in a no_cime stage's own work (its command) still
+    fires the ERR trap and marks the stage FAILED
+    """
+    script_file.write_text("exit 1\n")
+    run_config_dict["stages"] = [no_cime_stage_config_dict]
+    run = ModelRun.create(run_config_dict, scheduler=fake_scheduler)
+    run.submit()
+    calls = _run_no_cime_tail(run, fail_on="no-such-call")
+    assert calls == ["run fail --root root --stage stage --attempt 1"]
