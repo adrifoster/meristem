@@ -994,7 +994,7 @@ class Ensemble:
         """Point a case's user_nl_clm at a member's parameter file
 
         Removes any existing assignment of ``config.paramfile_key`` and appends a new one.
-        Written via temp-file-then-rename
+        Written atomically.
 
         Args:
             case_root (Path): case directory
@@ -1022,9 +1022,7 @@ class Ensemble:
             lines[-1] += "\n"
         lines.append(f"{key} = '{param_file}'\n")
 
-        tmp = case_root / "user_nl_clm.tmp"
-        tmp.write_text("".join(lines), encoding="utf-8")
-        tmp.rename(user_nl_clm)
+        write_atomically(user_nl_clm, "".join(lines))
 
     def _check_paramfile(self, case_root: Path, param_file: Path):
         """Check that a case's generated lnd_in sets ``config.paramfile_key`` to

@@ -2770,7 +2770,7 @@ def test_finalize_leaves_no_user_nl_clm_tmp_file(created_ensemble):
     """Test that the atomic write doesn't leave its temp file behind"""
     case_root = _write_namelist_case(created_ensemble, "a = 1\n")
     _finalize(created_ensemble)
-    assert not (case_root / "user_nl_clm.tmp").exists()
+    assert not list(case_root.glob("*user_nl_clm*.tmp"))
 
 
 # ---------------------------------------------------------------------------
