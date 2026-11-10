@@ -18,7 +18,8 @@ Each stage consists of up to four jobs:
 2. **CIME job**: the actual model run, submitted with `./case.submit --resubmit-immediate`. With
    `RESUBMIT > 0`, every segment is queued at once, each waiting on the one before. meristem
    records every segment's jobs (read from `case.submit`'s output, since CIME's `JOB_IDS` only
-   lists the last segment's), so `cancel`, `retry` and `clean` see the whole chain.
+   lists the last segment's), so `cancel`, `retry` and `clean` see the whole chain. If case.submit's
+   output can't be read, `meristem` warns and records only the jobs in `JOB_IDS`.
 3. **Advance job**: a lightweight bookkeeping job that runs `afterok` the CIME job. It marks the
    stage complete and submits the next stage's setup job.
 4. **Fail job**: a lightweight bookkeeping job that runs `afternotok` the CIME job. If the model run
@@ -217,7 +218,7 @@ neither runs, the stage stays `submitted` for good. This happens when:
 
 meristem records the setup, CIME (every segment's, with `RESUBMIT > 0`), advance and fail job
 IDs for each stage. A stage is lost if it is `submitted` and **none** of those jobs is still
-queued or running, so a stage whose model run is still going is never lost..
+queued or running, so a stage whose model run is still going is never lost.
 
 To find lost stages:
 

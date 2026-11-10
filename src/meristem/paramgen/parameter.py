@@ -707,7 +707,7 @@ class ScaleFromRootParameter(Parameter, param_type="scale_from_root"):
         if len(self.spec.base_params) > 1:
             raise ValueError(
                 f"Too many base_params for parameter {self.spec.name}. "
-                "Shouldn't have more than one base_param for SlicedParameters. "
+                "Shouldn't have more than one base_param for ScaleFromRoot parameters. "
                 f"Got {len(self.spec.base_params)}: {self.spec.base_params}"
             )
         if self.spec.root_param in self.spec.base_params:

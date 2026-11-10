@@ -884,7 +884,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             script is missing); the stage is left as it was
 
         Returns:
-            str | None: PBS job ID of the advance script, or None if all stages complete
+            str | None: PBS job ID of the setup script, or None if all stages complete
         """
         stage = self._stage(stage_name) if stage_name else self.current_stage
         if stage is None:
@@ -1063,7 +1063,7 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             ValueError: Can only submit PENDING stages (checked before submitting)
 
         Returns:
-            str: _description_
+            str: job ID of submitted script job
         """
 
         # validation and submission

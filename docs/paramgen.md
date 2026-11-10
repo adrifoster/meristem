@@ -185,7 +185,7 @@ ensemble = ParamEnsemble.from_dict({
     "ensemble_dir": "/path/to/output",
     "file_prefix": "my_ensemble",
     "ensemble_members": 100,
-    "fixed_indices": {"fates_pft": [7, 8, 9]},  # hold PFTs 8, 9, 10 at default (0-based)
+    "fixed_indices": {"fates_pft": [7, 8, 9]},  # 0-based: holds PFTs 8, 9, 10 at default 
 })
 ```
 
@@ -295,6 +295,8 @@ For each ensemble, paramgen writes:
 * **`{prefix}_0000.nc/json`, `{prefix}_0001.nc/json`, ...**: one parameter file per ensemble member, each a modified copy of the default parameter file
 * **`{prefix}_key.csv`**: a table recording the normalized value (0–1) each parameter took in each member; for OAT ensembles, also includes a `direction` column (`minimum` or `maximum`)
 * **`{prefix}.txt`**: a plain text list of ensemble member names, one per line, for use in scripting
+* **`{prefix}_config.yaml`**: the config used to generate the ensemble, its ensemble type, and 
+the meristem version; pass it back to `meristem paramgen` to regenerate the ensemble
 
 ## Parameter types
 

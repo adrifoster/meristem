@@ -251,8 +251,9 @@ class Ensemble:
                 still retried
 
         Returns:
-            dict[str, str | None]: member -> job ID of its retried stage's setup
-            job (a DRY_ placeholder for a dry run)
+            dict[str, str | None]: each resubmitted member -> job ID of its retried
+            stage's setup job (a DRY_ placeholder for a dry run); empty if nothing
+            needed retrying
         """
 
         explicit = not failed and not lost

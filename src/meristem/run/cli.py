@@ -491,7 +491,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Execute retry action and return an exit code
+    """Execute status action and return an exit code
 
     Args:
         args (argparse.Namespace): parsed namespace from argparse

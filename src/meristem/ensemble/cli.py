@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[debug],
         help="Initialize a new ensemble from a YAML config",
     )
-    create.add_argument("--config", required=True, help="Path to run.yaml")
+    create.add_argument("--config", required=True, help="Path to ensemble.yaml")
     create.set_defaults(handler=cmd_create)
 
     # meristem ensemble submit --root R [--debug] [--dry-run] [--limit N]

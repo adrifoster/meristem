@@ -383,7 +383,7 @@ class PosteriorSampler(Sampler, sampler_type="posterior"):
             if source.is_broadcast or array_index in source.array_indices:
                 return source
         raise ValueError(
-            f"No source found for array index {array_index}"
+            f"No source found for array index {array_index} "
             f"Check your posterior_sources.yaml."
         )
 
