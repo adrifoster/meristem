@@ -1044,7 +1044,6 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
     def _submit_stage(
         self,
         stage: Stage,
-        depend_job_id: str | None = None,
         dry_run: bool = False,
         skip_script: bool = False,
     ) -> str:
@@ -1052,8 +1051,6 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
 
         Args:
             stage (Stage): stage
-            depend_job_id (str | None, optional): CIME job id to add to afterok
-                dependency. Defaults to None.
             dry_run (bool, optional): If True, only print text to screen and don't
             submit anything. Defaults to False.
             skip_script (bool, optional): If True, just submit and don't run the script.
@@ -1070,8 +1067,8 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
         stage.config.validate()
         _check_submittable(stage)
         if dry_run:
-            return self._dry_run_stage(stage, depend_job_id, skip_script)
-        job_file = self._write_job_script(stage, depend_job_id, skip_script)
+            return self._dry_run_stage(stage, skip_script)
+        job_file = self._write_job_script(stage, skip_script)
         job_id = self.scheduler.submit(job_file)
 
         # record successful submission
@@ -1086,28 +1083,23 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
     def _dry_run_stage(
         self,
         stage: Stage,
-        depend_job_id: str | None = None,
         skip_script: bool = False,
     ) -> str:
         """Write a stage's job script without submitting it or changing any state
 
         Args:
             stage (Stage): stage
-            depend_job_id (str | None, optional): CIME job id to add to afterok
-                dependency. Defaults to None.
             skip_script (bool, optional): If True, the script won't run the user's
                 script. Defaults to False
 
         Returns:
             str: synthetic DRY_ job ID
         """
-        job_file = self._write_job_script(stage, depend_job_id, skip_script)
+        job_file = self._write_job_script(stage, skip_script)
         print(f"  {self.run_id} / {stage.config.name}: dry run, wrote {job_file}")
         return f"DRY_{self.run_id}_{stage.config.name}"
 
-    def _write_job_script(
-        self, stage: Stage, depend_job_id: str | None = None, skip_script: bool = False
-    ) -> Path:
+    def _write_job_script(self, stage: Stage, skip_script: bool = False) -> Path:
         """Write the setup job script for one stage.
 
         The script:
@@ -1150,7 +1142,6 @@ class ModelRun:  # pylint: disable=too-many-instance-attributes
             project=self.project,
             log_file=log_file,
             email=self.email,
-            depend_job_id=depend_job_id,
             extra=extra,
             root=self.root,
             name=stage.config.name,
