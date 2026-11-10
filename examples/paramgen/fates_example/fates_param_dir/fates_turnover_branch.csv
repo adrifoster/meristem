@@ -1,0 +1,15 @@
+﻿pft_index,pft_name,param_min,param_max
+1,broadleaf_evergreen_tropical_tree,30,200
+2,needleleaf_evergreen_extratrop_tree,30,200
+3,needleleaf_colddecid_extratrop_tree,30,200
+4,broadleaf_evergreen_extratrop_tree,30,200
+5,broadleaf_hydrodecid_tropical_tree,30,200
+6,broadleaf_colddecid_extratrop_tree,30,200
+7,broadleaf_evergreen_extratrop_shrub,30,200
+8,broadleaf_hydrodecid_extratrop_shrub,30,200
+9,broadleaf_colddecid_extratrop_shrub,30,200
+10,broadleaf_evergreen_arctic_shrub,30,200
+11,broadleaf_colddecid_arctic_shrub,30,200
+12,arctic_c3_grass,0,0
+13,cool_c3_grass,0,0
+14,c4_grass,0,0

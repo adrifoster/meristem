@@ -8,8 +8,8 @@
 7,broadleaf_evergreen_extratrop_shrub,0.1,0.5
 8,broadleaf_hydrodecid_extratrop_shrub,0.1,0.5
 9,broadleaf_colddecid_extratrop_shrub,0.1,0.5
-10,broadleaf_evergreen_arctic_shrub,0.1,0.5
-11,broadleaf_colddecid_arctic_shrub,0.1,0.5
-12,arctic_c3_grass,0.1,0.1
-13,cool_c3_grass,0.1,0.1
-14,c4_grass,0.1,0.1
+10,broadleaf_evergreen_arctic_shrub,0.1,0.9
+11,broadleaf_colddecid_arctic_shrub,0.1,0.9
+12,arctic_c3_grass,0.1,0.2
+13,cool_c3_grass,0.1,0.5
+14,c4_grass,0.1,0.5
