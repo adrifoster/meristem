@@ -32,7 +32,7 @@ cd "${case_root}"
 ./xmlchange --subgroup case.st_archive JOB_WALLCLOCK_TIME=01:00:00
 ./xmlchange STOP_OPTION="ndays"
 ./xmlchange STOP_N=10
-./xmlchange RESUBMIT=0
+./xmlchange RESUBMIT=1
 
 ./xmlchange CLM_ACCELERATED_SPINUP="on"
 ./xmlchange CLM_FORCE_COLDSTART=on

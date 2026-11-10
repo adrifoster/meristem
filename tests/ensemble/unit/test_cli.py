@@ -635,3 +635,11 @@ def test_clean_without_terminal_says_use_yes(mock_clean, monkeypatch, capsys):
     assert main(CLEAN_ARGV) == 1
     assert mock_clean.clean.call_args_list == [_clean_call(dry_run=True)]
     assert "--yes" in capsys.readouterr().err
+
+
+def test_parser_rejects_abbreviated_flags():
+    """Test that a falg prefix (--ro for --root) isn't accepted, so scripts
+    don't break when a new flag makes the prefix ambiguous
+    """
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["status", "--ro", "/tmp/run"])

@@ -5,6 +5,7 @@ CLI for a ensemble run (the `meristem ensemble` command).
 
 import argparse
 import sys
+import functools
 from pathlib import Path
 
 from .model_ensemble import Ensemble
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="meristem ensemble",
         description="Drive an ensemble of model runs",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
     )
 
     # debug command, used by all subcommands
@@ -42,7 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # create subparsers
     subparsers = parser.add_subparsers(
-        dest="command", metavar="COMMAND", help="Available subcommands.", required=True
+        dest="command",
+        metavar="COMMAND",
+        help="Available subcommands.",
+        required=True,
+        parser_class=functools.partial(argparse.ArgumentParser, allow_abbrev=False),
     )
 
     # meristem ensemble create --config CONFIG [--debug]

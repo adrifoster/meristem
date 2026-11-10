@@ -20,6 +20,7 @@ All other commands (many called automatically by pipeline):
 
 import argparse
 import sys
+import functools
 from pathlib import Path
 
 from .model_run import ModelRun
@@ -39,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="meristem run",
         description="Drive a single ModelRun",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
     )
 
     # parent parsers
@@ -63,7 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # create subparsers
     subparsers = parser.add_subparsers(
-        dest="command", metavar="COMMAND", help="Available subcommands.", required=True
+        dest="command",
+        metavar="COMMAND",
+        help="Available subcommands.",
+        required=True,
+        parser_class=functools.partial(argparse.ArgumentParser, allow_abbrev=False),
     )
 
     # meristem run create CONFIG [--debug]

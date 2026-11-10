@@ -6,7 +6,7 @@ import sys
 import pytest
 
 import meristem
-from meristem.cli import main
+from meristem.cli import main, build_parser
 
 
 def test_no_command_exits_with_usage_error(capsys):
@@ -97,3 +97,11 @@ def test_run_does_not_import_paramgen(mocker):
     mocker.patch("meristem.run.cli.main", return_value=0)
     main(["run", "status", "--root", "/tmp/run"])
     assert not any(m.startswith("meristem.paramgen") for m in sys.modules)
+
+
+def test_parser_rejects_abbreviated_flags():
+    """Test that a falg prefix (--ro for --root) isn't accepted, so scripts
+    don't break when a new flag makes the prefix ambiguous
+    """
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["status", "--ro", "/tmp/run"])
