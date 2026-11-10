@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import call
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -607,3 +607,15 @@ def test_clean_error_exits_one(mock_run, capsys):
     mock_run.clean.side_effect = ValueError("jobs still queued or running")
     assert main(CLEAN_ARGV) == 1
     assert "ERROR: jobs still queued or running" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("mock_load")
+def test_clean_without_terminal_says_use_yes(mock_clean_run, monkeypatch, capsys):
+    """Test that clean with no terminal to answer the prompt deletes nothing
+    and says to use --yes in the error message
+    """
+    # input() raises EOFError when no terminal
+    monkeypatch.setattr("builtins.input", Mock(side_effect=EOFError))
+    assert main(CLEAN_ARGV) == 1
+    assert mock_clean_run.clean.call_args_list == [_clean_call(dry_run=True)]
+    assert "--yes" in capsys.readouterr().err

@@ -465,7 +465,16 @@ def cmd_clean(args: argparse.Namespace) -> int:
         return 0
 
     if not args.yes:
-        answer = input("Delete these? [y/N] ").strip().lower()
+        try:
+            answer = input("Delete these? [y/N] ").strip().lower()
+        except EOFError:
+            # no terminal present to answer
+            print(
+                "\nERROR: can't ask for clean confirmation without a terminal; "
+                "run again with --yes to delete without asking.",
+                file=sys.stderr,
+            )
+            return 1
         if answer not in ("y", "yes"):
             print("Nothing deleted")
             return 0
